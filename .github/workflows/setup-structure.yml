@@ -1,0 +1,31 @@
+name: Generate Project Structure
+
+on:
+  workflow_dispatch: # Erlaubt es dir, den Startknopf manuell auf GitHub zu drücken
+
+jobs:
+  create-folders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Create MCP Structure
+        run: |
+          mkdir -p src
+          mkdir -p .github/workflows
+          
+          # Erzeuge temporäre Dateien, falls sie noch nicht existieren
+          echo "" > src/index.ts
+          echo "" > Dockerfile
+          echo "" > package.json
+          echo "" > tsconfig.json
+          
+      - name: Commit and Push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "System: Ordnerstruktur automatisch generiert" || exit 0
+          git push
+          
