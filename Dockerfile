@@ -2,8 +2,11 @@ FROM mcr.microsoft.com/playwright:v1.42.1-jammy
 
 WORKDIR /app
 
+# Wir kopieren die package.json und tsconfig.json
 COPY package*.json tsconfig.json ./
-RUN npm ci
+
+# ÄNDERUNG: 'npm install' statt 'npm ci', da im leeren Repo oft noch keine package-lock.json existiert
+RUN npm install
 
 COPY src ./src
 RUN npm run build
@@ -13,6 +16,5 @@ RUN npx playwright install chromium
 
 ENV NODE_ENV=production
 
-# Da MCP über stdin/stdout kommuniziert, starten wir es direkt
+# Startbefehl für den MCP Server
 ENTRYPOINT ["node", "build/index.js"]
-
