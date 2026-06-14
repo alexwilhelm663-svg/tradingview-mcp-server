@@ -5,18 +5,33 @@ import { chromium } from "playwright";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Chart-Analyst Bot wird gestartet...");
+console.log("🤖 Telegram Chart-Analyst Bot läuft mit Widget-Optimierung...");
+
+// Hilfsfunktion, um gängige Intervalle für das TV-Widget zu konvertieren
+function parseIntervalForWidget(input: string): string {
+  const clean = input.toLowerCase().trim();
+  if (clean === "1d" || clean === "d") return "D";
+  if (clean === "1w" || clean === "w") return "W";
+  if (clean === "1m" || clean === "m") return "1";
+  if (clean === "5m") return "5";
+  if (clean === "15m") return "15";
+  if (clean === "1h") return "60";
+  if (clean === "2h") return "120";
+  if (clean === "4h") return "240";
+  return "D"; // Standard-Fallback
+}
 
 bot.command("analyse", async (ctx) => {
   const args = ctx.message.text.split(" ");
   const symbol = args[1];
-  const interval = args[2] || "1D";
+  const rawInterval = args[2] || "1D";
+  const widgetInterval = parseIntervalForWidget(rawInterval);
 
   if (!symbol) {
     return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse NASDAQ:TSLA 4h");
   }
 
-  await ctx.reply(`⏳ Starte Analyse für ${symbol} (${interval}). Bitte warten...`);
+  await ctx.reply(`⏳ Rufe Widget-Chart für ${symbol} (${rawInterval}) ab...`);
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -26,21 +41,20 @@ bot.command("analyse", async (ctx) => {
   
   const page = await context.newPage();
 
-  // Schriften und Tracker blockieren, um das Laden radikal zu beschleunigen
+  // Schriften blockieren bleibt als zusätzlicher Turbo aktiv
   await page.route("**/*.{woff,woff2,ttf,otf}*", (route) => route.abort());
-  await page.route("**/*analytics*", (route) => route.abort());
 
-  const url = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}&interval=${interval}`;
+  // Die extrem schnelle Widget-URL
+  const url = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(symbol)}&interval=${widgetInterval}&theme=dark`;
 
   try {
-    // FELSENFEST: Wir warten NUR auf das Standard-Laden, KEIN networkidle mehr!
-    await page.goto(url, { waitUntil: "load", timeout: 30000 });
-    console.log("📊 Grundseite geladen. Warte 8 Sekunden auf Indikatoren...");
+    // Lädt dank Widget-Ansicht in unter 2 Sekunden!
+    await page.goto(url, { waitUntil: "load", timeout: 20000 });
     
-    // Wir geben der Seite manuell Zeit, die Kerzen zu zeichnen
-    await page.waitForTimeout(8000); 
+    // Kurze Pause, damit die Kerzen gerendert werden
+    await page.waitForTimeout(4000); 
 
-    await ctx.reply("📸 Erstelle Screenshot...");
+    await ctx.reply("📸 Erstelle Screenshot und starte Gemini 2.5 Flash...");
 
     const screenshotBuffer = await page.screenshot({ type: "jpeg", quality: 90 });
     await browser.close();
@@ -52,17 +66,18 @@ bot.command("analyse", async (ctx) => {
       },
     };
 
+    // Nutzt das unlimitierte Gemini 2.5 Flash Modell
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.5-flash", 
       contents: [
         imagePart,
-        "Du bist ein professioneller Experte für technische Analyse. Analysiere diesen TradingView-Chart präzise. Bestimme die primäre Marktstruktur und den Trend. Achte auf markante Candlestick-Muster sowie auf Indikatoren, Fibonacci-Level oder Elliott-Wellen-Zählungen, falls diese im Chart eingezeichnet oder erkennbar sind. Gib ein unbeschönigtes, klares Fazit ab."
+        "Du bist ein Experte für technische Finanzanalyse. Analysiere diesen TradingView-Chart. Bestimme die Marktstruktur und den aktuellen Trend. Achte auf Candlestick-Muster, Unterstützungen/Widerstände sowie Indikatoren (oder Elliott-Wellen/Fibonacci-Level, falls sichtbar). Gib ein klares, unbeschönigtes Fazit."
       ],
     });
 
     await ctx.replyWithPhoto(
       { source: screenshotBuffer },
-      { caption: `📊 *Analyse für ${symbol} (${interval})*\n\n${response.text}`, parse_mode: "Markdown" }
+      { caption: `📊 *Analyse für ${symbol} (${rawInterval})*\n\n${response.text}`, parse_mode: "Markdown" }
     );
 
   } catch (error: any) {
@@ -72,9 +87,7 @@ bot.command("analyse", async (ctx) => {
   }
 });
 
-bot.launch().then(() => {
-  console.log("🚀 Bot läuft erfolgreich und wartet auf Nachrichten!");
-});
+bot.launch();
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
