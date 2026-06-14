@@ -1,5 +1,5 @@
 {
-  "name": "tradingview-browser-mcp",
+  "name": "tradingview-gemini-analyzer",
   "version": "1.0.0",
   "type": "module",
   "main": "build/index.js",
@@ -8,7 +8,7 @@
     "start": "node build/index.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.1",
+    "@google/genai": "^1.30.0",
     "playwright": "^1.42.1"
   },
   "devDependencies": {
