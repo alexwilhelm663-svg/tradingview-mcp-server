@@ -2,11 +2,13 @@ import { GoogleGenAI } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { chromium } from "playwright";
 
+// Initialisierung der APIs über Umgebungsvariablen
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
 console.log("🤖 Telegram Chart-Analyst Bot läuft mit stabiler HTML-Ausgabe...");
 
+// Hilfsfunktion, um gängige Intervalle für das TV-Widget sauber zu konvertieren
 function parseIntervalForWidget(input: string): string {
   const clean = input.toLowerCase().trim();
   if (clean === "1d" || clean === "d") return "D";
@@ -17,18 +19,18 @@ function parseIntervalForWidget(input: string): string {
   if (clean === "1h") return "60";
   if (clean === "2h") return "120";
   if (clean === "4h") return "240";
-  return "D";
+  return "D"; // Standard-Fallback, falls nichts übergeben wurde
 }
 
-// Konvertiert einfaches Markdown von Gemini in sicheres Telegram-HTML
+// Konvertiert einfaches Markdown von Gemini in absolut sicheres Telegram-HTML
 function convertToTelegramHTML(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>") // Fett: **text** -> <b>text</b>
-    .replace(/\*(.*?)\*/g, "<i>$1</i>")     // Kursiv: *text* -> <i>text</i>
-    .replace(/`(.*?)`/g, "<code>$1</code>"); // Codeblock: `text` -> <code>text</code>
+    .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>") // Fett-Formatierung: **text** -> <b>text</b>
+    .replace(/\*(.*?)\*/g, "<i>$1</i>")     // Kursiv-Formatierung: *text* -> <i>text</i>
+    .replace(/`(.*?)`/g, "<code>$1</code>"); // Monospace/Codeblock: `text` -> <code>text</code>
 }
 
 bot.command("analyse", async (ctx) => {
@@ -50,53 +52,10 @@ bot.command("analyse", async (ctx) => {
   });
   
   const page = await context.newPage();
+  
+  // Schriften blockieren, um das Laden im Docker-Container massiv zu beschleunigen
   await page.route("**/*.{woff,woff2,ttf,otf}*", (route) => route.abort());
 
-  const url = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(symbol)}&interval=${widgetInterval}&theme=dark`;
-
-  try {
-    await page.goto(url, { waitUntil: "load", timeout: 20000 });
-    await page.waitForTimeout(4000); 
-
-    await ctx.reply("📸 Erstelle Screenshot und starte Gemini 2.5 Flash...");
-
-    const screenshotBuffer = await page.screenshot({ type: "jpeg", quality: 90 });
-    await browser.close();
-
-    const imagePart = {
-      inlineData: {
-        data: screenshotBuffer.toString("base64"),
-        mimeType: "image/jpeg"
-      },
-    };
-
-    // Präziser Prompt mit Längenbegrenzung, um die 4096 Zeichen niemals zu sprengen
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash", 
-      contents: [
-        imagePart,
-        "Du bist ein Experte für technische Finanzanalyse. Analysiere diesen TradingView-Chart. Bestimme präzise die Marktstruktur (Support/Resistance) und den aktuellen Trend. Achte auf Candlestick-Muster sowie Indikatoren (oder Elliott-Wellen/Fibonacci-Level, falls sichtbar). Gib ein klares Fazit ab. WICHTIG: Halte deine gesamte Antwort kompakt, prägnant und beschränke dich auf maximal 2000 Zeichen."
-      ],
-    });
-
-    // 1. Reines Bild senden
-    await ctx.replyWithPhoto(
-      { source: screenshotBuffer },
-      { caption: `📊 Chart: ${symbol} (${rawInterval})` }
-    );
-
-    // 2. Text in HTML umwandeln und senden
-    const htmlText = convertToTelegramHTML(response.text || "Keine Analyse generiert.");
-    await ctx.reply(`📝 <b>Technische Analyse:</b>\n\n${htmlText}`, { parse_mode: "HTML" });
-
-  } catch (error: any) {
-    await browser.close();
-    console.error("❌ Fehler bei der Ausführung:", error);
-    await ctx.reply(`❌ Fehler bei der Analyse: ${error.message}`);
-  }
-});
-
-bot.launch();
-
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+  // Die extrem schnelle und schlanke Widget-URL
+  const
+    
