@@ -2,11 +2,12 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { chromium } from "playwright";
 import { spawn } from "child_process";
+import yahooFinance from "yahoo-finance2"; // NEU: Datenschnittstelle
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit korrigiertem Monats-Parsing...");
+console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft im Numeric-Data-Modus...");
 
 interface ChatSession {
   lastScreenshotBuffer: Buffer | null;
@@ -15,25 +16,32 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-// Korrigierte Funktion für das TradingView-Widget
 function parseIntervalForWidget(input: string): string {
   const clean = input.toLowerCase().trim();
+  if (clean === "1m" || clean === "m" || clean === "mo" || clean === "monat") return "M";
+  if (clean === "1w" || clean === "w" || clean === "woche") return "W";
+  if (clean === "1d" || clean === "d" || clean === "tag") return "D";
   
-  // Monats-, Wochen- und Tages-Charts
-  if (clean === "1m" || clean === "m" || clean === "mo" || clean === "monat") return "M"; // "M" = Monthly (Monat)
-  if (clean === "1w" || clean === "w" || clean === "woche") return "W";                  // "W" = Weekly (Woche)
-  if (clean === "1d" || clean === "d" || clean === "tag") return "D";                    // "D" = Daily (Tag)
+  if (clean === "1" || clean === "1min") return "1";
+  if (clean === "5m" || clean === "5") return "5";
+  if (clean === "15m" || clean === "15") return "15";
+  if (clean === "30m" || clean === "30") return "30";
+  if (clean === "1h" || clean === "60") return "60";
+  if (clean === "2h" || clean === "120") return "120";
+  if (clean === "4h" || clean === "240") return "240";
   
-  // Intraday Minuten- und Stunden-Intervalle (Widget erwartet reine Zahlen-Strings für Minuten)
-  if (clean === "1" || clean === "1min" || clean === "1p") return "1";                  // "1" = 1 Minute
-  if (clean === "5m" || clean === "5") return "5";                                      // "5" = 5 Minuten
-  if (clean === "15m" || clean === "15") return "15";                                  // "15" = 15 Minuten
-  if (clean === "30m" || clean === "30") return "30";                                  // "30" = 30 Minuten
-  if (clean === "1h" || clean === "60") return "60";                                    // "60" = 1 Stunde (60 Min)
-  if (clean === "2h" || clean === "120") return "120";                                  // "120" = 2 Stunden (120 Min)
-  if (clean === "4h" || clean === "240") return "240";                                  // "240" = 4 Stunden (240 Min)
-  
-  return "D"; // Standard-Fallback auf Tagesbasis
+  return "D";
+}
+
+// Übersetzer für Yahoo Finance Intervalle
+function parseIntervalForYahoo(input: string): "1m" | "2m" | "5m" | "15m" | "30m" | "60m" | "90m" | "1h" | "1d" | "5d" | "1wk" | "1mo" | "3mo" {
+  const clean = input.toLowerCase().trim();
+  if (clean === "1m" || clean === "m") return "1mo";
+  if (clean === "1w" || clean === "w") return "1wk";
+  if (clean === "1d" || clean === "d") return "1d";
+  if (clean === "4h") return "1h"; // Fallback auf Stundenbasis
+  if (clean === "1h") return "1h";
+  return "1d";
 }
 
 function convertToTelegramHTML(text: string): string {
@@ -49,12 +57,36 @@ function convertToTelegramHTML(text: string): string {
 bot.command("analyse", async (ctx) => {
   const chatId = ctx.chat.id;
   const args = ctx.message.text.split(" ");
-  const symbol = args[1];
+  let symbol = args[1];
   const rawInterval = args[2] || "1D";
-  const widgetInterval = parseIntervalForWidget(rawInterval);
-
+  
   if (!symbol) {
-    return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse NASDAQ:TSLA 4h");
+    return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse TEAM 1w");
+  }
+
+  // Bereinigung für Yahoo Finance (z.B. NASDAQ:TEAM -> TEAM)
+  const yahooSymbol = symbol.includes(":") ? symbol.split(":")[1] : symbol;
+  const widgetInterval = parseIntervalForWidget(rawInterval);
+  const yahooInterval = parseIntervalForYahoo(rawInterval);
+
+  await ctx.reply(`⏳ Extrahiere numerische Kursdaten für ${yahooSymbol} über Yahoo Finance...`);
+
+  let historicalData = "";
+  try {
+    // Holen der echten historischen Kerzen (letzten 150 Einheiten)
+    const today = new Date();
+    const priorDate = new Date(new Date().setDate(today.getDate() - 500));
+    
+    const queryResult = await yahooFinance.historical(yahooSymbol, {
+      period1: priorDate.toISOString().split("T")[0],
+      interval: yahooInterval
+    });
+
+    // Wir extrahieren die wichtigsten mathematischen Swings für Gemini als Text-Tabelle
+    const slice = queryResult.slice(-60); // Die letzten 60 relevanten Kerzen
+    historicalData = slice.map(c => `Datum: ${c.date.toISOString().split("T")[0]} -> High: ${c.high.toFixed(2)}, Low: ${c.low.toFixed(2)}, Close: ${c.close.toFixed(2)}`).join("\n");
+  } catch (dataError) {
+    console.warn("⚠️ Yahoo Finance Daten-Abruf fehlgeschlagen. Fahre rein visuell fort.");
   }
 
   await ctx.reply(`⏳ Rufe Widget-Chart für ${symbol} (${rawInterval}) ab...`);
@@ -74,7 +106,7 @@ bot.command("analyse", async (ctx) => {
     await page.goto(url, { waitUntil: "load", timeout: 20000 });
     await page.waitForTimeout(3000); 
 
-    await ctx.reply("📊 Stauche Zeitachse für mehr Candlesticks...");
+    await ctx.reply("📊 Stauche Zeitachse für optimale Candlestick-Anzeige...");
     await page.mouse.click(960, 540);
     await page.waitForTimeout(500);
 
@@ -97,18 +129,19 @@ bot.command("analyse", async (ctx) => {
       },
     };
 
-    const jsonPrompt = `Du bist ein flexibler Elliott-Wellen-Analyst. Vor dir liegt ein TradingView-Chart auf einem Raster von 1920x1080 Pixeln (Kerzenbereich Y = 150 bis 850).
+    // DER INTEGRATIONS-PROMPT: Bild + echte numerische Marktdaten vereint
+    const jsonPrompt = `Du bist ein unbestechlicher Elliott-Wellen-Analyst. Vor dir liegt ein TradingView-Chart (1920x1080 Pixel).
+Der reale Kerzenbereich befindet sich AUSSCHLIESSLICH vertikal zwischen Y = 180 und Y = 850. Alles außerhalb ist leerer Raum.
 
-Scanne den Chart und bestimme das dominierende, sichtbare Wellenmuster. Du musst NICHT zwingend einen gesamten 8-Punkte-Zyklus erzwingen.
-- Wenn du einen sauberen Impuls siehst, zeichne die Wellen 1-5 (oder so weit, wie er fortgeschritten ist, z.B. 1-3) ein.
-- Wenn der Markt sich in einer klaren Korrektur befindet, zeichne NUR die Korrekturwellen ein (z.B. A-B-C oder komplexe Korrekturen wie W-X-Y).
+Hier sind die ECHTEN, mathematischen Kursdaten der im Chart sichtbaren Kerzen:
+${historicalData || "Keine numerischen Daten verfügbar. Nutze ausschließlich die visuelle Struktur."}
 
-Regeln für deine Koordinaten-Vergabe:
-1. Setze Spitzen (z.B. 1, 3, 5, B) direkt auf lokale Hochpunkte der Kerzen-Dochte.
-2. Setze Täler (z.B. 2, 4, A, C) direkt auf lokale Tiefpunkte der Kerzen-Dochte.
-3. Versuche, die Koordinaten so präzise wie möglich zu schätzen, damit die Verbindungslinien die realen Wendepunkte im Chart berühren. Platziere NIEMALS Punkte im leeren Raum außerhalb der Kursdaten.
+Deine Aufgabe:
+1. Gleiche das Chartbild mit den echten Kursdaten ab.
+2. Identifiziere die echten strukturellen Hochs und Tiefs. Setze NIEMALS Punkte in den leeren Raum links oder in den Himmel oberhalb der Kerzen.
+3. Ordne den Wendepunkten die korrekten Wellen-Labels (1-5, A-C, W-X-Y) zu. Chronologisch sortiert von links nach rechts.
 
-Befülle das JSON-Schema flexibel je nach Wellenanzahl. Nutze den 'analysis_text', um deine Zählung unbeschönigt nach den Prechter-Regeln zu begründen.`;
+Befülle das JSON-Schema präzise. Die X/Y Koordinaten müssen exakt auf den realen Spitzen/Tälern des Kursverlaufs im Bild liegen.`;
 
     let responseText = "";
     let attempts = 3;
@@ -123,19 +156,16 @@ Befülle das JSON-Schema flexibel je nach Wellenanzahl. Nutze den 'analysis_text
             responseSchema: {
               type: Type.OBJECT,
               properties: {
-                analysis_text: { 
-                  type: Type.STRING, 
-                  description: "Kompakte technische Analyse und Wellengrad-Erklärung (max 1500 Zeichen)." 
-                },
+                analysis_text: { type: Type.STRING, description: "Kompakte technische Analyse basierend auf den echten Zahlenwerten." },
                 waves: {
                   type: Type.ARRAY,
-                  description: "Liste der identifizierten Wellen-Scheitelpunkte in chronologischer Reihenfolge (variable Länge von 2 bis 8 Elementen).",
+                  description: "Chronologische Liste der Wellenpunkte, exakt auf den realen Kerzen platziert.",
                   items: {
                     type: Type.OBJECT,
                     properties: {
-                      label: { type: Type.STRING, description: "Ziffer oder Buchstabe der Welle (z.B. 1, 2, 3, 4, 5, A, B, C, W, X, Y)" },
-                      x: { type: Type.INTEGER, description: "X-Koordinate im Pixelbereich 0-1920" },
-                      y: { type: Type.INTEGER, description: "Y-Koordinate im Pixelbereich 0-1080" }
+                      label: { type: Type.STRING },
+                      x: { type: Type.INTEGER },
+                      y: { type: Type.INTEGER }
                     },
                     required: ["label", "x", "y"]
                   }
@@ -164,7 +194,7 @@ Befülle das JSON-Schema flexibel je nach Wellenanzahl. Nutze den 'analysis_text
     chatSessions[chatId] = {
       lastScreenshotBuffer: screenshotBuffer,
       history: [
-        { role: "user", text: "[Chart-Bild] + Elliott-Wellen-Analyse angefordert." },
+        { role: "user", text: "[Chart-Bild] + Numerische Daten analysiert." },
         { role: "model", text: analysisText }
       ]
     };
@@ -177,17 +207,12 @@ Befülle das JSON-Schema flexibel je nach Wellenanzahl. Nutze den 'analysis_text
     const stdoutChunks: Buffer[] = [];
     let stderrText = "";
 
-    pythonProcess.stdout.on("data", (chunk: Buffer) => {
-      stdoutChunks.push(chunk);
-    });
-
-    pythonProcess.stderr.on("data", (data) => {
-      stderrText += data.toString();
-    });
+    pythonProcess.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    pythonProcess.stderr.on("data", (data) => stderrText += data.toString());
 
     pythonProcess.on("close", async (code) => {
       if (code !== 0 || stdoutChunks.length === 0) {
-        console.error("❌ Python-Fehler oder leere Ausgabe:", stderrText);
+        console.error("❌ Python-Fehler:", stderrText);
         await ctx.replyWithPhoto({ source: screenshotBuffer }, { caption: `📊 Chart: ${symbol} (${rawInterval})` });
       } else {
         const outputBuffer = Buffer.concat(stdoutChunks);
@@ -200,8 +225,6 @@ Befülle das JSON-Schema flexibel je nach Wellenanzahl. Nutze den 'analysis_text
     if (pythonProcess.stdin) {
       pythonProcess.stdin.write(screenshotBuffer);
       pythonProcess.stdin.end();
-    } else {
-      throw new Error("Konnte den Bild-Stream an Python nicht öffnen.");
     }
 
   } catch (error: any) {
@@ -211,6 +234,7 @@ Befülle das JSON-Schema flexibel je nach Wellenanzahl. Nutze den 'analysis_text
   }
 });
 
+// Rückfragen-Handler
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const userQuestion = ctx.message.text;
@@ -220,7 +244,7 @@ bot.on("text", async (ctx) => {
     return ctx.reply("❌ Ich habe noch keinen Chart im Speicher. Bitte starte zuerst eine Analyse mit `/analyse`.");
   }
 
-  await ctx.reply("🤔 Analysiere deine Rückfrage zum Chart......");
+  await ctx.reply("🤔 Analysiere deine Rückfrage zum Chart...");
 
   try {
     const imagePart = {
