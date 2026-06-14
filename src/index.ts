@@ -1,11 +1,19 @@
 import { GoogleGenAI } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { chromium } from "playwright";
+import { exec } from "child_process";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit maximaler Kerzen-Historie...");
+console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit Python-Drawer...");
+
+interface ChatSession {
+  lastScreenshotBuffer: Buffer | null;
+  history: Array<{ role: "user" | "model"; text: string }>;
+}
+
+const chatSessions: Record<number, ChatSession> = {};
 
 function parseIntervalForWidget(input: string): string {
   const clean = input.toLowerCase().trim();
@@ -31,6 +39,7 @@ function convertToTelegramHTML(text: string): string {
 }
 
 bot.command("analyse", async (ctx) => {
+  const chatId = ctx.chat.id;
   const args = ctx.message.text.split(" ");
   const symbol = args[1];
   const rawInterval = args[2] || "1D";
@@ -44,7 +53,7 @@ bot.command("analyse", async (ctx) => {
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
-    viewport: { width: 1920, height: 1080 }, // Hohe Auflösung, um viel Platz für viele Kerzen zu bieten
+    viewport: { width: 1920, height: 1080 },
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
   });
   
@@ -58,29 +67,19 @@ bot.command("analyse", async (ctx) => {
     await page.waitForTimeout(3000); 
 
     await ctx.reply("📊 Stauche Zeitachse für mehr Candlesticks...");
-
-    // OPTIMIERUNG: Wir klicken einmal in die Mitte des Charts, um ihn zu fokussieren
     await page.mouse.click(960, 540);
     await page.waitForTimeout(500);
 
-    // Wir drücken die 'ArrowDown'-Taste simuliert 15 Mal hintereinander. 
-    // Das zoomt auf der TradingView-Zeitachse heraus und presst deutlich mehr Kerzen in das Bild.
     for (let i = 0; i < 15; i++) {
       await page.keyboard.press("ArrowDown");
-      await page.waitForTimeout(50); // Ganz kurze Pause für flüssiges Stauchen
+      await page.waitForTimeout(50);
     }
-    
-    // Nochmals kurz warten, damit sich das gestauchte Chart sauber setzt
     await page.waitForTimeout(2000); 
 
-    await ctx.reply("📸 Erstelle Screenshot mit maximaler Historie...");
+    await ctx.reply("📸 Erstelle Screenshot und berechne Elliott-Wellen-Koordinaten...");
 
     const chartElement = page.locator("div.tv-embed-widget-wrapper, iframe, body");
-    const screenshotBuffer = await chartElement.first().screenshot({ 
-      type: "jpeg", 
-      quality: 90 
-    });
-    
+    const screenshotBuffer = await chartElement.first().screenshot({ type: "jpeg", quality: 90 });
     await browser.close();
 
     const imagePart = {
@@ -90,23 +89,35 @@ bot.command("analyse", async (ctx) => {
       },
     };
 
-    let response;
+    const jsonPrompt = `Du bist ein präziser Elliott-Wellen-Analyst. Scanne diesen Weitwinkel-Chart.
+Führe eine mathematisch-visuelle Zählung durch (Impulswelle 1-5 oder Korrektur A-C).
+Antworte AUSSCHLIESSLICH im folgenden JSON-Format ohne zusätzlichen Text drumherum:
+{
+  "analysis_text": "Deine kompakte Analyse (Trend, Struktur, Wellengrad) hier (max 1500 Zeichen).",
+  "waves": [
+    {"label": "1", "x": 250, "y": 600},
+    {"label": "2", "x": 410, "y": 720},
+    {"label": "3", "x": 680, "y": 310},
+    {"label": "4", "x": 820, "y": 490},
+    {"label": "5", "x": 1100, "y": 150}
+  ]
+}
+Nutze exakte, geschätzte X/Y Pixel-Koordinaten bezogen auf das 1920x1080 Bild, um die Linienpunkte direkt auf die Spitzen/Täler der Kerzen zu setzen.`;
+
+    let responseText = "";
     let attempts = 3;
     
     while (attempts > 0) {
       try {
-        response = await ai.models.generateContent({
-          model: "gemini-2.5-flash", 
-          contents: [
-            imagePart,
-            "Du bist ein Experte für die Elliott-Wellen-Theorie und technische Analyse. Vor dir liegt ein weit herausgezoomter Chart mit viel Historie, um übergeordnete Zyklen zu erkennen. Scanne diesen Chart präzise. Bestimme die primäre Marktstruktur und führe eine visuelle Elliott-Wellen-Zählung durch. Identifiziere, ob wir uns in einer Impulswelle (Wellen 1-5) oder einer Korrekturwelle (Wellen A, B, C) befinden. Beschreibe prägnant, wo du die Wellenspitzen und -täler siehst und prüfe die Kernregeln (z.B. Welle 3 darf nicht die kürzeste sein, Welle 2 korrigiert nicht über den Start von 1). Gib mir ein klares Fazit mit deiner primären Zählung. Halte deine Antwort kompakt und beschränke dich auf maximal 2000 Zeichen."
-          ],
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: [imagePart, jsonPrompt],
         });
+        responseText = response.text || "";
         break;
       } catch (apiError: any) {
         attempts--;
         if (apiError.status === 503 || apiError.message?.includes("503")) {
-          console.log(`⚠️ Google Server ausgelastet (503). Erneuter Versuch... (${attempts} Versuche übrig)`);
           await new Promise(resolve => setTimeout(resolve, 3000));
         } else {
           throw apiError;
@@ -114,28 +125,95 @@ bot.command("analyse", async (ctx) => {
       }
     }
 
-    if (!response) {
-      throw new Error("Google API-Server dauerhaft überlastet. Bitte versuche es gleich noch einmal.");
-    }
+    // JSON-Parsing absichern, falls Gemini Markdown-Code-Blöcke mitsendet
+    const cleanJsonString = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+    const result = JSON.parse(cleanJsonString);
+    const wavesData = result.waves || [];
+    const analysisText = result.analysis_text || "Keine Analyse generiert.";
 
-    await ctx.replyWithPhoto(
-      { source: screenshotBuffer },
-      { caption: `📊 Weitwinkel-Chart: ${symbol} (${rawInterval})` }
-    );
+    // Verlauf für Rückfragen sichern
+    chatSessions[chatId] = {
+      lastScreenshotBuffer: screenshotBuffer,
+      history: [
+        { role: "user", text: "[Chart-Bild] + " + jsonPrompt },
+        { role: "model", text: analysisText }
+      ]
+    };
 
-    const htmlText = convertToTelegramHTML(response.text || "Keine Analyse generiert.");
-    await ctx.reply(`📝 <b>Elliott-Wellen-Analyse:</b>\n\n${htmlText}`, { parse_mode: "HTML" });
+    await ctx.reply("🎨 Zeichne Elliott-Wellen-Muster in das Bild...");
+
+    // Python-Skript aufrufen und JSON als Argument mitgeben
+    const jsonArg = JSON.stringify(wavesData);
+    const pythonProcess = exec(`python3 python_service/drawer.py '${jsonArg}'`, { encoding: "buffer" }, async (drawError: any, stdout: Buffer, stderr: any) => {
+      if (drawError) {
+        console.error("❌ Python-Fehler:", stderr.toString());
+        // Fallback: Sende das unbemalte Bild bei Skript-Fehlern
+        await ctx.replyWithPhoto({ source: screenshotBuffer }, { caption: `📊 Chart: ${symbol} (${rawInterval})` });
+      } else {
+        // Bemaltes Bild senden
+        await ctx.replyWithPhoto({ source: stdout }, { caption: `📈 Elliott-Wellen-Zählung: ${symbol} (${rawInterval})` });
+      }
+
+      // Text-Analyse senden
+      await ctx.reply(`📝 <b>Elliott-Wellen-Analyse:</b>\n\n${convertToTelegramHTML(analysisText)}`, { parse_mode: "HTML" });
+    });
+
+    // Original-Bild an Python-Skript streamen
+    pythonProcess.stdin.write(screenshotBuffer);
+    pythonProcess.stdin.end();
 
   } catch (error: any) {
     await browser.close();
-    console.error("❌ Fehler bei der Ausführung:", error);
+    console.error("❌ Haupt-Fehler:", error);
     await ctx.reply(`❌ Fehler bei der Analyse: ${error.message}`);
   }
 });
 
-bot.launch().then(() => {
-  console.log("🚀 Bot läuft erfolgreich im Weitwinkel-Historien-Modus!");
+// Rückfragen-Handler bleibt aktiv
+bot.on("text", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const userQuestion = ctx.message.text;
+  const session = chatSessions[chatId];
+
+  if (!session || !session.lastScreenshotBuffer) {
+    return ctx.reply("❌ Ich habe noch keinen Chart im Speicher. Bitte starte zuerst eine Analyse mit `/analyse`.");
+  }
+
+  await ctx.reply("🤔 Analysiere deine Rückfrage zum Chart...");
+
+  try {
+    const imagePart = {
+      inlineData: {
+        data: session.lastScreenshotBuffer.toString("base64"),
+        mimeType: "image/jpeg"
+      },
+    };
+
+    session.history.push({ role: "user", text: userQuestion });
+
+    const contents: any[] = [imagePart];
+    session.history.forEach(msg => {
+      contents.push(`${msg.role === "user" ? "User" : "Model"}: ${msg.text}`);
+    });
+    contents.push("Beantworte die letzte Frage des Users bezogen auf den Chart und die vorherige Zählung. Halte dich kurz.");
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: contents
+    });
+
+    const answerText = response.text || "Ich konnte keine Antwort generieren.";
+    session.history.push({ role: "model", text: answerText });
+
+    await ctx.reply(`💬 <b>Antwort zu deiner Rückfrage:</b>\n\n${convertToTelegramHTML(answerText)}`, { parse_mode: "HTML" });
+
+  } catch (error: any) {
+    console.error("❌ Rückfrage-Fehler:", error);
+    await ctx.reply(`❌ Fehler bei der Beantwortung: ${error.message}`);
+  }
 });
+
+bot.launch();
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
