@@ -2,13 +2,11 @@ import { GoogleGenAI } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { chromium } from "playwright";
 
-// Initialisierung der APIs über Umgebungsvariablen
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit stabiler HTML-Ausgabe...");
+console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit maximaler Kerzen-Historie...");
 
-// Hilfsfunktion, um gängige Intervalle für das TV-Widget sauber zu konvertieren
 function parseIntervalForWidget(input: string): string {
   const clean = input.toLowerCase().trim();
   if (clean === "1d" || clean === "d") return "D";
@@ -19,18 +17,17 @@ function parseIntervalForWidget(input: string): string {
   if (clean === "1h") return "60";
   if (clean === "2h") return "120";
   if (clean === "4h") return "240";
-  return "D"; // Standard-Fallback
+  return "D";
 }
 
-// Konvertiert einfaches Markdown von Gemini in absolut sicheres Telegram-HTML
 function convertToTelegramHTML(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>") // Fett
-    .replace(/\*(.*?)\*/g, "<i>$1</i>")     // Kursiv
-    .replace(/`(.*?)`/g, "<code>$1</code>"); // Monospace
+    .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
+    .replace(/\*(.*?)\*/g, "<i>$1</i>")
+    .replace(/`(.*?)`/g, "<code>$1</code>");
 }
 
 bot.command("analyse", async (ctx) => {
@@ -47,7 +44,7 @@ bot.command("analyse", async (ctx) => {
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
-    viewport: { width: 1920, height: 1080 },
+    viewport: { width: 1920, height: 1080 }, // Hohe Auflösung, um viel Platz für viele Kerzen zu bieten
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
   });
   
@@ -58,11 +55,32 @@ bot.command("analyse", async (ctx) => {
 
   try {
     await page.goto(url, { waitUntil: "load", timeout: 20000 });
-    await page.waitForTimeout(4000); 
+    await page.waitForTimeout(3000); 
 
-    await ctx.reply("📸 Erstelle Screenshot und starte Elliott-Wellen-Analyse...");
+    await ctx.reply("📊 Stauche Zeitachse für mehr Candlesticks...");
 
-    const screenshotBuffer = await page.screenshot({ type: "jpeg", quality: 90 });
+    // OPTIMIERUNG: Wir klicken einmal in die Mitte des Charts, um ihn zu fokussieren
+    await page.mouse.click(960, 540);
+    await page.waitForTimeout(500);
+
+    // Wir drücken die 'ArrowDown'-Taste simuliert 15 Mal hintereinander. 
+    // Das zoomt auf der TradingView-Zeitachse heraus und presst deutlich mehr Kerzen in das Bild.
+    for (let i = 0; i < 15; i++) {
+      await page.keyboard.press("ArrowDown");
+      await page.waitForTimeout(50); // Ganz kurze Pause für flüssiges Stauchen
+    }
+    
+    // Nochmals kurz warten, damit sich das gestauchte Chart sauber setzt
+    await page.waitForTimeout(2000); 
+
+    await ctx.reply("📸 Erstelle Screenshot mit maximaler Historie...");
+
+    const chartElement = page.locator("div.tv-embed-widget-wrapper, iframe, body");
+    const screenshotBuffer = await chartElement.first().screenshot({ 
+      type: "jpeg", 
+      quality: 90 
+    });
+    
     await browser.close();
 
     const imagePart = {
@@ -72,7 +90,6 @@ bot.command("analyse", async (ctx) => {
       },
     };
 
-    // Automatischer Retry-Mechanismus bei temporärer Google-Überlastung (Fehler 503)
     let response;
     let attempts = 3;
     
@@ -82,10 +99,10 @@ bot.command("analyse", async (ctx) => {
           model: "gemini-2.5-flash", 
           contents: [
             imagePart,
-            "Du bist ein Experte für die Elliott-Wellen-Theorie und technische Analyse. Scanne diesen Chart präzise. Bestimme die primäre Marktstruktur und führe eine visuelle Elliott-Wellen-Zählung durch. Identifiziere, ob wir uns in einer Impulswelle (Wellen 1-5) oder einer Korrekturwelle (Wellen A, B, C) befinden. Beschreibe prägnant, wo du die Wellenspitzen und -täler siehst und prüfe die Kernregeln (z.B. Welle 3 darf nicht die kürzeste sein, Welle 2 korrigiert nicht über den Start von 1). Gib mir ein klares Fazit mit deiner primären Zählung. Halte deine Antwort kompakt und beschränke dich auf maximal 2000 Zeichen."
+            "Du bist ein Experte für die Elliott-Wellen-Theorie und technische Analyse. Vor dir liegt ein weit herausgezoomter Chart mit viel Historie, um übergeordnete Zyklen zu erkennen. Scanne diesen Chart präzise. Bestimme die primäre Marktstruktur und führe eine visuelle Elliott-Wellen-Zählung durch. Identifiziere, ob wir uns in einer Impulswelle (Wellen 1-5) oder einer Korrekturwelle (Wellen A, B, C) befinden. Beschreibe prägnant, wo du die Wellenspitzen und -täler siehst und prüfe die Kernregeln (z.B. Welle 3 darf nicht die kürzeste sein, Welle 2 korrigiert nicht über den Start von 1). Gib mir ein klares Fazit mit deiner primären Zählung. Halte deine Antwort kompakt und beschränke dich auf maximal 2000 Zeichen."
           ],
         });
-        break; // Erfolgreich! Schleife verlassen.
+        break;
       } catch (apiError: any) {
         attempts--;
         if (apiError.status === 503 || apiError.message?.includes("503")) {
@@ -101,13 +118,11 @@ bot.command("analyse", async (ctx) => {
       throw new Error("Google API-Server dauerhaft überlastet. Bitte versuche es gleich noch einmal.");
     }
 
-    // 1. Reines Bild senden
     await ctx.replyWithPhoto(
       { source: screenshotBuffer },
-      { caption: `📊 Chart: ${symbol} (${rawInterval})` }
+      { caption: `📊 Weitwinkel-Chart: ${symbol} (${rawInterval})` }
     );
 
-    // 2. Text in HTML senden
     const htmlText = convertToTelegramHTML(response.text || "Keine Analyse generiert.");
     await ctx.reply(`📝 <b>Elliott-Wellen-Analyse:</b>\n\n${htmlText}`, { parse_mode: "HTML" });
 
@@ -119,7 +134,7 @@ bot.command("analyse", async (ctx) => {
 });
 
 bot.launch().then(() => {
-  console.log("🚀 Bot läuft erfolgreich im Elliott-Wellen-Modus und wartet auf Nachrichten!");
+  console.log("🚀 Bot läuft erfolgreich im Weitwinkel-Historien-Modus!");
 });
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
