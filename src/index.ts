@@ -5,7 +5,7 @@ import { chromium } from "playwright";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Chart-Analyst Bot läuft mit stabiler MarkdownV2-Formatierung...");
+console.log("🤖 Telegram Chart-Analyst Bot läuft mit stabiler HTML-Ausgabe...");
 
 function parseIntervalForWidget(input: string): string {
   const clean = input.toLowerCase().trim();
@@ -20,10 +20,15 @@ function parseIntervalForWidget(input: string): string {
   return "D";
 }
 
-// Hilfsfunktion, um kritische Zeichen für Telegrams MarkdownV2 sicher zu escapen
-function escapeMarkdownV2(text: string): string {
-  // Escapt alle Zeichen, die in Telegram V2 außerhalb von Codeblocks/Entities Probleme machen
-  return text.replace(/([_*[\]()~`>#+\-=|{}.!])/g, "\\$1");
+// Konvertiert einfaches Markdown von Gemini in sicheres Telegram-HTML
+function convertToTelegramHTML(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>") // Fett: **text** -> <b>text</b>
+    .replace(/\*(.*?)\*/g, "<i>$1</i>")     // Kursiv: *text* -> <i>text</i>
+    .replace(/`(.*?)`/g, "<code>$1</code>"); // Codeblock: `text` -> <code>text</code>
 }
 
 bot.command("analyse", async (ctx) => {
@@ -65,11 +70,12 @@ bot.command("analyse", async (ctx) => {
       },
     };
 
+    // Präziser Prompt mit Längenbegrenzung, um die 4096 Zeichen niemals zu sprengen
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash", 
       contents: [
         imagePart,
-        "Du bist ein Experte für technische Finanzanalyse. Analysiere diesen TradingView-Chart. Bestimme die Marktstruktur und den aktuellen Trend. Achte auf Candlestick-Muster, Unterstützungen/Widerstände sowie Indikatoren (oder Elliott-Wellen/Fibonacci-Level, falls sichtbar). Gib ein klares, unbeschönigtes Fazit. Nutze eine saubere Struktur, aber verzichte komplett auf komplexe Sonderzeichen-Verschachtelungen."
+        "Du bist ein Experte für technische Finanzanalyse. Analysiere diesen TradingView-Chart. Bestimme präzise die Marktstruktur (Support/Resistance) und den aktuellen Trend. Achte auf Candlestick-Muster sowie Indikatoren (oder Elliott-Wellen/Fibonacci-Level, falls sichtbar). Gib ein klares Fazit ab. WICHTIG: Halte deine gesamte Antwort kompakt, prägnant und beschränke dich auf maximal 2000 Zeichen."
       ],
     });
 
@@ -79,9 +85,9 @@ bot.command("analyse", async (ctx) => {
       { caption: `📊 Chart: ${symbol} (${rawInterval})` }
     );
 
-    // 2. Text durch den Escaper jagen und mit MarkdownV2 senden
-    const cleanText = escapeMarkdownV2(response.text || "Keine Analyse generiert.");
-    await ctx.reply(`📝 *Technische Analyse:*\n\n${cleanText}`, { parse_mode: "MarkdownV2" });
+    // 2. Text in HTML umwandeln und senden
+    const htmlText = convertToTelegramHTML(response.text || "Keine Analyse generiert.");
+    await ctx.reply(`📝 <b>Technische Analyse:</b>\n\n${htmlText}`, { parse_mode: "HTML" });
 
   } catch (error: any) {
     await browser.close();
