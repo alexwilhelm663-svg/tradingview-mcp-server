@@ -6,7 +6,7 @@ import { spawn } from "child_process";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit mathematischer Raster-Validierung...");
+console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft im flexiblen Multi-Grad-Modus...");
 
 interface ChatSession {
   lastScreenshotBuffer: Buffer | null;
@@ -89,22 +89,18 @@ bot.command("analyse", async (ctx) => {
       },
     };
 
-    const jsonPrompt = `Du bist ein hochentwickelter Elliott-Wellen-Analyst. Vor dir liegt ein TradingView-Chart auf einem Raster von 1920x1080 Pixeln.
-Der Chartbereich (die Kerzen) befindet sich logisch zwischen Y = 150 (oben) und Y = 850 (unten). Die Ränder außerhalb dieses Bereichs sind leerer Raum oder Menüs.
+    const jsonPrompt = `Du bist ein flexibler Elliott-Wellen-Analyst. Vor dir liegt ein TradingView-Chart auf einem Raster von 1920x1080 Pixeln (Kerzenbereich Y = 150 bis 850).
 
-Deine Aufgabe ist es, die exakten Wendepunkte (Peaks und Troughs) der echten Candlesticks zu erfassen. Tu dies für einen vollständigen Zyklus: Impuls (1,2,3,4,5) und Korrektur (A,B,C). Insgesamt müssen es exakt 8 aufeinanderfolgende Wellenpunkte sein.
+Scanne den Chart und bestimme das dominierende, sichtbare Wellenmuster. Du musst NICHT zwingend einen gesamten 8-Punkte-Zyklus erzwingen.
+- Wenn du einen sauberen Impuls siehst, zeichne die Wellen 1-5 (oder so weit, wie er fortgeschritten ist, z.B. 1-3) ein.
+- Wenn der Markt sich in einer klaren Korrektur befindet, zeichne NUR die Korrekturwellen ein (z.B. A-B-C oder komplexe Korrekturen wie W-X-Y).
 
 Regeln für deine Koordinaten-Vergabe:
-1. Setze Punkte für 1, 3, 5 und B AUSSCHLIESSLICH auf die sichtbaren, lokalen Maxima (die oberen Spitzen der Dochte).
-2. Setze Punkte für 2, 4, A und C AUSSCHLIESSLICH auf die sichtbaren, lokalen Minima (die Täler/Tiefpunkte der Dochte).
-3. Platziere NIEMALS Punkte in den freien Raum oberhalb oder unterhalb des tatsächlichen Kursverlaufs (keine Platzierung im leeren Bereich oder im 'Himmel').
+1. Setze Spitzen (z.B. 1, 3, 5, B) direkt auf lokale Hochpunkte der Kerzen-Dochte.
+2. Setze Täler (z.B. 2, 4, A, C) direkt auf lokale Tiefpunkte der Kerzen-Dochte.
+3. Versuche, die Koordinaten so präzise wie möglich zu schätzen, damit die Verbindungslinien die realen Wendepunkte im Chart berühren. Platziere NIEMALS Punkte im leeren Raum außerhalb der Kursdaten.
 
-Überprüfe vor der Koordinatenabgabe zwingend folgende mathematische Kernregeln:
-- Welle 2 darf niemals mehr als 100% der Welle 1 korrigieren.
-- Welle 3 darf niemals die kürzeste der drei Impulswellen (1, 3, 5) sein.
-- Welle 4 darf niemals in den Preisbereich von Welle 1 eindringen.
-
-Befülle das geforderte JSON-Schema fehlerfrei. Halte den 'analysis_text' absolut professionell, nenne das übergeordnete Muster und begründe kurz, warum die Wellenregeln mathematisch erfüllt sind.`;
+Befülle das JSON-Schema flexibel je nach Wellenanzahl. Nutze den 'analysis_text', um deine Zählung unbeschönigt nach den Prechter-Regeln zu begründen.`;
 
     let responseText = "";
     let attempts = 3;
@@ -125,11 +121,11 @@ Befülle das geforderte JSON-Schema fehlerfrei. Halte den 'analysis_text' absolu
                 },
                 waves: {
                   type: Type.ARRAY,
-                  description: "Liste der Wellen-Scheitelpunkte in chronologischer Reihenfolge.",
+                  description: "Liste der identifizierten Wellen-Scheitelpunkte in chronologischer Reihenfolge (variable Länge von 2 bis 8 Elementen).",
                   items: {
                     type: Type.OBJECT,
                     properties: {
-                      label: { type: Type.STRING, description: "Ziffer oder Buchstabe der Welle (z.B. 1, 2, 3, 4, 5, A, B, C)" },
+                      label: { type: Type.STRING, description: "Ziffer oder Buchstabe der Welle (z.B. 1, 2, 3, 4, 5, A, B, C, W, X, Y)" },
                       x: { type: Type.INTEGER, description: "X-Koordinate im Pixelbereich 0-1920" },
                       y: { type: Type.INTEGER, description: "Y-Koordinate im Pixelbereich 0-1080" }
                     },
@@ -182,8 +178,8 @@ Befülle das geforderte JSON-Schema fehlerfrei. Halte den 'analysis_text' absolu
     });
 
     pythonProcess.on("close", async (code) => {
-      if (code !== 0) {
-        console.error("❌ Python-Fehler:", stderrText);
+      if (code !== 0 || stdoutChunks.length === 0) {
+        console.error("❌ Python-Fehler oder leere Ausgabe:", stderrText);
         await ctx.replyWithPhoto({ source: screenshotBuffer }, { caption: `📊 Chart: ${symbol} (${rawInterval})` });
       } else {
         const outputBuffer = Buffer.concat(stdoutChunks);
