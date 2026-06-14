@@ -3,10 +3,10 @@
   "version": "1.1.0",
   "type": "module",
   "description": "Telegram Bot für flexible Elliott-Wellen-Analysen mit numerischer Datenvalidierung",
-  "main": "dist/src/index.js",
+  "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/src/index.js",
+    "start": "node dist/index.js",
     "dev": "ts-node src/index.ts"
   },
   "dependencies": {
@@ -25,3 +25,4 @@
   },
   "private": true
 }
+
