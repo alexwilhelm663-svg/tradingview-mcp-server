@@ -5,9 +5,8 @@ import { chromium } from "playwright";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Chart-Analyst Bot läuft mit Widget-Optimierung...");
+console.log("🤖 Telegram Chart-Analyst Bot läuft mit Splitted-Message-Ausgabe...");
 
-// Hilfsfunktion, um gängige Intervalle für das TV-Widget zu konvertieren
 function parseIntervalForWidget(input: string): string {
   const clean = input.toLowerCase().trim();
   if (clean === "1d" || clean === "d") return "D";
@@ -18,7 +17,7 @@ function parseIntervalForWidget(input: string): string {
   if (clean === "1h") return "60";
   if (clean === "2h") return "120";
   if (clean === "4h") return "240";
-  return "D"; // Standard-Fallback
+  return "D";
 }
 
 bot.command("analyse", async (ctx) => {
@@ -36,22 +35,16 @@ bot.command("analyse", async (ctx) => {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     viewport: { width: 1920, height: 1080 },
-    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, healthiest Gecko) Chrome/120.0.0.0 Safari/537.36"
   });
   
   const page = await context.newPage();
-
-  // Schriften blockieren bleibt als zusätzlicher Turbo aktiv
   await page.route("**/*.{woff,woff2,ttf,otf}*", (route) => route.abort());
 
-  // Die extrem schnelle Widget-URL
   const url = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(symbol)}&interval=${widgetInterval}&theme=dark`;
 
   try {
-    // Lädt dank Widget-Ansicht in unter 2 Sekunden!
     await page.goto(url, { waitUntil: "load", timeout: 20000 });
-    
-    // Kurze Pause, damit die Kerzen gerendert werden
     await page.waitForTimeout(4000); 
 
     await ctx.reply("📸 Erstelle Screenshot und starte Gemini 2.5 Flash...");
@@ -66,7 +59,6 @@ bot.command("analyse", async (ctx) => {
       },
     };
 
-    // Nutzt das unlimitierte Gemini 2.5 Flash Modell
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash", 
       contents: [
@@ -75,10 +67,13 @@ bot.command("analyse", async (ctx) => {
       ],
     });
 
+    // KORREKTUR: Bild und Text getrennt senden, um das 1024-Zeichen-Limit zu umgehen
     await ctx.replyWithPhoto(
       { source: screenshotBuffer },
-      { caption: `📊 *Analyse für ${symbol} (${rawInterval})*\n\n${response.text}`, parse_mode: "Markdown" }
+      { caption: `📊 Chart: ${symbol} (${rawInterval})` }
     );
+
+    await ctx.reply(`📝 *Technische Analyse:*\n\n${response.text}`, { parse_mode: "Markdown" });
 
   } catch (error: any) {
     await browser.close();
