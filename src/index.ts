@@ -1,54 +1,11 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { GoogleGenAI } from "@google/genai";
 import { chromium } from "playwright";
 
-const server = new Server(
-  {
-    name: "tradingview-browser-mcp",
-    version: "1.0.0",
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  }
-);
+// Initialisiert das offizielle Google GenAI SDK (erwartet die Umgebungsvariable GEMINI_API_KEY)
+const ai = new GoogleGenAI();
 
-// Definition der Tools, die der KI zur Verfügung stehen
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      {
-        name: "get_chart_screenshot",
-        description: "Öffnet einen TradingView-Chart und macht einen Screenshot für die visuelle Analyse.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            symbol: { type: "string", description: "z.B. BINANCE:BTCUSDT oder NASDAQ:TSLA" },
-            interval: { type: "string", description: "Zeitrahmen, z.B. 1m, 5m, 1h, 1D, 1W" }
-          },
-          required: ["symbol"]
-        }
-      }
-    ]
-  };
-});
-
-// Logik zur Ausführung der Tools
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  if (request.params.name !== "get_chart_screenshot") {
-    throw new Error("Tool nicht gefunden");
-  }
-
-  const { symbol, interval } = request.params.arguments as { symbol: string; interval?: string };
-  
-  // Formatierung der URL für den TradingView Chart
-  const tvInterval = interval ? `?interval=${interval}` : "";
-  const url = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}${tvInterval}`;
+async function runChartAnalysis(symbol: string, interval: string = "1h") {
+  console.log(`🚀 Starte Browser-Automation für ${symbol} (${interval})...`);
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -57,43 +14,50 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   });
   
   const page = await context.newPage();
+  const url = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}&interval=${interval}`;
 
   try {
+    // 1. Chart im Headless-Browser aufrufen
     await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
-    
-    // Warte kurz, bis sich die Indikatoren/Kerzen geladen haben
+    console.log("📊 Chart geladen. Warte 5 Sekunden auf Indikatoren...");
     await page.waitForTimeout(5000); 
 
-    // Screenshot als Base64 für das LLM aufnehmen
-    const screenshotBuffer = await page.screenshot({ type: "jpeg", quality: 85 });
-    const base64Screenshot = screenshotBuffer.toString("base64");
-
+    // 2. Screenshot als Buffer aufnehmen
+    const screenshotBuffer = await page.screenshot({ type: "jpeg", quality: 90 });
+    console.log("📸 Screenshot erfolgreich erstellt.");
     await browser.close();
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Screenshot für ${symbol} erfolgreich geladen. Siehe angehängtes Bild.`
-        },
-        {
-          type: "image",
-          data: base64Screenshot,
-          mimeType: "image/jpeg"
-        }
-      ]
+    // 3. Bild für die Gemini API vorbereiten
+    const imagePart = {
+      inlineData: {
+        data: screenshotBuffer.toString("base64"),
+        mimeType: "image/jpeg"
+      },
     };
+
+    console.log("🧠 Sende Daten an Gemini für die technische Analyse...");
+
+    // 4. Gemini die visuelle Analyse übergeben
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-pro", // Bestes Modell für mathematisch-visuelle Mustererkennung
+      contents: [
+        imagePart,
+        "Du bist ein professioneller Krypto- und Aktien-Analyst. Analysiere diesen TradingView-Chart im Detail. Achte besonders auf: 1) Marktstruktur (Trendrichtung, Support/Resistance), 2) Candlestick-Formationen an markanten Zonen, 3) Indikatoren und ggf. Chartmuster (z.B. Elliott-Wellen, Dreiecke oder Fibonacci-Level, sofern sichtbar). Gib mir ein klares, ungeschöntes charttechnisches Fazit."
+      ],
+    });
+
+    console.log("\n================ GEMINI ANALYSE ================\n");
+    console.log(response.text);
+    console.log("\n================================================\n");
+
   } catch (error: any) {
     await browser.close();
-    return {
-      isError: true,
-      content: [{ type: "text", text: `Fehler beim Scrapen von TradingView: ${error.message}` }]
-    };
+    console.error("❌ Fehler während der Ausführung:", error.message);
   }
-});
+}
 
-// Server via Stdio starten (Standard für MCP)
-const transport = new StdioServerTransport();
-await server.connect(transport);
-console.error("TradingView Browser MCP server läuft auf stdio");
+// Beispielaufruf: Du kannst das Symbol und Intervall hier anpassen
+const targetSymbol = process.env.TICKER || "BINANCE:BTCUSDT";
+const targetInterval = process.env.INTERVAL || "1D";
 
+runChartAnalysis(targetSymbol, targetInterval);
