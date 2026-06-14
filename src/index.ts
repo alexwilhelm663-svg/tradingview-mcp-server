@@ -6,7 +6,7 @@ import { chromium } from "playwright";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Chart-Analyst Bot läuft mit stabiler HTML-Ausgabe...");
+console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit stabiler HTML-Ausgabe...");
 
 // Hilfsfunktion, um gängige Intervalle für das TV-Widget sauber zu konvertieren
 function parseIntervalForWidget(input: string): string {
@@ -60,7 +60,7 @@ bot.command("analyse", async (ctx) => {
     await page.goto(url, { waitUntil: "load", timeout: 20000 });
     await page.waitForTimeout(4000); 
 
-    await ctx.reply("📸 Erstelle Screenshot und starte Gemini 2.5 Flash...");
+    await ctx.reply("📸 Erstelle Screenshot und starte Elliott-Wellen-Analyse...");
 
     const screenshotBuffer = await page.screenshot({ type: "jpeg", quality: 90 });
     await browser.close();
@@ -82,7 +82,7 @@ bot.command("analyse", async (ctx) => {
           model: "gemini-2.5-flash", 
           contents: [
             imagePart,
-            "Du bist ein Experte für technische Finanzanalyse. Analysiere diesen TradingView-Chart. Bestimme präzise die Marktstruktur (Support/Resistance) und den aktuellen Trend. Achte auf Candlestick-Muster sowie Indikatoren (oder Elliott-Wellen/Fibonacci-Level, falls sichtbar). Gib ein klares Fazit ab. WICHTIG: Halte deine gesamte Antwort kompakt, prägnant und beschränke dich auf maximal 2000 Zeichen."
+            "Du bist ein Experte für die Elliott-Wellen-Theorie und technische Analyse. Scanne diesen Chart präzise. Bestimme die primäre Marktstruktur und führe eine visuelle Elliott-Wellen-Zählung durch. Identifiziere, ob wir uns in einer Impulswelle (Wellen 1-5) oder einer Korrekturwelle (Wellen A, B, C) befinden. Beschreibe prägnant, wo du die Wellenspitzen und -täler siehst und prüfe die Kernregeln (z.B. Welle 3 darf nicht die kürzeste sein, Welle 2 korrigiert nicht über den Start von 1). Gib mir ein klares Fazit mit deiner primären Zählung. Halte deine Antwort kompakt und beschränke dich auf maximal 2000 Zeichen."
           ],
         });
         break; // Erfolgreich! Schleife verlassen.
@@ -109,7 +109,7 @@ bot.command("analyse", async (ctx) => {
 
     // 2. Text in HTML senden
     const htmlText = convertToTelegramHTML(response.text || "Keine Analyse generiert.");
-    await ctx.reply(`📝 <b>Technische Analyse:</b>\n\n${htmlText}`, { parse_mode: "HTML" });
+    await ctx.reply(`📝 <b>Elliott-Wellen-Analyse:</b>\n\n${htmlText}`, { parse_mode: "HTML" });
 
   } catch (error: any) {
     await browser.close();
@@ -119,7 +119,7 @@ bot.command("analyse", async (ctx) => {
 });
 
 bot.launch().then(() => {
-  console.log("🚀 Bot läuft erfolgreich im HTML-Modus und wartet auf Nachrichten!");
+  console.log("🚀 Bot läuft erfolgreich im Elliott-Wellen-Modus und wartet auf Nachrichten!");
 });
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
