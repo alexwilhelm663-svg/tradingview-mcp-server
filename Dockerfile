@@ -11,15 +11,15 @@ RUN apt-get update && apt-get install -y \
 # 2. Arbeitsverzeichnis im Container erstellen
 WORKDIR /app
 
-# 3. Node.js Abhängigkeiten kopieren und installieren
+# 3. Node.js Abhängigkeiten kopieren und installieren (KORREKTUR: npm install statt npm ci)
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 # 4. Python-Abhängigkeiten kopieren und über pip installieren
 COPY python_service/requirements.txt ./python_service/
 RUN pip3 install --no-cache-dir -r python_service/requirements.txt
 
-# 5. Den restlichen Quellcode (inklusive src und python_service Scripts) in den Container kopieren
+# 5. Den restlichen Quellcode in den Container kopieren
 COPY . .
 
 # 6. TypeScript-Code zu JavaScript kompilieren
