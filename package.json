@@ -1,5 +1,5 @@
 {
-  "name": "tradingview-gemini-analyzer",
+  "name": "tradingview-gemini-telegram-bot",
   "version": "1.0.0",
   "type": "module",
   "main": "build/index.js",
@@ -9,7 +9,8 @@
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
-    "playwright": "^1.42.1"
+    "playwright": "^1.42.1",
+    "telegraf": "^4.16.3"
   },
   "devDependencies": {
     "typescript": "^5.3.3"
