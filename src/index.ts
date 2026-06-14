@@ -2,13 +2,11 @@ import { GoogleGenAI } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { chromium } from "playwright";
 
-// Initialisierung der APIs über Umgebungsvariablen
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
 console.log("🤖 Telegram Chart-Analyst Bot wird gestartet...");
 
-// Reagiert auf den Befehl /analyse [SYMBOL] [INTERVALL]
 bot.command("analyse", async (ctx) => {
   const args = ctx.message.text.split(" ");
   const symbol = args[1];
@@ -28,32 +26,25 @@ bot.command("analyse", async (ctx) => {
   
   const page = await context.newPage();
 
-  // RADIKALE LÖSUNG: Wir blockieren alle Schriftart-Anfragen auf Netzwerkebene
+  // Schriften und Tracker blockieren, um das Laden radikal zu beschleunigen
   await page.route("**/*.{woff,woff2,ttf,otf}*", (route) => route.abort());
-  // Optional: Auch Tracker/Analytics blockieren, um das Laden drastisch zu beschleunigen
   await page.route("**/*analytics*", (route) => route.abort());
 
   const url = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}&interval=${interval}`;
 
   try {
-    // Wir warten nur, bis das Dokument geladen ist (nicht auf das Netzwerk)
-    await page.goto(url, { waitUntil: "commit", timeout: 20000 });
-    console.log("📊 Chart-Verbindung steht. Warte 7 Sekunden auf die visuelle Darstellung...");
+    // FELSENFEST: Wir warten NUR auf das Standard-Laden, KEIN networkidle mehr!
+    await page.goto(url, { waitUntil: "load", timeout: 30000 });
+    console.log("📊 Grundseite geladen. Warte 8 Sekunden auf Indikatoren...");
     
-    // Zeit geben, damit sich Kerzen und Indikatoren zeichnen können
-    await page.waitForTimeout(7000); 
+    // Wir geben der Seite manuell Zeit, die Kerzen zu zeichnen
+    await page.waitForTimeout(8000); 
 
-    await ctx.reply("📸 Erstelle Screenshot (Schriftarten-Timeout blockiert)...");
+    await ctx.reply("📸 Erstelle Screenshot...");
 
-    // Screenshot erzwingen
-    const screenshotBuffer = await page.screenshot({ 
-      type: "jpeg", 
-      quality: 90
-    });
-    
+    const screenshotBuffer = await page.screenshot({ type: "jpeg", quality: 90 });
     await browser.close();
 
-    // Bild für die Gemini API vorbereiten
     const imagePart = {
       inlineData: {
         data: screenshotBuffer.toString("base64"),
@@ -61,7 +52,6 @@ bot.command("analyse", async (ctx) => {
       },
     };
 
-    // Gemini-Analyse anfordern
     const response = await ai.models.generateContent({
       model: "gemini-2.5-pro",
       contents: [
@@ -70,7 +60,6 @@ bot.command("analyse", async (ctx) => {
       ],
     });
 
-    // Zurück ans Smartphone senden
     await ctx.replyWithPhoto(
       { source: screenshotBuffer },
       { caption: `📊 *Analyse für ${symbol} (${interval})*\n\n${response.text}`, parse_mode: "Markdown" }
@@ -83,11 +72,9 @@ bot.command("analyse", async (ctx) => {
   }
 });
 
-// Bot starten
 bot.launch().then(() => {
   console.log("🚀 Bot läuft erfolgreich und wartet auf Nachrichten!");
 });
 
-// Sanfter Shutdown
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
