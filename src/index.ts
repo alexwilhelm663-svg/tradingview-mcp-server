@@ -1,12 +1,12 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { chromium } from "playwright";
-import { exec } from "child_process";
+import { spawn } from "child_process"; // KORREKTUR: spawn statt exec nutzen
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit sicherem JSON-Schema...");
+console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit blockadesicherem Stream-Drawer...");
 
 interface ChatSession {
   lastScreenshotBuffer: Buffer | null;
@@ -155,18 +155,37 @@ Befülle die geforderten JSON-Felder exakt. Nutze geschätzte X/Y Pixel-Koordina
     await ctx.reply("🎨 Zeichne Elliott-Wellen-Muster in das Bild...");
 
     const jsonArg = JSON.stringify(wavesData);
-    const pythonProcess = exec(`python3 python_service/drawer.py '${jsonArg}'`, { encoding: "buffer" }, async (drawError: any, stdout: Buffer, stderr: any) => {
-      if (drawError) {
-        console.error("❌ Python-Fehler:", stderr.toString());
+    
+    // KORREKTUR: Verwende spawn() anstelle von exec() für reibungsloses Buffering
+    const pythonProcess = spawn("python3", ["python_service/drawer.py", jsonArg]);
+    
+    const stdoutChunks: Buffer[] = [];
+    let stderrText = "";
+
+    pythonProcess.stdout.on("data", (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+    });
+
+    pythonProcess.stderr.on("data", (data) => {
+      stderrText += data.toString();
+    });
+
+    pythonProcess.on("close", async (code) => {
+      if (code !== 0) {
+        console.error("❌ Python-Fehler:", stderrText);
+        // Fallback, falls das Skript fehlschlägt
         await ctx.replyWithPhoto({ source: screenshotBuffer }, { caption: `📊 Chart: ${symbol} (${rawInterval})` });
       } else {
-        await ctx.replyWithPhoto({ source: stdout }, { caption: `📈 Elliott-Wellen-Zählung: ${symbol} (${rawInterval})` });
+        // Erfolgsfall: Das zusammengefügte Ausgabebild senden
+        const outputBuffer = Buffer.concat(stdoutChunks);
+        await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📈 Elliott-Wellen-Zählung: ${symbol} (${rawInterval})` });
       }
 
+      // Textnachricht hinterher schicken
       await ctx.reply(`📝 <b>Elliott-Wellen-Analyse:</b>\n\n${convertToTelegramHTML(analysisText)}`, { parse_mode: "HTML" });
     });
 
-    // KORREKTUR: Null-Check für stdin, um TypeScript-Compiler zufrieden zu stellen
+    // Stream anstoßen und schließen
     if (pythonProcess.stdin) {
       pythonProcess.stdin.write(screenshotBuffer);
       pythonProcess.stdin.end();
