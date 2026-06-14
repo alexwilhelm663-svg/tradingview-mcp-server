@@ -1,12 +1,12 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { chromium } from "playwright";
-import { spawn } from "child_process"; // KORREKTUR: spawn statt exec nutzen
+import { spawn } from "child_process";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit blockadesicherem Stream-Drawer...");
+console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit mathematischer Regelprüfung...");
 
 interface ChatSession {
   lastScreenshotBuffer: Buffer | null;
@@ -89,9 +89,19 @@ bot.command("analyse", async (ctx) => {
       },
     };
 
-    const jsonPrompt = `Du bist ein präziser Elliott-Wellen-Analyst. Scanne diesen Weitwinkel-Chart.
-Führe eine mathematisch-visuelle Zählung durch (Impulswelle 1-5 oder Korrektur A-C).
-Befülle die geforderten JSON-Felder exakt. Nutze geschätzte X/Y Pixel-Koordinaten bezogen auf das 1920x1080 Bild, um die Linienpunkte direkt auf die Spitzen/Täler der Kerzen zu setzen.`;
+    const jsonPrompt = `Du bist ein zertifizierter Elliott-Wellen-Analyst und handelst strikt nach den Regeln von Robert Prechter.
+Analysiere den vorliegenden Chart auf dem 1920x1080 Pixel-Raster. Identifiziere den dominanten Wellengrad.
+
+Deine Aufgabe ist es, eine VOLLSTÄNDIGE Zählung bestehend aus einer Impulswelle (1, 2, 3, 4, 5) und der darauffolgenden Korrekturwelle (A, B, C) zu liefern. Insgesamt müssen es exakt 8 aufeinanderfolgende Wellenpunkte sein.
+
+Überprüfe vor der Koordinatenabgabe zwingend folgende mathematische Kernregeln:
+1. Welle 2 darf niemals mehr als 100% der Welle 1 korrigieren (der Startpunkt von Welle 1 ist die absolute Null-Linie).
+2. Welle 3 darf niemals die kürzeste der drei Impulswellen (1, 3, 5) sein. Sie ist meistens die längste und dynamischste Welle.
+3. Welle 4 darf niemals in den Preisbereich von Welle 1 eindringen (kein Overlap im klassischen Impuls).
+
+Ordne den Wellenspitzen und -tälern präzise X- und Y-Pixelkoordinaten zu, sodass die Linien exakt auf den Highs/Lows der echten Candlesticks aufliegen.
+
+Befülle das geforderte JSON-Schema fehlerfrei. Halte den 'analysis_text' absolut professionell, nenne das übergeordnete Muster und begründe kurz, warum die Wellenregeln mathematisch erfüllt sind.`;
 
     let responseText = "";
     let attempts = 3;
@@ -155,8 +165,6 @@ Befülle die geforderten JSON-Felder exakt. Nutze geschätzte X/Y Pixel-Koordina
     await ctx.reply("🎨 Zeichne Elliott-Wellen-Muster in das Bild...");
 
     const jsonArg = JSON.stringify(wavesData);
-    
-    // KORREKTUR: Verwende spawn() anstelle von exec() für reibungsloses Buffering
     const pythonProcess = spawn("python3", ["python_service/drawer.py", jsonArg]);
     
     const stdoutChunks: Buffer[] = [];
@@ -173,19 +181,15 @@ Befülle die geforderten JSON-Felder exakt. Nutze geschätzte X/Y Pixel-Koordina
     pythonProcess.on("close", async (code) => {
       if (code !== 0) {
         console.error("❌ Python-Fehler:", stderrText);
-        // Fallback, falls das Skript fehlschlägt
         await ctx.replyWithPhoto({ source: screenshotBuffer }, { caption: `📊 Chart: ${symbol} (${rawInterval})` });
       } else {
-        // Erfolgsfall: Das zusammengefügte Ausgabebild senden
         const outputBuffer = Buffer.concat(stdoutChunks);
         await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📈 Elliott-Wellen-Zählung: ${symbol} (${rawInterval})` });
       }
 
-      // Textnachricht hinterher schicken
       await ctx.reply(`📝 <b>Elliott-Wellen-Analyse:</b>\n\n${convertToTelegramHTML(analysisText)}`, { parse_mode: "HTML" });
     });
 
-    // Stream anstoßen und schließen
     if (pythonProcess.stdin) {
       pythonProcess.stdin.write(screenshotBuffer);
       pythonProcess.stdin.end();
