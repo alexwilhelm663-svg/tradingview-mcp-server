@@ -1,11 +1,25 @@
 import { GoogleGenAI } from "@google/genai";
+import { Telegraf } from "telegraf";
 import { chromium } from "playwright";
 
-// Korrigiert: Das SDK benötigt zwingend ein Konfigurationsobjekt bei der Instanziierung
+// Initialisierung der APIs über Umgebungsvariablen
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-async function runChartAnalysis(symbol: string, interval: string = "1h") {
-  console.log(`🚀 Starte Browser-Automation für ${symbol} (${interval})...`);
+console.log("🤖 Telegram Chart-Analyst Bot wird gestartet...");
+
+// Reagiert auf den Befehl /analyse [SYMBOL] [INTERVALL]
+// Beispiel im Telegram-Chat: /analyse BINANCE:BTCUSDT 4h
+bot.command("analyse", async (ctx) => {
+  const args = ctx.message.text.split(" ");
+  const symbol = args[1];
+  const interval = args[2] || "1D"; // Standardmäßig 1 Tag, falls nichts angegeben
+
+  if (!symbol) {
+    return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse NASDAQ:TSLA 4h");
+  }
+
+  await ctx.reply(`⏳ Starte Analyse für ${symbol} (${interval}). Bitte warten...`);
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -17,17 +31,15 @@ async function runChartAnalysis(symbol: string, interval: string = "1h") {
   const url = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}&interval=${interval}`;
 
   try {
-    // 1. Chart im Headless-Browser aufrufen
+    // 1. Chart laden und Screenshot machen
     await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
-    console.log("📊 Chart geladen. Warte 5 Sekunden auf Indikatoren...");
-    await page.waitForTimeout(5000); 
-
-    // 2. Screenshot als Buffer aufnehmen
+    await page.waitForTimeout(5000); // Warten auf Indikatoren
     const screenshotBuffer = await page.screenshot({ type: "jpeg", quality: 90 });
-    console.log("📸 Screenshot erfolgreich erstellt.");
     await browser.close();
 
-    // 3. Bild für die Gemini API vorbereiten
+    await ctx.reply("📸 Screenshot erstellt. Gemini analysiert jetzt die Chartstruktur...");
+
+    // 2. Bild für Gemini vorbereiten
     const imagePart = {
       inlineData: {
         data: screenshotBuffer.toString("base64"),
@@ -35,29 +47,31 @@ async function runChartAnalysis(symbol: string, interval: string = "1h") {
       },
     };
 
-    console.log("🧠 Sende Daten an Gemini für die technische Analyse...");
-
-    // 4. Gemini die visuelle Analyse übergeben
+    // 3. Gemini-Analyse anfordern
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-pro", // Bestes Modell für mathematisch-visuelle Mustererkennung
+      model: "gemini-2.5-pro",
       contents: [
         imagePart,
-        "Du bist ein professioneller Krypto- und Aktien-Analyst. Analysiere diesen TradingView-Chart im Detail. Achte besonders auf: 1) Marktstruktur (Trendrichtung, Support/Resistance), 2) Candlestick-Formationen an markanten Zonen, 3) Indikatoren und ggf. Chartmuster (z.B. Elliott-Wellen, Dreiecke oder Fibonacci-Level, sofern sichtbar). Gib mir ein klares, ungeschöntes charttechnisches Fazit."
+        "Du bist ein professioneller technischer Analyst. Analysiere diesen TradingView-Chart präzise. Achte auf Marktstruktur (Support/Resistance), Candlestick-Muster und Indikatoren (z.B. Elliott-Wellen oder Fibonacci-Level, falls erkennbar). Gib ein klares charttechnisches Fazit ab."
       ],
     });
 
-    console.log("\n================ GEMINI ANALYSE ================\n");
-    console.log(response.text);
-    console.log("\n================================================\n");
+    // 4. Screenshot und Text zusammen zurück an dein Handy schicken
+    await ctx.replyWithPhoto(
+      { source: screenshotBuffer },
+      { caption: `📊 *Analyse für ${symbol} (${interval})*\n\n${response.text}`, parse_mode: "Markdown" }
+    );
 
   } catch (error: any) {
     await browser.close();
-    console.error("❌ Fehler während der Ausführung:", error.message);
+    console.error(error);
+    await ctx.reply(`❌ Fehler bei der Analyse: ${error.message}`);
   }
-}
+});
 
-// Standardwerte aus den Umgebungsvariablen ziehen
-const targetSymbol = process.env.TICKER || "BINANCE:BTCUSDT";
-const targetInterval = process.env.INTERVAL || "1D";
+// Bot starten
+bot.launch();
 
-runChartAnalysis(targetSymbol, targetInterval);
+// Sanfter Shutdown bei Server-Stopp
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
