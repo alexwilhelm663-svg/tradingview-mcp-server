@@ -9,11 +9,10 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 console.log("🤖 Telegram Chart-Analyst Bot wird gestartet...");
 
 // Reagiert auf den Befehl /analyse [SYMBOL] [INTERVALL]
-// Beispiel im Telegram-Chat: /analyse BINANCE:BTCUSDT 4h
 bot.command("analyse", async (ctx) => {
   const args = ctx.message.text.split(" ");
   const symbol = args[1];
-  const interval = args[2] || "1D"; // Standardmäßig 1 Tag, falls nichts angegeben
+  const interval = args[2] || "1D";
 
   if (!symbol) {
     return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse NASDAQ:TSLA 4h");
@@ -28,29 +27,33 @@ bot.command("analyse", async (ctx) => {
   });
   
   const page = await context.newPage();
+
+  // RADIKALE LÖSUNG: Wir blockieren alle Schriftart-Anfragen auf Netzwerkebene
+  await page.route("**/*.{woff,woff2,ttf,otf}*", (route) => route.abort());
+  // Optional: Auch Tracker/Analytics blockieren, um das Laden drastisch zu beschleunigen
+  await page.route("**/*analytics*", (route) => route.abort());
+
   const url = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}&interval=${interval}`;
 
   try {
-    // 1. Chart laden (Wir warten auf das DOM, da TradingView permanent Daten streamt)
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    console.log("📊 Chart-Grundgerüst geladen. Warte 6 Sekunden auf Kerzen und Indikatoren...");
+    // Wir warten nur, bis das Dokument geladen ist (nicht auf das Netzwerk)
+    await page.goto(url, { waitUntil: "commit", timeout: 20000 });
+    console.log("📊 Chart-Verbindung steht. Warte 7 Sekunden auf die visuelle Darstellung...");
     
-    // Dem Chart Zeit geben, sich visuell vollständig aufzubauen
-    await page.waitForTimeout(6000); 
+    // Zeit geben, damit sich Kerzen und Indikatoren zeichnen können
+    await page.waitForTimeout(7000); 
 
-    await ctx.reply("📸 Screenshot wird erstellt. Gemini analysiert jetzt die Chartstruktur...");
+    await ctx.reply("📸 Erstelle Screenshot (Schriftarten-Timeout blockiert)...");
 
-    // 2. Screenshot aufnehmen (_bypassFontLoading verhindert Timeouts durch fehlende System-Schriftarten)
+    // Screenshot erzwingen
     const screenshotBuffer = await page.screenshot({ 
       type: "jpeg", 
-      quality: 90,
-      // @ts-ignore
-      _bypassFontLoading: true 
+      quality: 90
     });
     
     await browser.close();
 
-    // 3. Bild für die Gemini API vorbereiten
+    // Bild für die Gemini API vorbereiten
     const imagePart = {
       inlineData: {
         data: screenshotBuffer.toString("base64"),
@@ -58,16 +61,16 @@ bot.command("analyse", async (ctx) => {
       },
     };
 
-    // 4. Gemini-Analyse anfordern
+    // Gemini-Analyse anfordern
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-pro", // Bestes Modell für mathematisch-visuelle Analysen
+      model: "gemini-2.5-pro",
       contents: [
         imagePart,
         "Du bist ein professioneller Experte für technische Analyse. Analysiere diesen TradingView-Chart präzise. Bestimme die primäre Marktstruktur und den Trend. Achte auf markante Candlestick-Muster sowie auf Indikatoren, Fibonacci-Level oder Elliott-Wellen-Zählungen, falls diese im Chart eingezeichnet oder erkennbar sind. Gib ein unbeschönigtes, klares Fazit ab."
       ],
     });
 
-    // 5. Screenshot und Text zusammen zurück an dein Handy schicken
+    // Zurück ans Smartphone senden
     await ctx.replyWithPhoto(
       { source: screenshotBuffer },
       { caption: `📊 *Analyse für ${symbol} (${interval})*\n\n${response.text}`, parse_mode: "Markdown" }
@@ -85,6 +88,6 @@ bot.launch().then(() => {
   console.log("🚀 Bot läuft erfolgreich und wartet auf Nachrichten!");
 });
 
-// Sanfter Shutdown bei Server-Stopp
+// Sanfter Shutdown
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
