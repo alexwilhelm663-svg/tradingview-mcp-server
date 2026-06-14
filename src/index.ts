@@ -2,7 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { chromium } from "playwright";
 import { spawn } from "child_process";
-import yahooFinance from "yahoo-finance2"; // NEU: Datenschnittstelle
+import yahooFinance from "yahoo-finance2";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
@@ -33,13 +33,12 @@ function parseIntervalForWidget(input: string): string {
   return "D";
 }
 
-// Übersetzer für Yahoo Finance Intervalle
 function parseIntervalForYahoo(input: string): "1m" | "2m" | "5m" | "15m" | "30m" | "60m" | "90m" | "1h" | "1d" | "5d" | "1wk" | "1mo" | "3mo" {
   const clean = input.toLowerCase().trim();
   if (clean === "1m" || clean === "m") return "1mo";
   if (clean === "1w" || clean === "w") return "1wk";
   if (clean === "1d" || clean === "d") return "1d";
-  if (clean === "4h") return "1h"; // Fallback auf Stundenbasis
+  if (clean === "4h") return "1h";
   if (clean === "1h") return "1h";
   return "1d";
 }
@@ -64,7 +63,6 @@ bot.command("analyse", async (ctx) => {
     return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse TEAM 1w");
   }
 
-  // Bereinigung für Yahoo Finance (z.B. NASDAQ:TEAM -> TEAM)
   const yahooSymbol = symbol.includes(":") ? symbol.split(":")[1] : symbol;
   const widgetInterval = parseIntervalForWidget(rawInterval);
   const yahooInterval = parseIntervalForYahoo(rawInterval);
@@ -73,18 +71,21 @@ bot.command("analyse", async (ctx) => {
 
   let historicalData = "";
   try {
-    // Holen der echten historischen Kerzen (letzten 150 Einheiten)
     const today = new Date();
     const priorDate = new Date(new Date().setDate(today.getDate() - 500));
     
-    const queryResult = await yahooFinance.historical(yahooSymbol, {
+    // KORREKTUR: Explizite Typisierung des Ergebnisses als 'any', um tsc-Fehler zu vermeiden
+    const queryResult: any = await yahooFinance.historical(yahooSymbol, {
       period1: priorDate.toISOString().split("T")[0],
       interval: yahooInterval
     });
 
-    // Wir extrahieren die wichtigsten mathematischen Swings für Gemini als Text-Tabelle
-    const slice = queryResult.slice(-60); // Die letzten 60 relevanten Kerzen
-    historicalData = slice.map(c => `Datum: ${c.date.toISOString().split("T")[0]} -> High: ${c.high.toFixed(2)}, Low: ${c.low.toFixed(2)}, Close: ${c.close.toFixed(2)}`).join("\n");
+    if (queryResult && Array.isArray(queryResult)) {
+      const slice = queryResult.slice(-60);
+      historicalData = slice
+        .map((c: any) => `Datum: ${c.date instanceof Date ? c.date.toISOString().split("T")[0] : String(c.date)} -> High: ${Number(c.high).toFixed(2)}, Low: ${Number(c.low).toFixed(2)}, Close: ${Number(c.close).toFixed(2)}`)
+        .join("\n");
+    }
   } catch (dataError) {
     console.warn("⚠️ Yahoo Finance Daten-Abruf fehlgeschlagen. Fahre rein visuell fort.");
   }
@@ -129,7 +130,6 @@ bot.command("analyse", async (ctx) => {
       },
     };
 
-    // DER INTEGRATIONS-PROMPT: Bild + echte numerische Marktdaten vereint
     const jsonPrompt = `Du bist ein unbestechlicher Elliott-Wellen-Analyst. Vor dir liegt ein TradingView-Chart (1920x1080 Pixel).
 Der reale Kerzenbereich befindet sich AUSSCHLIESSLICH vertikal zwischen Y = 180 und Y = 850. Alles außerhalb ist leerer Raum.
 
@@ -234,7 +234,6 @@ Befülle das JSON-Schema präzise. Die X/Y Koordinaten müssen exakt auf den rea
   }
 });
 
-// Rückfragen-Handler
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const userQuestion = ctx.message.text;
