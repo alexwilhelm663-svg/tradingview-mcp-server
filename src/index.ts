@@ -6,7 +6,7 @@ import { spawn } from "child_process";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit mathematischer Regelprüfung...");
+console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit mathematischer Raster-Validierung...");
 
 interface ChatSession {
   lastScreenshotBuffer: Buffer | null;
@@ -89,17 +89,20 @@ bot.command("analyse", async (ctx) => {
       },
     };
 
-    const jsonPrompt = `Du bist ein zertifizierter Elliott-Wellen-Analyst und handelst strikt nach den Regeln von Robert Prechter.
-Analysiere den vorliegenden Chart auf dem 1920x1080 Pixel-Raster. Identifiziere den dominanten Wellengrad.
+    const jsonPrompt = `Du bist ein hochentwickelter Elliott-Wellen-Analyst. Vor dir liegt ein TradingView-Chart auf einem Raster von 1920x1080 Pixeln.
+Der Chartbereich (die Kerzen) befindet sich logisch zwischen Y = 150 (oben) und Y = 850 (unten). Die Ränder außerhalb dieses Bereichs sind leerer Raum oder Menüs.
 
-Deine Aufgabe ist es, eine VOLLSTÄNDIGE Zählung bestehend aus einer Impulswelle (1, 2, 3, 4, 5) und der darauffolgenden Korrekturwelle (A, B, C) zu liefern. Insgesamt müssen es exakt 8 aufeinanderfolgende Wellenpunkte sein.
+Deine Aufgabe ist es, die exakten Wendepunkte (Peaks und Troughs) der echten Candlesticks zu erfassen. Tu dies für einen vollständigen Zyklus: Impuls (1,2,3,4,5) und Korrektur (A,B,C). Insgesamt müssen es exakt 8 aufeinanderfolgende Wellenpunkte sein.
+
+Regeln für deine Koordinaten-Vergabe:
+1. Setze Punkte für 1, 3, 5 und B AUSSCHLIESSLICH auf die sichtbaren, lokalen Maxima (die oberen Spitzen der Dochte).
+2. Setze Punkte für 2, 4, A und C AUSSCHLIESSLICH auf die sichtbaren, lokalen Minima (die Täler/Tiefpunkte der Dochte).
+3. Platziere NIEMALS Punkte in den freien Raum oberhalb oder unterhalb des tatsächlichen Kursverlaufs (keine Platzierung im leeren Bereich oder im 'Himmel').
 
 Überprüfe vor der Koordinatenabgabe zwingend folgende mathematische Kernregeln:
-1. Welle 2 darf niemals mehr als 100% der Welle 1 korrigieren (der Startpunkt von Welle 1 ist die absolute Null-Linie).
-2. Welle 3 darf niemals die kürzeste der drei Impulswellen (1, 3, 5) sein. Sie ist meistens die längste und dynamischste Welle.
-3. Welle 4 darf niemals in den Preisbereich von Welle 1 eindringen (kein Overlap im klassischen Impuls).
-
-Ordne den Wellenspitzen und -tälern präzise X- und Y-Pixelkoordinaten zu, sodass die Linien exakt auf den Highs/Lows der echten Candlesticks aufliegen.
+- Welle 2 darf niemals mehr als 100% der Welle 1 korrigieren.
+- Welle 3 darf niemals die kürzeste der drei Impulswellen (1, 3, 5) sein.
+- Welle 4 darf niemals in den Preisbereich von Welle 1 eindringen.
 
 Befülle das geforderte JSON-Schema fehlerfrei. Halte den 'analysis_text' absolut professionell, nenne das übergeordnete Muster und begründe kurz, warum die Wellenregeln mathematisch erfüllt sind.`;
 
@@ -164,7 +167,7 @@ Befülle das geforderte JSON-Schema fehlerfrei. Halte den 'analysis_text' absolu
 
     await ctx.reply("🎨 Zeichne Elliott-Wellen-Muster in das Bild...");
 
-    const jsonArg = JSON.stringify(wavesData);
+    const jsonArg = JSON.stringify({ waves: wavesData });
     const pythonProcess = spawn("python3", ["python_service/drawer.py", jsonArg]);
     
     const stdoutChunks: Buffer[] = [];
