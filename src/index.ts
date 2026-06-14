@@ -1,8 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
 import { chromium } from "playwright";
 
-// Initialisiert das offizielle Google GenAI SDK (erwartet die Umgebungsvariable GEMINI_API_KEY)
-const ai = new GoogleGenAI();
+// Korrigiert: Das SDK benötigt zwingend ein Konfigurationsobjekt bei der Instanziierung
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 async function runChartAnalysis(symbol: string, interval: string = "1h") {
   console.log(`🚀 Starte Browser-Automation für ${symbol} (${interval})...`);
@@ -56,7 +56,7 @@ async function runChartAnalysis(symbol: string, interval: string = "1h") {
   }
 }
 
-// Beispielaufruf: Du kannst das Symbol und Intervall hier anpassen
+// Standardwerte aus den Umgebungsvariablen ziehen
 const targetSymbol = process.env.TICKER || "BINANCE:BTCUSDT";
 const targetInterval = process.env.INTERVAL || "1D";
 
