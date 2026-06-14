@@ -9,10 +9,10 @@
     "dev": "ts-node src/index.ts"
   },
   "dependencies": {
-    "@google/genai": "^0.1.1",
-    "playwright": "^1.44.0",
-    "telegraf": "^4.16.3",
-    "yahoo-finance2": "*"
+    "@google/genai": "latest",
+    "playwright": "latest",
+    "telegraf": "latest",
+    "yahoo-finance2": "latest"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
