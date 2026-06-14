@@ -101,7 +101,6 @@ Befülle die geforderten JSON-Felder exakt. Nutze geschätzte X/Y Pixel-Koordina
         const response = await ai.models.generateContent({
           model: "gemini-2.5-flash",
           contents: [imagePart, jsonPrompt],
-          // HIER ERZWINGEN WIR DAS SCHEAM: Gemini DARF nichts anderes zurückgeben
           config: {
             responseMimeType: "application/json",
             responseSchema: {
@@ -141,7 +140,6 @@ Befülle die geforderten JSON-Felder exakt. Nutze geschätzte X/Y Pixel-Koordina
       }
     }
 
-    // Parsen ist jetzt absolut sicher, da die API sauberes JSON garantiert
     const result = JSON.parse(responseText.trim());
     const wavesData = result.waves || [];
     const analysisText = result.analysis_text || "Keine Analyse generiert.";
@@ -168,8 +166,13 @@ Befülle die geforderten JSON-Felder exakt. Nutze geschätzte X/Y Pixel-Koordina
       await ctx.reply(`📝 <b>Elliott-Wellen-Analyse:</b>\n\n${convertToTelegramHTML(analysisText)}`, { parse_mode: "HTML" });
     });
 
-    pythonProcess.stdin.write(screenshotBuffer);
-    pythonProcess.stdin.end();
+    // KORREKTUR: Null-Check für stdin, um TypeScript-Compiler zufrieden zu stellen
+    if (pythonProcess.stdin) {
+      pythonProcess.stdin.write(screenshotBuffer);
+      pythonProcess.stdin.end();
+    } else {
+      throw new Error("Konnte den Bild-Stream an Python nicht öffnen.");
+    }
 
   } catch (error: any) {
     await browser.close();
