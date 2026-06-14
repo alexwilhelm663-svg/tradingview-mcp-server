@@ -19,7 +19,7 @@ function parseIntervalForWidget(input: string): string {
   if (clean === "1h") return "60";
   if (clean === "2h") return "120";
   if (clean === "4h") return "240";
-  return "D"; // Standard-Fallback, falls nichts übergeben wurde
+  return "D"; // Standard-Fallback
 }
 
 // Konvertiert einfaches Markdown von Gemini in absolut sicheres Telegram-HTML
@@ -28,9 +28,9 @@ function convertToTelegramHTML(text: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>") // Fett-Formatierung: **text** -> <b>text</b>
-    .replace(/\*(.*?)\*/g, "<i>$1</i>")     // Kursiv-Formatierung: *text* -> <i>text</i>
-    .replace(/`(.*?)`/g, "<code>$1</code>"); // Monospace/Codeblock: `text` -> <code>text</code>
+    .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>") // Fett
+    .replace(/\*(.*?)\*/g, "<i>$1</i>")     // Kursiv
+    .replace(/`(.*?)`/g, "<code>$1</code>"); // Monospace
 }
 
 bot.command("analyse", async (ctx) => {
@@ -52,10 +52,75 @@ bot.command("analyse", async (ctx) => {
   });
   
   const page = await context.newPage();
-  
-  // Schriften blockieren, um das Laden im Docker-Container massiv zu beschleunigen
   await page.route("**/*.{woff,woff2,ttf,otf}*", (route) => route.abort());
 
-  // Die extrem schnelle und schlanke Widget-URL
-  const
+  const url = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(symbol)}&interval=${widgetInterval}&theme=dark`;
+
+  try {
+    await page.goto(url, { waitUntil: "load", timeout: 20000 });
+    await page.waitForTimeout(4000); 
+
+    await ctx.reply("📸 Erstelle Screenshot und starte Gemini 2.5 Flash...");
+
+    const screenshotBuffer = await page.screenshot({ type: "jpeg", quality: 90 });
+    await browser.close();
+
+    const imagePart = {
+      inlineData: {
+        data: screenshotBuffer.toString("base64"),
+        mimeType: "image/jpeg"
+      },
+    };
+
+    // Automatischer Retry-Mechanismus bei temporärer Google-Überlastung (Fehler 503)
+    let response;
+    let attempts = 3;
     
+    while (attempts > 0) {
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-2.5-flash", 
+          contents: [
+            imagePart,
+            "Du bist ein Experte für technische Finanzanalyse. Analysiere diesen TradingView-Chart. Bestimme präzise die Marktstruktur (Support/Resistance) und den aktuellen Trend. Achte auf Candlestick-Muster sowie Indikatoren (oder Elliott-Wellen/Fibonacci-Level, falls sichtbar). Gib ein klares Fazit ab. WICHTIG: Halte deine gesamte Antwort kompakt, prägnant und beschränke dich auf maximal 2000 Zeichen."
+          ],
+        });
+        break; // Erfolgreich! Schleife verlassen.
+      } catch (apiError: any) {
+        attempts--;
+        if (apiError.status === 503 || apiError.message?.includes("503")) {
+          console.log(`⚠️ Google Server ausgelastet (503). Erneuter Versuch... (${attempts} Versuche übrig)`);
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        } else {
+          throw apiError;
+        }
+      }
+    }
+
+    if (!response) {
+      throw new Error("Google API-Server dauerhaft überlastet. Bitte versuche es gleich noch einmal.");
+    }
+
+    // 1. Reines Bild senden
+    await ctx.replyWithPhoto(
+      { source: screenshotBuffer },
+      { caption: `📊 Chart: ${symbol} (${rawInterval})` }
+    );
+
+    // 2. Text in HTML senden
+    const htmlText = convertToTelegramHTML(response.text || "Keine Analyse generiert.");
+    await ctx.reply(`📝 <b>Technische Analyse:</b>\n\n${htmlText}`, { parse_mode: "HTML" });
+
+  } catch (error: any) {
+    await browser.close();
+    console.error("❌ Fehler bei der Ausführung:", error);
+    await ctx.reply(`❌ Fehler bei der Analyse: ${error.message}`);
+  }
+});
+
+bot.launch().then(() => {
+  console.log("🚀 Bot läuft erfolgreich im HTML-Modus und wartet auf Nachrichten!");
+});
+
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
