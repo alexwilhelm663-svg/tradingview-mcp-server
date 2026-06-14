@@ -5,7 +5,7 @@ import { chromium } from "playwright";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Chart-Analyst Bot läuft mit Splitted-Message-Ausgabe...");
+console.log("🤖 Telegram Chart-Analyst Bot läuft mit stabiler MarkdownV2-Formatierung...");
 
 function parseIntervalForWidget(input: string): string {
   const clean = input.toLowerCase().trim();
@@ -18,6 +18,12 @@ function parseIntervalForWidget(input: string): string {
   if (clean === "2h") return "120";
   if (clean === "4h") return "240";
   return "D";
+}
+
+// Hilfsfunktion, um kritische Zeichen für Telegrams MarkdownV2 sicher zu escapen
+function escapeMarkdownV2(text: string): string {
+  // Escapt alle Zeichen, die in Telegram V2 außerhalb von Codeblocks/Entities Probleme machen
+  return text.replace(/([_*[\]()~`>#+\-=|{}.!])/g, "\\$1");
 }
 
 bot.command("analyse", async (ctx) => {
@@ -35,7 +41,7 @@ bot.command("analyse", async (ctx) => {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     viewport: { width: 1920, height: 1080 },
-    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, healthiest Gecko) Chrome/120.0.0.0 Safari/537.36"
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
   });
   
   const page = await context.newPage();
@@ -63,17 +69,19 @@ bot.command("analyse", async (ctx) => {
       model: "gemini-2.5-flash", 
       contents: [
         imagePart,
-        "Du bist ein Experte für technische Finanzanalyse. Analysiere diesen TradingView-Chart. Bestimme die Marktstruktur und den aktuellen Trend. Achte auf Candlestick-Muster, Unterstützungen/Widerstände sowie Indikatoren (oder Elliott-Wellen/Fibonacci-Level, falls sichtbar). Gib ein klares, unbeschönigtes Fazit."
+        "Du bist ein Experte für technische Finanzanalyse. Analysiere diesen TradingView-Chart. Bestimme die Marktstruktur und den aktuellen Trend. Achte auf Candlestick-Muster, Unterstützungen/Widerstände sowie Indikatoren (oder Elliott-Wellen/Fibonacci-Level, falls sichtbar). Gib ein klares, unbeschönigtes Fazit. Nutze eine saubere Struktur, aber verzichte komplett auf komplexe Sonderzeichen-Verschachtelungen."
       ],
     });
 
-    // KORREKTUR: Bild und Text getrennt senden, um das 1024-Zeichen-Limit zu umgehen
+    // 1. Reines Bild senden
     await ctx.replyWithPhoto(
       { source: screenshotBuffer },
       { caption: `📊 Chart: ${symbol} (${rawInterval})` }
     );
 
-    await ctx.reply(`📝 *Technische Analyse:*\n\n${response.text}`, { parse_mode: "Markdown" });
+    // 2. Text durch den Escaper jagen und mit MarkdownV2 senden
+    const cleanText = escapeMarkdownV2(response.text || "Keine Analyse generiert.");
+    await ctx.reply(`📝 *Technische Analyse:*\n\n${cleanText}`, { parse_mode: "MarkdownV2" });
 
   } catch (error: any) {
     await browser.close();
