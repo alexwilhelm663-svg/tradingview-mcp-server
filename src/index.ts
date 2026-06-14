@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { chromium } from "playwright";
 import { exec } from "child_process";
@@ -6,7 +6,7 @@ import { exec } from "child_process";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit Python-Drawer...");
+console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit sicherem JSON-Schema...");
 
 interface ChatSession {
   lastScreenshotBuffer: Buffer | null;
@@ -91,18 +91,7 @@ bot.command("analyse", async (ctx) => {
 
     const jsonPrompt = `Du bist ein präziser Elliott-Wellen-Analyst. Scanne diesen Weitwinkel-Chart.
 Führe eine mathematisch-visuelle Zählung durch (Impulswelle 1-5 oder Korrektur A-C).
-Antworte AUSSCHLIESSLICH im folgenden JSON-Format ohne zusätzlichen Text drumherum:
-{
-  "analysis_text": "Deine kompakte Analyse (Trend, Struktur, Wellengrad) hier (max 1500 Zeichen).",
-  "waves": [
-    {"label": "1", "x": 250, "y": 600},
-    {"label": "2", "x": 410, "y": 720},
-    {"label": "3", "x": 680, "y": 310},
-    {"label": "4", "x": 820, "y": 490},
-    {"label": "5", "x": 1100, "y": 150}
-  ]
-}
-Nutze exakte, geschätzte X/Y Pixel-Koordinaten bezogen auf das 1920x1080 Bild, um die Linienpunkte direkt auf die Spitzen/Täler der Kerzen zu setzen.`;
+Befülle die geforderten JSON-Felder exakt. Nutze geschätzte X/Y Pixel-Koordinaten bezogen auf das 1920x1080 Bild, um die Linienpunkte direkt auf die Spitzen/Täler der Kerzen zu setzen.`;
 
     let responseText = "";
     let attempts = 3;
@@ -112,6 +101,33 @@ Nutze exakte, geschätzte X/Y Pixel-Koordinaten bezogen auf das 1920x1080 Bild, 
         const response = await ai.models.generateContent({
           model: "gemini-2.5-flash",
           contents: [imagePart, jsonPrompt],
+          // HIER ERZWINGEN WIR DAS SCHEAM: Gemini DARF nichts anderes zurückgeben
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                analysis_text: { 
+                  type: Type.STRING, 
+                  description: "Kompakte technische Analyse und Wellengrad-Erklärung (max 1500 Zeichen)." 
+                },
+                waves: {
+                  type: Type.ARRAY,
+                  description: "Liste der Wellen-Scheitelpunkte in chronologischer Reihenfolge.",
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      label: { type: Type.STRING, description: "Ziffer oder Buchstabe der Welle (z.B. 1, 2, 3, 4, 5, A, B, C)" },
+                      x: { type: Type.INTEGER, description: "X-Koordinate im Pixelbereich 0-1920" },
+                      y: { type: Type.INTEGER, description: "Y-Koordinate im Pixelbereich 0-1080" }
+                    },
+                    required: ["label", "x", "y"]
+                  }
+                }
+              },
+              required: ["analysis_text", "waves"]
+            }
+          }
         });
         responseText = response.text || "";
         break;
@@ -125,40 +141,33 @@ Nutze exakte, geschätzte X/Y Pixel-Koordinaten bezogen auf das 1920x1080 Bild, 
       }
     }
 
-    // JSON-Parsing absichern, falls Gemini Markdown-Code-Blöcke mitsendet
-    const cleanJsonString = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
-    const result = JSON.parse(cleanJsonString);
+    // Parsen ist jetzt absolut sicher, da die API sauberes JSON garantiert
+    const result = JSON.parse(responseText.trim());
     const wavesData = result.waves || [];
     const analysisText = result.analysis_text || "Keine Analyse generiert.";
 
-    // Verlauf für Rückfragen sichern
     chatSessions[chatId] = {
       lastScreenshotBuffer: screenshotBuffer,
       history: [
-        { role: "user", text: "[Chart-Bild] + " + jsonPrompt },
+        { role: "user", text: "[Chart-Bild] + Elliott-Wellen-Analyse angefordert." },
         { role: "model", text: analysisText }
       ]
     };
 
     await ctx.reply("🎨 Zeichne Elliott-Wellen-Muster in das Bild...");
 
-    // Python-Skript aufrufen und JSON als Argument mitgeben
     const jsonArg = JSON.stringify(wavesData);
     const pythonProcess = exec(`python3 python_service/drawer.py '${jsonArg}'`, { encoding: "buffer" }, async (drawError: any, stdout: Buffer, stderr: any) => {
       if (drawError) {
         console.error("❌ Python-Fehler:", stderr.toString());
-        // Fallback: Sende das unbemalte Bild bei Skript-Fehlern
         await ctx.replyWithPhoto({ source: screenshotBuffer }, { caption: `📊 Chart: ${symbol} (${rawInterval})` });
       } else {
-        // Bemaltes Bild senden
         await ctx.replyWithPhoto({ source: stdout }, { caption: `📈 Elliott-Wellen-Zählung: ${symbol} (${rawInterval})` });
       }
 
-      // Text-Analyse senden
       await ctx.reply(`📝 <b>Elliott-Wellen-Analyse:</b>\n\n${convertToTelegramHTML(analysisText)}`, { parse_mode: "HTML" });
     });
 
-    // Original-Bild an Python-Skript streamen
     pythonProcess.stdin.write(screenshotBuffer);
     pythonProcess.stdin.end();
 
@@ -169,7 +178,6 @@ Nutze exakte, geschätzte X/Y Pixel-Koordinaten bezogen auf das 1920x1080 Bild, 
   }
 });
 
-// Rückfragen-Handler bleibt aktiv
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const userQuestion = ctx.message.text;
