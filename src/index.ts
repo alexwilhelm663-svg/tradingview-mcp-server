@@ -6,7 +6,7 @@ import { spawn } from "child_process";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft im flexiblen Multi-Grad-Modus...");
+console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft mit korrigiertem Monats-Parsing...");
 
 interface ChatSession {
   lastScreenshotBuffer: Buffer | null;
@@ -15,17 +15,25 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
+// Korrigierte Funktion für das TradingView-Widget
 function parseIntervalForWidget(input: string): string {
   const clean = input.toLowerCase().trim();
-  if (clean === "1d" || clean === "d") return "D";
-  if (clean === "1w" || clean === "w") return "W";
-  if (clean === "1m" || clean === "m") return "1";
-  if (clean === "5m") return "5";
-  if (clean === "15m") return "15";
-  if (clean === "1h") return "60";
-  if (clean === "2h") return "120";
-  if (clean === "4h") return "240";
-  return "D";
+  
+  // Monats-, Wochen- und Tages-Charts
+  if (clean === "1m" || clean === "m" || clean === "mo" || clean === "monat") return "M"; // "M" = Monthly (Monat)
+  if (clean === "1w" || clean === "w" || clean === "woche") return "W";                  // "W" = Weekly (Woche)
+  if (clean === "1d" || clean === "d" || clean === "tag") return "D";                    // "D" = Daily (Tag)
+  
+  // Intraday Minuten- und Stunden-Intervalle (Widget erwartet reine Zahlen-Strings für Minuten)
+  if (clean === "1" || clean === "1min" || clean === "1p") return "1";                  // "1" = 1 Minute
+  if (clean === "5m" || clean === "5") return "5";                                      // "5" = 5 Minuten
+  if (clean === "15m" || clean === "15") return "15";                                  // "15" = 15 Minuten
+  if (clean === "30m" || clean === "30") return "30";                                  // "30" = 30 Minuten
+  if (clean === "1h" || clean === "60") return "60";                                    // "60" = 1 Stunde (60 Min)
+  if (clean === "2h" || clean === "120") return "120";                                  // "120" = 2 Stunden (120 Min)
+  if (clean === "4h" || clean === "240") return "240";                                  // "240" = 4 Stunden (240 Min)
+  
+  return "D"; // Standard-Fallback auf Tagesbasis
 }
 
 function convertToTelegramHTML(text: string): string {
@@ -212,7 +220,7 @@ bot.on("text", async (ctx) => {
     return ctx.reply("❌ Ich habe noch keinen Chart im Speicher. Bitte starte zuerst eine Analyse mit `/analyse`.");
   }
 
-  await ctx.reply("🤔 Analysiere deine Rückfrage zum Chart...");
+  await ctx.reply("🤔 Analysiere deine Rückfrage zum Chart......");
 
   try {
     const imagePart = {
