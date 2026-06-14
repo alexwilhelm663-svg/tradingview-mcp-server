@@ -1,6 +1,7 @@
 {
   "name": "elliott-wellen-bot",
   "version": "1.1.0",
+  "type": "module",
   "description": "Telegram Bot für flexible Elliott-Wellen-Analysen mit numerischer Datenvalidierung",
   "main": "dist/src/index.js",
   "scripts": {
