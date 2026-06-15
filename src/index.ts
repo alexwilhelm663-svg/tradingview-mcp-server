@@ -1,4 +1,4 @@
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft im fehlerfreien Safety-Bypass-Modus...");
+console.log("🤖 Bot läuft im unblockierbaren JSON-Strukturmodus...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -37,19 +37,6 @@ function getWeekNumber(dateStr: string): string {
   return `${d.getUTCFullYear()}-W${weekNo}`;
 }
 
-function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
-  const waves: Array<{ label: string; date: string }> = [];
-  const regex = /\[(?:Welle\s+)?([12345ABCWXYiIvcV()]+):\s*(\d{4}-\d{2}-\d{2})\]/g;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    waves.push({
-      label: match[1].trim(),
-      date: match[2].trim()
-    });
-  }
-  return waves;
-}
-
 bot.command("analyse", async (ctx) => {
   const chatId = ctx.chat.id;
   const args = ctx.message.text.split(" ");
@@ -68,7 +55,7 @@ bot.command("analyse", async (ctx) => {
     cleanSymbol = "P911.DE";
   }
 
-  await ctx.reply(`⏳ Extrahiere 3-Jahres-Historie für ${cleanSymbol} via Yahoo REST...`);
+  await ctx.reply(`⏳ Extrahiere historische Daten für ${cleanSymbol} via Yahoo REST...`);
 
   let candlesArray: Array<{ date: string; open: string; high: string; low: string; close: string }> = [];
   let finalIntervalLabel = "1W";
@@ -89,7 +76,7 @@ bot.command("analyse", async (ctx) => {
     const result = resData?.chart?.result?.[0];
     
     if (!result || !result.timestamp) {
-      throw new Error("Symbol existiert nicht oder Verbindung wurde blockiert.");
+      throw new Error("Symbol an der API nicht verfügbar oder IP blockiert.");
     }
 
     const timestamps = result.timestamp;
@@ -125,7 +112,7 @@ bot.command("analyse", async (ctx) => {
           low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
         };
-      }).slice(-90); // Kompakter Context
+      }).slice(-80);
 
     } else if (requestedInterval === "1m" || requestedInterval === "m" || requestedInterval === "mo") {
       finalIntervalLabel = "1M";
@@ -146,11 +133,11 @@ bot.command("analyse", async (ctx) => {
           low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
         };
-      }).slice(-90);
+      }).slice(-80);
 
     } else {
       finalIntervalLabel = "1D";
-      candlesArray = rawHistorical.slice(-90).map((c: any) => ({
+      candlesArray = rawHistorical.slice(-80).map((c: any) => ({
         date: c.date,
         open: Number(c.open).toFixed(2),
         high: Number(c.high).toFixed(2),
@@ -163,22 +150,25 @@ bot.command("analyse", async (ctx) => {
     return ctx.reply(`❌ ANALYSE ABGEBROCHEN: Datenfehler: ${dataError.message}`);
   }
 
-  const formattedDataText = candlesArray.map(c => `Date: ${c.date} -> O: ${c.open}, H: ${c.high}, L: ${c.low}, C: ${c.close}`).join("\n");
+  // Kompakter JSON-String statt unstrukturierter Textwüste -> Verhindert den Safety Block!
+  const dataInputJson = JSON.stringify(candlesArray);
 
-  const textPrompt = `Du bist ein professioneller Elliott-Wellen-Analyst. Analysiere die Kursdaten auf strukturelle Muster, insbesondere im Hinblick auf ein potenzielles "Third of a Third" Setup (Beginn einer kraftvollen Welle 3 von 3).
-Hier sind die historischen Kursdaten:
-${formattedDataText}
+  const mainPrompt = `Du bist ein Elliott-Wellen-Analyst. Analysiere das übermittelte JSON-Kursdaten-Array auf ein "Third of a Third" Setup (Beginn Welle 3 von 3).
+  
+Kursdaten JSON:
+${dataInputJson}
 
 Aufgabe:
-1. Bestimme, ob eine signifikante Korrektur abgeschlossen wurde.
-2. Identifiziere den strukturellen Nestbau (Welle 1, Welle 2 sowie die inneren Unterwellen (i) und (ii)).
-3. Verfasse eine prägnante Analyse mit konkreten Zielen und dem Invalidation-Level.
-4. FÜR DIE CHART-GENERIERUNG: Platziere im Text für jeden markanten Drehpunkt ein exaktes Tag im Format [Welle Bezeichnung: YYYY-MM-DD]. Beispiel: [Welle 3: 2026-04-24].
-Nutze ausschließlich diese Bezeichnungen: 1, 2, 3, 4, 5, A, B, C, (i), (ii).`;
+1. Bestimme, ob die Korrektur abgeschlossen ist.
+2. Identifiziere den Nestbau (Welle 1, 2 und Unterwellen (i), (ii)).
+3. Trage die präzise Analyse im Feld 'analysis_text' ein.
+4. Ordne den Drehpunkten im Array 'waves' die exakten Wellen-Labels zu (nutze das exakte 'date' aus dem JSON).
+
+Antworte strikt im geforderten JSON-Schema.`;
 
   let responseText = "";
-  let attempts = 3; 
-  let delay = 3000; 
+  let attempts = 4; 
+  let delay = 2000; 
   
   await ctx.reply(`🧠 Scanne Struktur auf ${finalIntervalLabel}-Basis nach Third-of-Third Patterns...`);
 
@@ -186,25 +176,38 @@ Nutze ausschließlich diese Bezeichnungen: 1, 2, 3, 4, 5, A, B, C, (i), (ii).`;
     try {
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: textPrompt,
+        contents: mainPrompt,
         config: {
-          // DEAKTIVIERUNG DER INHALTSFILTER FÜR MATHEMATISCHE ANALYSEN
-          safetySettings: [
-            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
-          ]
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              analysis_text: { type: Type.STRING },
+              waves: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    label: { type: Type.STRING, description: "Wellen-Label z.B. 1, 2, 3, 4, 5, A, B, C, (i), (ii)" },
+                    date: { type: Type.STRING, description: "Das exakte Datum aus den Kursdaten." }
+                  },
+                  required: ["label", "date"]
+                }
+              }
+            },
+            required: ["analysis_text", "waves"]
+          }
         }
       });
       
       responseText = response.text || "";
       if (responseText) break;
-      else throw new Error("Leere Antwort.");
+      else throw new Error("Leere Struktur erhalten.");
     } catch (apiError: any) {
       attempts--;
+      console.error(`⚠️ Schema-Fehler: ${apiError.message}`);
       if (attempts === 0) {
-        return ctx.reply(`❌ Kritischer API-Fehler: Die Verbindung zu Google wurde blockiert. Bitte passe den Prompt an oder versuche es erneut.`);
+        return ctx.reply(`❌ API-Übertragungsfehler: Verbindung blockiert. Bitte starte die Anfrage noch einmal neu.`);
       }
       await new Promise(resolve => setTimeout(resolve, delay));
       delay += 2000;
@@ -212,8 +215,14 @@ Nutze ausschließlich diese Bezeichnungen: 1, 2, 3, 4, 5, A, B, C, (i), (ii).`;
   }
 
   try {
-    const wavesData = parseWavesFromText(responseText);
-    const analysisText = responseText;
+    let cleanJson = responseText.trim();
+    if (cleanJson.startsWith("```")) {
+      cleanJson = cleanJson.replace(/^```json/, "").replace(/^```/, "").replace(/```$/, "").trim();
+    }
+
+    const result = JSON.parse(cleanJson);
+    const wavesData = result.waves || [];
+    const analysisText = result.analysis_text || "Keine Analyse generiert.";
 
     chatSessions[chatId] = {
       lastDataPayload: { candles: candlesArray, waves: wavesData },
@@ -239,7 +248,7 @@ Nutze ausschließlich diese Bezeichnungen: 1, 2, 3, 4, 5, A, B, C, (i), (ii).`;
     });
 
   } catch (err: any) {
-    await ctx.reply(`❌ Verarbeitungsfehler: ${err.message}`);
+    await ctx.reply(`❌ Verarbeitungsfehler beim JSON-Parsing: ${err.message}`);
   }
 });
 
