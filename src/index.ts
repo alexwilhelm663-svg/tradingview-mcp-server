@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft im fehlerfreien, getarnten ENUM-Modus mit Daten-Sanitizer...");
+console.log("🤖 Bot läuft im unblockierbaren Markdown-Modus...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -18,14 +18,9 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-function convertToTelegramHTML(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
-    .replace(/\*(.*?)\*/g, "<i>$1</i>")
-    .replace(/`(.*?)`/g, "<code>$1</code>");
+// Robuster Escaper für Telegram MarkdownV2
+function escapeMarkdownV2(text: string): string {
+  return text.replace(/[_*\[\]()~`>#+\-=|{}.!]/g, "\\$&");
 }
 
 function getWeekNumber(dateStr: string): string {
@@ -62,7 +57,7 @@ bot.command("analyse", async (ctx) => {
 
   try {
     const period2 = Math.floor(Date.now() / 1000);
-    const period1 = period2 - (3 * 365 * 24 * 60 * 60); // 3-Jahres-Makrorahmen
+    const period1 = period2 - (3 * 365 * 24 * 60 * 60);
 
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=1d&events=history`;
     
@@ -82,7 +77,6 @@ bot.command("analyse", async (ctx) => {
     const timestamps = result.timestamp;
     const quote = result.indicators.quote[0];
 
-    // --- DATEN-SANITIZER: Eliminiert künstliche Spikes nach unten ---
     const rawHistorical = timestamps.map((ts: number, i: number) => {
       const d = new Date(ts * 1000);
       const o = Number(quote.open[i]);
@@ -167,7 +161,7 @@ Aufgabe:
 1. Untersuche den Verlauf auf fraktale Kontraktion und anschließende Expansion (Fokus auf Beginn einer primären Expansionsphase - Struktur Welle 3 von 3).
 2. Identifiziere die lokalen Wendepunkte im Array und ordne ihnen im Feld 'waves' die exakten Datumswerte zu.
 3. Unterwellen bezeichnest du strikt als I oder II (große römische Buchstaben im ENUM).
-4. Verfasse im Feld 'analysis_text' eine rein akademische Beschreibung der Wellenverhältnisse (inkl. Berechnungen auf Basis von Verhältnismäßigkeiten wie 1.618).
+4. Verfasse im Feld 'analysis_text' eine rein akademische Beschreibung der Wellenverhältnisse (inkl. Berechnungen auf Basis von Verhältnismäßigkeiten wie 1.618). Do NOT use any HTML tags.
 
 Antworte strikt im geforderten JSON-Schema.`;
 
@@ -252,7 +246,10 @@ Antworte strikt im geforderten JSON-Schema.`;
         const outputBuffer = Buffer.concat(stdoutChunks);
         await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${finalIntervalLabel})` });
       }
-      await ctx.reply(`📝 <b>Struktur-Bericht:</b>\n\n${convertToTelegramHTML(analysisText)}`, { parse_mode: "HTML" });
+      
+      // KORREKTUR: Sicherer MarkdownV2-Versand verhindert Abstürze durch unpaarige HTML-Tags vollständig
+      const escapedReport = escapeMarkdownV2(analysisText);
+      await ctx.reply(`*Struktur\-Bericht:* \n\n${escapedReport}`, { parse_mode: "MarkdownV2" });
     });
 
   } catch (err: any) {
@@ -286,7 +283,7 @@ bot.on("text", async (ctx) => {
 
     const answerText = response.text || "Keine Antwort möglich.";
     session.history.push({ role: "model", text: answerText });
-    await ctx.reply(`💬 <b>Antwort:</b>\n\n${convertToTelegramHTML(answerText)}`, { parse_mode: "HTML" });
+    await ctx.reply(`💬 *Antwort:* \n\n${escapeMarkdownV2(answerText)}`, { parse_mode: "MarkdownV2" });
   } catch (error: any) {
     await ctx.reply(`❌ Fehler: ${error.message}`);
   }
@@ -319,7 +316,7 @@ if (RENDER_EXTERNAL_URL) {
   });
 
   server.listen(PORT, () => {
-    console.log(`🌐 Webhook-Server aktiv auf Port ${PORT}. Route: ${webhookPath}`);
+    console.log(`🌐 Webhook-Server aktiv auf Port ${PORT}.`);
   });
 } else {
   console.log("⚠️ RENDER_EXTERNAL_URL fehlt. Nutze Polling als Fallback...");
@@ -328,4 +325,3 @@ if (RENDER_EXTERNAL_URL) {
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
-  
