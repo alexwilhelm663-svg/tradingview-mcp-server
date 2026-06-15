@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
@@ -6,11 +6,10 @@ import http from "http";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-// Die öffentliche URL deiner Render-Instanz (z.B. https://tradingview-mcp-server.onrender.com)
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in professioneller Webhook-Architektur...");
+console.log("🤖 Bot läuft im fehlerfreien Freitext-Parsing-Modus...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -36,6 +35,21 @@ function getWeekNumber(dateStr: string): string {
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
   return `${d.getUTCFullYear()}-W${weekNo}`;
+}
+
+// KORREKTUR: 'function' statt 'def' und erweiterte Regex für Sub-Wellen in Klammern
+function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
+  const waves: Array<{ label: string; date: string }> = [];
+  // Erkennt: [Welle 3: 2026-04-24], [Welle (ii): 2026-06-05], [(i): 2026-05-10], [3: 2026-04-24]
+  const regex = /\[(?:Welle\s+)?([12345ABCWXYiIvcV()]+):\s*(\d{4}-\d{2}-\d{2})\]/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    waves.push({
+      label: match[1].trim(),
+      date: match[2].trim()
+    });
+  }
+  return waves;
 }
 
 bot.command("analyse", async (ctx) => {
@@ -153,21 +167,21 @@ bot.command("analyse", async (ctx) => {
 
   const formattedDataText = candlesArray.map(c => `Date: ${c.date} -> O: ${c.open}, H: ${c.high}, L: ${c.low}, C: ${c.close}`).join("\n");
 
-  const jsonPrompt = `Du bist ein hochkarätiger Elliott-Wellen-Analyst, der sich auf das Aufspüren von hochexplosiven "Third of a Third" (Welle 3 einer untergeordneten Welle 3) Setups spezialisiert hat.
-Vor dir liegen die historischen Kursdaten (ca. 120 bis 130 Kerzen):
+  const textPrompt = `Du bist ein hochkarätiger Elliott-Wellen-Analyst, der gezielt nach hochexplosiven "Third of a Third" Setups (Welle 3 einer untergeordneten Welle 3) sucht.
+Vor dir liegen die historischen Kursdaten:
 ${formattedDataText}
 
 Aufgabe:
-1. Untersuche den übergeordneten Trend. Scanne die Daten darauf, ob eine große Korrektur (Welle 2 oder Welle B) gerade beendet wurde oder kurz vor dem Abschluss steht.
-2. Suche explizit nach Anzeichen, dass der Kurs sich im Nestbau befindet (Welle 1 fertig, Welle 2 korrigiert; gefolgt von einer inneren Welle (i) und (ii)).
-3. Ordne den exakten Drehpunkten (über das 'date') die passenden Wellen-Labels zu.
-4. Analysiere im Feld 'analysis_text', ob hier ein echtes "Third of a Third"-Szenario vorliegt. Falls ja, hebe es hervor, berechne das 161.8% Fibonacci-Erweiterungsziel und beschreibe das ungültige Niveau (Invalidation Level).
-
-Antworte AUSSCHLIESSLICH im geforderten JSON-Schema.`;
+1. Untersuche die übergeordnete Marktstruktur. Prüfe, ob eine markante Korrektur beendet wurde.
+2. Suche nach Anzeichen für ein "Third of a Third"-Szenario (Nestbau aus Welle 1, 2 und Unterwellen (i), (ii)).
+3. Schreibe einen professionellen Marktbericht mit konkreten Fibonacci-Zielen und dem Invalidation-Level.
+4. WICHTIG FÜR DIE CHART-GENERIERUNG: Füge im Text für JEDEN identifizierten Wellen-Umkehrpunkt zwingend ein Tag im exakten Format [Welle Bezeichnung: YYYY-MM-DD] ein. 
+Beispiel: "... Welle 3 vollendete sich am markanten Hoch [Welle 3: 2026-04-24], woraufhin die Korrektur [Welle 4: 2026-05-15] folgte..."
+Nutze Bezeichnungen wie 1, 2, 3, 4, 5, A, B, C, (i), (ii).`;
 
   let responseText = "";
   let attempts = 5; 
-  let delay = 3000; 
+  let delay = 2000; 
   
   await ctx.reply(`🧠 Scanne Struktur auf ${finalIntervalLabel}-Basis nach Third-of-Third Patterns...`);
 
@@ -175,28 +189,7 @@ Antworte AUSSCHLIESSLICH im geforderten JSON-Schema.`;
     try {
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: jsonPrompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              analysis_text: { type: Type.STRING },
-              waves: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    label: { type: Type.STRING, description: "Wellenbezeichnung z.B. 1, 2, 3, 4, 5, A, B, C, (i), (ii)" },
-                    date: { type: Type.STRING, description: "Das EXAKTE Datum des Kursdatenpunkts." }
-                  },
-                  required: ["label", "date"]
-                }
-              }
-            },
-            required: ["analysis_text", "waves"]
-          }
-        }
+        contents: textPrompt
       });
       
       responseText = response.text || "";
@@ -205,23 +198,17 @@ Antworte AUSSCHLIESSLICH im geforderten JSON-Schema.`;
     } catch (apiError: any) {
       attempts--;
       if (attempts === 0) {
-        return ctx.reply(`❌ API überlastet. Bitte versuche es erneut.`);
+        return ctx.reply(`❌ API überlastet. Bitte versuche es gleich noch einmal.`);
       }
-      await ctx.reply(`⏳ API ausgelastet, neuer Versuch in ${delay / 1000}s...`);
+      await ctx.reply(`⏳ API ausgelastet, starte direkten Retry in ${delay / 1000}s...`);
       await new Promise(resolve => setTimeout(resolve, delay));
-      delay *= 2;
+      delay += 1500;
     }
   }
 
   try {
-    let cleanJson = responseText.trim();
-    if (cleanJson.startsWith("```")) {
-      cleanJson = cleanJson.replace(/^```json/, "").replace(/^```/, "").replace(/```$/, "").trim();
-    }
-
-    const result = JSON.parse(cleanJson);
-    const wavesData = result.waves || [];
-    const analysisText = result.analysis_text || "Keine Analyse generiert.";
+    const wavesData = parseWavesFromText(responseText);
+    const analysisText = responseText;
 
     chatSessions[chatId] = {
       lastDataPayload: { candles: candlesArray, waves: wavesData },
@@ -283,7 +270,6 @@ bot.on("text", async (ctx) => {
   }
 });
 
-// --- NATIVE WEBHOOK INTEGRATION (ERSETZT POLLING) ---
 if (RENDER_EXTERNAL_URL) {
   const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
   bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
@@ -314,10 +300,10 @@ if (RENDER_EXTERNAL_URL) {
     console.log(`🌐 Webhook-Server aktiv auf Port ${PORT}. Route: ${webhookPath}`);
   });
 } else {
-  // Lokaler Fallback, falls RENDER_EXTERNAL_URL nicht existiert
   console.log("⚠️ RENDER_EXTERNAL_URL fehlt. Nutze Polling als Fallback...");
   bot.launch();
 }
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
+      
