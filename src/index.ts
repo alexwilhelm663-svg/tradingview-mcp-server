@@ -4,9 +4,8 @@ import { spawn } from "child_process";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
-const FMP_API_KEY = process.env.FMP_API_KEY;
 
-console.log("🤖 Bot läuft im mathematischen FMP-Aggregationsmodus...");
+console.log("🤖 Bot läuft im nativen, unblockierbaren Yahoo-REST-Modus...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -25,12 +24,11 @@ function convertToTelegramHTML(text: string): string {
     .replace(/`(.*?)`/g, "<code>$1</code>");
 }
 
-// Hilfsfunktion: Ermittelt die Kalenderwoche für die Aggregation
 function getWeekNumber(dateStr: string): string {
   const d = new Date(dateStr);
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1)); // Korrigiert: Date.UTC statt Date.utc
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
   return `${d.getUTCFullYear()}-W${weekNo}`;
 }
@@ -45,37 +43,53 @@ bot.command("analyse", async (ctx) => {
     return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse TEAM 1w");
   }
 
-  if (!FMP_API_KEY) {
-    return ctx.reply("❌ Systemfehler: FMP_API_KEY fehlt in den Render-Umgebungsvariablen.");
-  }
-
+  // Symbolbereinigung für Yahoo
   let cleanSymbol = symbol.trim().toUpperCase();
   if (cleanSymbol.includes(":")) {
     cleanSymbol = cleanSymbol.split(":").pop()!;
   }
-
   if (cleanSymbol === "P911") {
     cleanSymbol = "P911.DE";
   }
 
-  await ctx.reply(`⏳ Rufe Kursdaten für ${cleanSymbol} über FMP API ab...`);
+  await ctx.reply(`⏳ Extrahiere Rohdaten für ${cleanSymbol} direkt via Yahoo REST...`);
 
   let candlesArray: Array<{ date: string; high: string; low: string; close: string }> = [];
   try {
-    // Wir holen IMMER die täglichen Daten (stabilster Endpoint bei FMP)
-    const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${cleanSymbol}?apikey=${FMP_API_KEY}`;
-    const response = await fetch(url);
-    const resData: any = await response.json();
+    const period2 = Math.floor(Date.now() / 1000);
+    const period1 = period2 - (365 * 24 * 60 * 60); // 1 Jahr Historie in Sekunden
 
-    if (!resData.historical || resData.historical.length === 0) {
-      throw new Error("Symbol nicht gefunden oder API-Limit erreicht.");
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=1d&events=history`;
+    
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      }
+    });
+
+    const resData: any = await response.json();
+    const result = resData?.chart?.result?.[0];
+    
+    if (!result || !result.timestamp) {
+      throw new Error("Symbol existiert nicht oder Verbindung wurde blockiert.");
     }
 
-    // Holen uns genug Historie (z.B. die letzten 220 Tage), um Wochen/Monate zu bauen
-    const rawHistorical = resData.historical.slice(0, 220).reverse();
+    const timestamps = result.timestamp;
+    const quote = result.indicators.quote[0];
+
+    // Daten mappen und ungültige Null-Werte filtern
+    const rawHistorical = timestamps.map((ts: number, i: number) => {
+      const d = new Date(ts * 1000);
+      return {
+        date: d.toISOString().split('T')[0],
+        high: quote.high[i],
+        low: quote.low[i],
+        close: quote.close[i]
+      };
+    }).filter((c: any) => c.high !== null && c.low !== null && c.close !== null);
 
     if (rawInterval === "1w" || rawInterval === "w") {
-      // MATHEMATISCHE WOCHEN-AGGREGATION
+      // WOCHEN-AGGREGATION
       const groups: Record<string, any[]> = {};
       rawHistorical.forEach((c: any) => {
         const wKey = getWeekNumber(c.date);
@@ -86,21 +100,19 @@ bot.command("analyse", async (ctx) => {
       const wKeys = Object.keys(groups).sort();
       candlesArray = wKeys.map(k => {
         const candles = groups[k];
-        const highs = candles.map(c => Number(c.high));
-        const lows = candles.map(c => Number(c.low));
         return {
-          date: candles[candles.length - 1].date, // Letztes Datum der Woche
-          high: Math.max(...highs).toFixed(2),
-          low: Math.min(...lows).toFixed(2),
+          date: candles[candles.length - 1].date,
+          high: Math.max(...candles.map(c => c.high)).toFixed(2),
+          low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
         };
-      }).slice(-45); // Begrenzen auf 45 Kerzen für optimalen Gemini-Context
+      }).slice(-45);
 
     } else if (rawInterval === "1m" || rawInterval === "m" || rawInterval === "mo") {
-      // MATHEMATISCHE MONATS-AGGREGATION
+      // MONATS-AGGREGATION
       const groups: Record<string, any[]> = {};
       rawHistorical.forEach((c: any) => {
-        const mKey = c.date.substring(0, 7); // YYYY-MM
+        const mKey = c.date.substring(0, 7);
         if (!groups[mKey]) groups[mKey] = [];
         groups[mKey].push(c);
       });
@@ -108,20 +120,17 @@ bot.command("analyse", async (ctx) => {
       const mKeys = Object.keys(groups).sort();
       candlesArray = mKeys.map(k => {
         const candles = groups[k];
-        const highs = candles.map(c => Number(c.high));
-        const lows = candles.map(c => Number(c.low));
         return {
           date: candles[candles.length - 1].date,
-          high: Math.max(...highs).toFixed(2),
-          low: Math.min(...lows).toFixed(2),
+          high: Math.max(...candles.map(c => c.high)).toFixed(2),
+          low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
         };
       }).slice(-45);
 
     } else {
-      // STANDARD: 1 TAG (Reine Weiterleitung)
-      const slice = resData.historical.slice(0, 45).reverse();
-      candlesArray = slice.map((c: any) => ({
+      // TAGES-KERZEN
+      candlesArray = rawHistorical.slice(-45).map((c: any) => ({
         date: c.date,
         high: Number(c.high).toFixed(2),
         low: Number(c.low).toFixed(2),
@@ -130,7 +139,7 @@ bot.command("analyse", async (ctx) => {
     }
 
   } catch (dataError: any) {
-    return ctx.reply(`❌ ANALYSE ABGEBROCHEN: Kursdatenfehler: ${dataError.message}`);
+    return ctx.reply(`❌ ANALYSE ABGEBROCHEN: Datenfehler: ${dataError.message}`);
   }
 
   await ctx.reply(`🧠 Berechne Elliott-Wellen-Muster (${rawInterval.toUpperCase()}) via Gemini...`);
