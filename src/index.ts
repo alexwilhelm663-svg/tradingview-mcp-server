@@ -6,7 +6,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const FMP_API_KEY = process.env.FMP_API_KEY;
 
-console.log("🤖 Bot läuft im kostenlosen FMP-Datenmodus...");
+console.log("🤖 Bot läuft im mathematischen FMP-Aggregationsmodus...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -14,13 +14,6 @@ interface ChatSession {
 }
 
 const chatSessions: Record<number, ChatSession> = {};
-
-function parseIntervalForFMP(input: string): string {
-  const clean = input.toLowerCase().trim();
-  if (clean === "1m" || clean === "m" || clean === "mo") return "1month";
-  if (clean === "1w" || clean === "w") return "1week";
-  return "1day";
-}
 
 function convertToTelegramHTML(text: string): string {
   return text
@@ -32,14 +25,24 @@ function convertToTelegramHTML(text: string): string {
     .replace(/`(.*?)`/g, "<code>$1</code>");
 }
 
+// Hilfsfunktion: Ermittelt die Kalenderwoche für die Aggregation
+function getWeekNumber(dateStr: string): string {
+  const d = new Date(dateStr);
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.utc(d.getUTCFullYear(),0,1));
+  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${weekNo}`;
+}
+
 bot.command("analyse", async (ctx) => {
   const chatId = ctx.chat.id;
   const args = ctx.message.text.split(" ");
   let symbol = args[1];
-  const rawInterval = args[2] || "1D";
+  const rawInterval = (args[2] || "1D").toLowerCase().trim();
   
   if (!symbol) {
-    return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse P911 1w");
+    return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse TEAM 1w");
   }
 
   if (!FMP_API_KEY) {
@@ -51,23 +54,16 @@ bot.command("analyse", async (ctx) => {
     cleanSymbol = cleanSymbol.split(":").pop()!;
   }
 
-  // Automatisches Suffix für deutsche Aktien (z.B. P911 -> P911.DE)
   if (cleanSymbol === "P911") {
     cleanSymbol = "P911.DE";
   }
 
-  const fmpInterval = parseIntervalForFMP(rawInterval);
-  await ctx.reply(`⏳ Rufe kostenlose Kursdaten für ${cleanSymbol} über FMP API ab...`);
+  await ctx.reply(`⏳ Rufe Kursdaten für ${cleanSymbol} über FMP API ab...`);
 
   let candlesArray: Array<{ date: string; high: string; low: string; close: string }> = [];
   try {
-    let url = `https://financialmodelingprep.com/api/v3/historical-price-full/${cleanSymbol}?apikey=${FMP_API_KEY}`;
-    
-    // Wenn wöchentlich oder monatlich gefordert, nutzen wir die spezifische FMP-Schnittstelle
-    if (fmpInterval !== "1day") {
-      url = `https://financialmodelingprep.com/api/v3/historical-price-full/${cleanSymbol}?timeseries=45&serietype=line&apikey=${FMP_API_KEY}`;
-    }
-
+    // Wir holen IMMER die täglichen Daten (stabilster Endpoint bei FMP)
+    const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${cleanSymbol}?apikey=${FMP_API_KEY}`;
     const response = await fetch(url);
     const resData: any = await response.json();
 
@@ -75,20 +71,69 @@ bot.command("analyse", async (ctx) => {
       throw new Error("Symbol nicht gefunden oder API-Limit erreicht.");
     }
 
-    // Die neuesten 45 Kerzen extrahieren und chronologisch umdrehen
-    const slice = resData.historical.slice(0, 45).reverse();
-    candlesArray = slice.map((c: any) => ({
-      date: c.date,
-      high: Number(c.high || c.close).toFixed(2),
-      low: Number(c.low || c.close).toFixed(2),
-      close: Number(c.close).toFixed(2)
-    }));
+    // Holen uns genug Historie (z.B. die letzten 200 Tage), um Wochen/Monate zu bauen
+    const rawHistorical = resData.historical.slice(0, 220).reverse();
+
+    if (rawInterval === "1w" || rawInterval === "w") {
+      // MATHEMATISCHE WOCHEN-AGGREGATION
+      const groups: Record<string, any[]> = {};
+      rawHistorical.forEach((c: any) => {
+        const wKey = getWeekNumber(c.date);
+        if (!groups[wKey]) groups[wKey] = [];
+        groups[wKey].push(c);
+      });
+
+      const wKeys = Object.keys(groups).sort();
+      candlesArray = wKeys.map(k => {
+        const candles = groups[k];
+        const highs = candles.map(c => Number(c.high));
+        const lows = candles.map(c => Number(c.low));
+        return {
+          date: candles[candles.length - 1].date, // Letztes Datum der Woche
+          high: Math.max(...highs).toFixed(2),
+          low: Math.min(...lows).toFixed(2),
+          close: Number(candles[candles.length - 1].close).toFixed(2)
+        };
+      }).slice(-45); // Begrenzen auf 45 Kerzen für optimalen Gemini-Context
+
+    } else if (rawInterval === "1m" || rawInterval === "m" || rawInterval === "mo") {
+      // MATHEMATISCHE MONATS-AGGREGATION
+      const groups: Record<string, any[]> = {};
+      rawHistorical.forEach((c: any) => {
+        const mKey = c.date.substring(0, 7); // YYYY-MM
+        if (!groups[mKey]) groups[mKey] = [];
+        groups[mKey].push(c);
+      });
+
+      const mKeys = Object.keys(groups).sort();
+      candlesArray = mKeys.map(k => {
+        const candles = groups[k];
+        const highs = candles.map(c => Number(c.high));
+        const lows = candles.map(c => Number(c.low));
+        return {
+          date: candles[candles.length - 1].date,
+          high: Math.max(...highs).toFixed(2),
+          low: Math.min(...lows).toFixed(2),
+          close: Number(candles[candles.length - 1].close).toFixed(2)
+        };
+      }).slice(-45);
+
+    } else {
+      // STANDARD: 1 TAG (Reine Weiterleitung)
+      const slice = resData.historical.slice(0, 45).reverse();
+      candlesArray = slice.map((c: any) => ({
+        date: c.date,
+        high: Number(c.high).toFixed(2),
+        low: Number(c.low).toFixed(2),
+        close: Number(c.close).toFixed(2)
+      }));
+    }
 
   } catch (dataError: any) {
     return ctx.reply(`❌ ANALYSE ABGEBROCHEN: Kursdatenfehler: ${dataError.message}`);
   }
 
-  await ctx.reply("🧠 Berechne Elliott-Wellen-Muster via Gemini...");
+  await ctx.reply(`🧠 Berechne Elliott-Wellen-Muster (${rawInterval.toUpperCase()}) via Gemini...`);
 
   const formattedDataText = candlesArray.map(c => `Date: ${c.date} -> H: ${c.high}, L: ${c.low}, C: ${c.close}`).join("\n");
 
@@ -173,7 +218,7 @@ Antworte AUSSCHLIESSLICH im geforderten JSON-Schema.`;
         await ctx.reply(`❌ Fehler beim Rendern des Vektordiagramms.`);
       } else {
         const outputBuffer = Buffer.concat(stdoutChunks);
-        await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${rawInterval})` });
+        await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${rawInterval.toUpperCase()})` });
       }
       await ctx.reply(`📝 <b>Elliott-Wellen-Analyse:</b>\n\n${convertToTelegramHTML(analysisText)}`, { parse_mode: "HTML" });
     });
@@ -219,4 +264,3 @@ bot.launch();
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
-
