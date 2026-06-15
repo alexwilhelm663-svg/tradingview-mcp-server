@@ -4,9 +4,9 @@ import { spawn } from "child_process";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
-const TD_API_KEY = process.env.TWELVE_DATA_API_KEY;
+const FMP_API_KEY = process.env.FMP_API_KEY;
 
-console.log("🤖 Streng mathematischer Bot läuft ohne Browser-Overhead...");
+console.log("🤖 Bot läuft im kostenlosen FMP-Datenmodus...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -15,11 +15,10 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-function parseIntervalForTD(input: string): string {
+function parseIntervalForFMP(input: string): string {
   const clean = input.toLowerCase().trim();
   if (clean === "1m" || clean === "m" || clean === "mo") return "1month";
   if (clean === "1w" || clean === "w") return "1week";
-  if (clean === "1d" || clean === "d") return "1day";
   return "1day";
 }
 
@@ -40,36 +39,48 @@ bot.command("analyse", async (ctx) => {
   const rawInterval = args[2] || "1D";
   
   if (!symbol) {
-    return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse TEAM 1w");
+    return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse P911 1w");
   }
 
-  if (!TD_API_KEY) {
-    return ctx.reply("❌ Systemfehler: TWELVE_DATA_API_KEY fehlt.");
+  if (!FMP_API_KEY) {
+    return ctx.reply("❌ Systemfehler: FMP_API_KEY fehlt in den Render-Umgebungsvariablen.");
   }
 
-  let cleanSymbol = symbol.trim();
+  let cleanSymbol = symbol.trim().toUpperCase();
   if (cleanSymbol.includes(":")) {
     cleanSymbol = cleanSymbol.split(":").pop()!;
   }
 
-  const tdInterval = parseIntervalForTD(rawInterval);
-  await ctx.reply(`⏳ Rufe Kursdaten für ${cleanSymbol} ab...`);
+  // Automatisches Suffix für deutsche Aktien (z.B. P911 -> P911.DE)
+  if (cleanSymbol === "P911") {
+    cleanSymbol = "P911.DE";
+  }
+
+  const fmpInterval = parseIntervalForFMP(rawInterval);
+  await ctx.reply(`⏳ Rufe kostenlose Kursdaten für ${cleanSymbol} über FMP API ab...`);
 
   let candlesArray: Array<{ date: string; high: string; low: string; close: string }> = [];
   try {
-    const url = `https://api.twelvedata.com/time_series?symbol=${cleanSymbol}&interval=${tdInterval}&outputsize=45&apikey=${TD_API_KEY}`;
+    let url = `https://financialmodelingprep.com/api/v3/historical-price-full/${cleanSymbol}?apikey=${FMP_API_KEY}`;
+    
+    // Wenn wöchentlich oder monatlich gefordert, nutzen wir die spezifische FMP-Schnittstelle
+    if (fmpInterval !== "1day") {
+      url = `https://financialmodelingprep.com/api/v3/historical-price-full/${cleanSymbol}?timeseries=45&serietype=line&apikey=${FMP_API_KEY}`;
+    }
+
     const response = await fetch(url);
     const resData: any = await response.json();
 
-    if (resData.status === "error" || !resData.values) {
-      throw new Error(resData.message || "Fehler beim API-Abruf.");
+    if (!resData.historical || resData.historical.length === 0) {
+      throw new Error("Symbol nicht gefunden oder API-Limit erreicht.");
     }
 
-    const values = resData.values.reverse();
-    candlesArray = values.map((c: any) => ({
-      date: c.datetime.split(" ")[0],
-      high: Number(c.high).toFixed(2),
-      low: Number(c.low).toFixed(2),
+    // Die neuesten 45 Kerzen extrahieren und chronologisch umdrehen
+    const slice = resData.historical.slice(0, 45).reverse();
+    candlesArray = slice.map((c: any) => ({
+      date: c.date,
+      high: Number(c.high || c.close).toFixed(2),
+      low: Number(c.low || c.close).toFixed(2),
       close: Number(c.close).toFixed(2)
     }));
 
@@ -93,33 +104,49 @@ Aufgabe:
 Antworte AUSSCHLIESSLICH im geforderten JSON-Schema.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: jsonPrompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            analysis_text: { type: Type.STRING },
-            waves: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  label: { type: Type.STRING, description: "Wellenbezeichnung z.B. 1, 2, A, B, C" },
-                  date: { type: Type.STRING, description: "Das EXAKTE Datum des Kursdatenpunkts, an dem die Welle dreht." }
-                },
-                required: ["label", "date"]
-              }
+    let responseText = "";
+    let attempts = 5; 
+    let delay = 3000; 
+    
+    while (attempts > 0) {
+      try {
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: jsonPrompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                analysis_text: { type: Type.STRING },
+                waves: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      label: { type: Type.STRING, description: "Wellenbezeichnung z.B. 1, 2, A, B, C" },
+                      date: { type: Type.STRING, description: "Das EXAKTE Datum des Kursdatenpunkts, an dem die Welle dreht." }
+                    },
+                    required: ["label", "date"]
+                  }
+                }
+              },
+              required: ["analysis_text", "waves"]
             }
-          },
-          required: ["analysis_text", "waves"]
-        }
+          }
+        });
+        responseText = response.text || "";
+        break; 
+      } catch (apiError: any) {
+        attempts--;
+        console.warn(`⚠️ Gemini API überlastet. Versuche verbleibend: ${attempts}.`);
+        if (attempts === 0) throw apiError;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay *= 2; 
       }
-    });
+    }
 
-    let cleanJson = (response.text || "").trim();
+    let cleanJson = responseText.trim();
     if (cleanJson.startsWith("```")) {
       cleanJson = cleanJson.replace(/^```json/, "").replace(/^```/, "").replace(/```$/, "").trim();
     }
@@ -189,3 +216,7 @@ bot.on("text", async (ctx) => {
 });
 
 bot.launch();
+
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
+
