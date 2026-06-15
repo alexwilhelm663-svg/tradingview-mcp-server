@@ -5,7 +5,7 @@
   "description": "Telegram Bot für flexible Elliott-Wellen-Analysen mit numerischer Datenvalidierung",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && pip3 install Pillow",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts"
   },
