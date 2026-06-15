@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft mit nativen Yahoo-Intervallen (100% synchrone Candlesticks)...");
+console.log("🤖 Bot läuft mit nativen Intervallen und reaktiviertem Safety-Bypass...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -18,7 +18,6 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-// Robuster Regex-Parser
 function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
   const waves: Array<{ label: string; date: string }> = [];
   const regex = /\[(?:Welle\s+)?([12345ABCWXYIV]+):\s*(\d{4}-\d{2}-\d{2})\]/gi;
@@ -50,7 +49,6 @@ bot.command("analyse", async (ctx) => {
     cleanSymbol = "P911.DE";
   }
 
-  // --- NATIVE INTERVALL-ABFRAGE ---
   let yahooInterval = "1wk";
   let finalIntervalLabel = "1W";
 
@@ -88,7 +86,6 @@ bot.command("analyse", async (ctx) => {
     const timestamps = result.timestamp;
     const quote = result.indicators.quote[0];
 
-    // Direktes Mapping ohne fehlerhaftes Sortieren
     const rawHistorical = timestamps.map((ts: number, i: number) => {
       const d = new Date(ts * 1000);
       const o = Number(quote.open[i]);
@@ -105,7 +102,6 @@ bot.command("analyse", async (ctx) => {
       };
     }).filter((c: any) => Number(c.open) > 0 && Number(c.high) > 0 && Number(c.low) > 0 && Number(c.close) > 0);
 
-    // Exakt die letzten 80 Kerzen für das Vektorbild abschneiden
     candlesArray = rawHistorical.slice(-80);
 
   } catch (dataError: any) {
@@ -135,7 +131,16 @@ WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffer
     try {
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: mainPrompt
+        contents: mainPrompt,
+        // DER WIEDERHERGESTELLTE SAFETY-BYPASS
+        config: {
+          safetySettings: [
+            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE }
+          ]
+        }
       });
       
       responseText = response.text || "";
@@ -145,7 +150,8 @@ WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffer
       attempts--;
       console.error(`⚠️ API Fehler: ${apiError.message}`);
       if (attempts === 0) {
-        return ctx.reply(`❌ Systemfehler: Google blockiert die Anfrage. Bitte versuche es später noch einmal.`);
+        // Genaue Fehlerausgabe direkt in Telegram
+        return ctx.reply(`❌ Systemfehler: Google blockiert die Anfrage.\n\nGrund: ${apiError.message}`);
       }
       await new Promise(resolve => setTimeout(resolve, delay));
       delay += 2000;
@@ -216,7 +222,16 @@ bot.on("text", async (ctx) => {
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: contents
+      contents: contents,
+      // Safety-Bypass auch für Rückfragen
+      config: {
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE }
+        ]
+      }
     });
 
     const answerText = response.text || "Keine Antwort möglich.";
@@ -267,3 +282,4 @@ if (RENDER_EXTERNAL_URL) {
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
+             
