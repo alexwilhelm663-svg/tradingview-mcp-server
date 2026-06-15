@@ -1,4 +1,4 @@
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft im asynchronen Anti-Timeout- und Safety-Bypass-Modus...");
+console.log("🤖 Bot läuft mit nativen Yahoo-Intervallen (100% synchrone Candlesticks)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -18,15 +18,7 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-function getWeekNumber(dateStr: string): string {
-  const d = new Date(dateStr);
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-  return `${d.getUTCFullYear()}-W${weekNo}`;
-}
-
+// Robuster Regex-Parser
 function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
   const waves: Array<{ label: string; date: string }> = [];
   const regex = /\[(?:Welle\s+)?([12345ABCWXYIV]+):\s*(\d{4}-\d{2}-\d{2})\]/gi;
@@ -58,16 +50,27 @@ bot.command("analyse", async (ctx) => {
     cleanSymbol = "P911.DE";
   }
 
-  await ctx.reply(`⏳ Extrahiere historische Daten für ${cleanSymbol} via Yahoo REST...`);
+  // --- NATIVE INTERVALL-ABFRAGE ---
+  let yahooInterval = "1wk";
+  let finalIntervalLabel = "1W";
+
+  if (requestedInterval === "1m" || requestedInterval === "mo" || requestedInterval === "m") {
+    yahooInterval = "1mo";
+    finalIntervalLabel = "1M";
+  } else if (requestedInterval === "1d" || requestedInterval === "d") {
+    yahooInterval = "1d";
+    finalIntervalLabel = "1D";
+  }
+
+  await ctx.reply(`⏳ Lade native ${finalIntervalLabel}-Historie für ${cleanSymbol} von Yahoo...`);
 
   let candlesArray: Array<{ date: string; open: string; high: string; low: string; close: string }> = [];
-  let finalIntervalLabel = "1W";
 
   try {
     const period2 = Math.floor(Date.now() / 1000);
     const period1 = period2 - (3 * 365 * 24 * 60 * 60);
 
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=1d&events=history`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=${yahooInterval}&events=history`;
     
     const response = await fetch(url, {
       headers: {
@@ -79,12 +82,13 @@ bot.command("analyse", async (ctx) => {
     const result = resData?.chart?.result?.[0];
     
     if (!result || !result.timestamp) {
-      throw new Error("Symbol an der API nicht verfügbar oder IP blockiert.");
+      throw new Error("Symbol an der API nicht verfügbar.");
     }
 
     const timestamps = result.timestamp;
     const quote = result.indicators.quote[0];
 
+    // Direktes Mapping ohne fehlerhaftes Sortieren
     const rawHistorical = timestamps.map((ts: number, i: number) => {
       const d = new Date(ts * 1000);
       const o = Number(quote.open[i]);
@@ -94,44 +98,15 @@ bot.command("analyse", async (ctx) => {
 
       return {
         date: d.toISOString().split('T')[0],
-        open: o,
-        high: h,
-        low: l,
-        close: c
+        open: o.toFixed(2),
+        high: h.toFixed(2),
+        low: l.toFixed(2),
+        close: c.toFixed(2)
       };
-    }).filter((c: any) => c.open > 0 && c.high > 0 && c.low > 0 && c.close > 0);
+    }).filter((c: any) => Number(c.open) > 0 && Number(c.high) > 0 && Number(c.low) > 0 && Number(c.close) > 0);
 
-    if (requestedInterval === "1w" || requestedInterval === "w" || requestedInterval === "auto") {
-      finalIntervalLabel = "1W";
-      const groups: Record<string, any[]> = {};
-      rawHistorical.forEach((c: any) => {
-        const wKey = getWeekNumber(c.date);
-        if (!groups[wKey]) groups[wKey] = [];
-        groups[wKey].push(c);
-      });
-
-      const wKeys = Object.keys(groups).sort();
-      candlesArray = wKeys.map(k => {
-        const candles = groups[k];
-        return {
-          date: candles[candles.length - 1].date,
-          open: Number(candles[0].open).toFixed(2),
-          high: Math.max(...candles.map(c => c.high)).toFixed(2),
-          low: Math.min(...candles.map(c => c.low)).toFixed(2),
-          close: Number(candles[candles.length - 1].close).toFixed(2)
-        };
-      }).slice(-75);
-
-    } else {
-      finalIntervalLabel = "1D";
-      candlesArray = rawHistorical.slice(-75).map((c: any) => ({
-        date: c.date,
-        open: Number(c.open).toFixed(2),
-        high: Number(c.high).toFixed(2),
-        low: Number(c.low).toFixed(2),
-        close: Number(c.close).toFixed(2)
-      }));
-    }
+    // Exakt die letzten 80 Kerzen für das Vektorbild abschneiden
+    candlesArray = rawHistorical.slice(-80);
 
   } catch (dataError: any) {
     return ctx.reply(`❌ ANALYSE ABGEBROCHEN: Datenfehler: ${dataError.message}`);
@@ -145,13 +120,13 @@ Daten-Array:
 ${dataInputJson}
 
 Aufgabe:
-1. Untersuche den Verlauf auf fraktale Kontraktion und Expansion (Fokus auf "Third of a Third" Setups).
-2. Verfasse eine Beschreibung der Wellenverhältnisse und Kursziele (1.618 Extension).
+1. Untersuche den Verlauf auf fraktale Kontraktion und anschließende Expansion (Fokus auf "Third of a Third" Setups).
+2. Verfasse eine rein akademische Beschreibung der Wellenverhältnisse und Kursziele (1.618 Extension).
 3. Markiere JEDEN wichtigen Wendepunkt im Text zwingend in diesem Format: [Welle 3: 2026-04-24].
 WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffern oder Standard-Buchstaben (1, 2, 3, 4, 5, A, B, C, W, X, Y, I, II, III, IV, V).`;
 
   let responseText = "";
-  let attempts = 3; 
+  let attempts = 4; 
   let delay = 2000; 
   
   await ctx.reply(`🧠 Scanne Struktur auf ${finalIntervalLabel}-Basis nach Mustern...`);
@@ -160,16 +135,7 @@ WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffer
     try {
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: mainPrompt,
-        // DER FEHLENDE SAFETY BYPASS: Zwingt Google, die Finanzdaten durchzuwinken
-        config: {
-          safetySettings: [
-            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE }
-          ]
-        }
+        contents: mainPrompt
       });
       
       responseText = response.text || "";
@@ -179,7 +145,7 @@ WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffer
       attempts--;
       console.error(`⚠️ API Fehler: ${apiError.message}`);
       if (attempts === 0) {
-        return ctx.reply(`❌ Systemfehler: Google blockiert die Anfrage permanent. Log: ${apiError.message}`);
+        return ctx.reply(`❌ Systemfehler: Google blockiert die Anfrage. Bitte versuche es später noch einmal.`);
       }
       await new Promise(resolve => setTimeout(resolve, delay));
       delay += 2000;
@@ -204,14 +170,24 @@ WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffer
     pythonProcess.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
 
     pythonProcess.on("close", async (code) => {
-      if (code !== 0 || stdoutChunks.length === 0) {
-        await ctx.reply(`❌ Fehler beim Rendern des Vektordiagramms.`);
-      } else {
-        const outputBuffer = Buffer.concat(stdoutChunks);
-        await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${finalIntervalLabel})` });
+      try {
+        if (code !== 0 || stdoutChunks.length === 0) {
+          await ctx.reply(`❌ Fehler beim Rendern des Vektordiagramms.`);
+        } else {
+          const outputBuffer = Buffer.concat(stdoutChunks);
+          await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${finalIntervalLabel})` });
+        }
+        
+        const fullText = `📝 Struktur-Bericht:\n\n${analysisText}`;
+        const maxLength = 4000;
+        for (let i = 0; i < fullText.length; i += maxLength) {
+          await ctx.reply(fullText.substring(i, i + maxLength));
+        }
+
+      } catch (innerErr: any) {
+        console.error("Fehler beim Versand von Chart/Text:", innerErr);
+        await ctx.reply(`❌ Fehler bei der Telegram-Ausgabe: ${innerErr.message}`);
       }
-      
-      await ctx.reply(`📝 Struktur-Bericht:\n\n${analysisText}`);
     });
 
   } catch (err: any) {
@@ -262,14 +238,8 @@ if (RENDER_EXTERNAL_URL) {
       req.on("end", () => {
         try {
           const update = JSON.parse(body);
-          
-          // DER WEBHOOK-KILLER: 
-          // Wir senden SOFORT 200 OK an Telegram, bevor Telegraf den Befehl verarbeitet.
-          // Das verhindert zu 100%, dass Telegram wegen Timeouts Retries triggert!
           res.writeHead(200);
           res.end();
-          
-          // Asynchrone Verarbeitung im Hintergrund
           bot.handleUpdate(update);
         } catch (e) {
           if (!res.headersSent) {
