@@ -43,7 +43,6 @@ bot.command("analyse", async (ctx) => {
     return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse TEAM 1w");
   }
 
-  // Symbolbereinigung für Yahoo
   let cleanSymbol = symbol.trim().toUpperCase();
   if (cleanSymbol.includes(":")) {
     cleanSymbol = cleanSymbol.split(":").pop()!;
@@ -54,10 +53,10 @@ bot.command("analyse", async (ctx) => {
 
   await ctx.reply(`⏳ Extrahiere Rohdaten für ${cleanSymbol} direkt via Yahoo REST...`);
 
-  let candlesArray: Array<{ date: string; high: string; low: string; close: string }> = [];
+  let candlesArray: Array<{ date: string; open: string; high: string; low: string; close: string }> = [];
   try {
     const period2 = Math.floor(Date.now() / 1000);
-    const period1 = period2 - (365 * 24 * 60 * 60); // 1 Jahr Historie in Sekunden
+    const period1 = period2 - (365 * 24 * 60 * 60); // 1 Jahr Historie
 
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=1d&events=history`;
     
@@ -77,19 +76,18 @@ bot.command("analyse", async (ctx) => {
     const timestamps = result.timestamp;
     const quote = result.indicators.quote[0];
 
-    // Daten mappen und ungültige Null-Werte filtern
     const rawHistorical = timestamps.map((ts: number, i: number) => {
       const d = new Date(ts * 1000);
       return {
         date: d.toISOString().split('T')[0],
+        open: quote.open[i],
         high: quote.high[i],
         low: quote.low[i],
         close: quote.close[i]
       };
-    }).filter((c: any) => c.high !== null && c.low !== null && c.close !== null);
+    }).filter((c: any) => c.open !== null && c.high !== null && c.low !== null && c.close !== null);
 
     if (rawInterval === "1w" || rawInterval === "w") {
-      // WOCHEN-AGGREGATION
       const groups: Record<string, any[]> = {};
       rawHistorical.forEach((c: any) => {
         const wKey = getWeekNumber(c.date);
@@ -102,6 +100,7 @@ bot.command("analyse", async (ctx) => {
         const candles = groups[k];
         return {
           date: candles[candles.length - 1].date,
+          open: Number(candles[0].open).toFixed(2),
           high: Math.max(...candles.map(c => c.high)).toFixed(2),
           low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
@@ -109,7 +108,6 @@ bot.command("analyse", async (ctx) => {
       }).slice(-45);
 
     } else if (rawInterval === "1m" || rawInterval === "m" || rawInterval === "mo") {
-      // MONATS-AGGREGATION
       const groups: Record<string, any[]> = {};
       rawHistorical.forEach((c: any) => {
         const mKey = c.date.substring(0, 7);
@@ -122,6 +120,7 @@ bot.command("analyse", async (ctx) => {
         const candles = groups[k];
         return {
           date: candles[candles.length - 1].date,
+          open: Number(candles[0].open).toFixed(2),
           high: Math.max(...candles.map(c => c.high)).toFixed(2),
           low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
@@ -129,9 +128,9 @@ bot.command("analyse", async (ctx) => {
       }).slice(-45);
 
     } else {
-      // TAGES-KERZEN
       candlesArray = rawHistorical.slice(-45).map((c: any) => ({
         date: c.date,
+        open: Number(c.open).toFixed(2),
         high: Number(c.high).toFixed(2),
         low: Number(c.low).toFixed(2),
         close: Number(c.close).toFixed(2)
@@ -144,7 +143,7 @@ bot.command("analyse", async (ctx) => {
 
   await ctx.reply(`🧠 Berechne Elliott-Wellen-Muster (${rawInterval.toUpperCase()}) via Gemini...`);
 
-  const formattedDataText = candlesArray.map(c => `Date: ${c.date} -> H: ${c.high}, L: ${c.low}, C: ${c.close}`).join("\n");
+  const formattedDataText = candlesArray.map(c => `Date: ${c.date} -> O: ${c.open}, H: ${c.high}, L: ${c.low}, C: ${c.close}`).join("\n");
 
   const jsonPrompt = `Du bist ein präziser Elliott-Wellen-Analyst. Vor dir liegen die historischen Kursdaten eines Assets:
 ${formattedDataText}
