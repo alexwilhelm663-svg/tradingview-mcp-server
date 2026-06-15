@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft im unblockierbaren JSON-Strukturmodus...");
+console.log("🤖 Bot läuft im unblockierbaren ENUM-JSON-Modus...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -150,7 +150,6 @@ bot.command("analyse", async (ctx) => {
     return ctx.reply(`❌ ANALYSE ABGEBROCHEN: Datenfehler: ${dataError.message}`);
   }
 
-  // Kompakter JSON-String statt unstrukturierter Textwüste -> Verhindert den Safety Block!
   const dataInputJson = JSON.stringify(candlesArray);
 
   const mainPrompt = `Du bist ein Elliott-Wellen-Analyst. Analysiere das übermittelte JSON-Kursdaten-Array auf ein "Third of a Third" Setup (Beginn Welle 3 von 3).
@@ -159,10 +158,10 @@ Kursdaten JSON:
 ${dataInputJson}
 
 Aufgabe:
-1. Bestimme, ob die Korrektur abgeschlossen ist.
-2. Identifiziere den Nestbau (Welle 1, 2 und Unterwellen (i), (ii)).
-3. Trage die präzise Analyse im Feld 'analysis_text' ein.
-4. Ordne den Drehpunkten im Array 'waves' die exakten Wellen-Labels zu (nutze das exakte 'date' aus dem JSON).
+1. Bestimme, ob die übergeordnete Korrektur abgeschlossen ist.
+2. Identifiziere den Nestbau (Welle 1, 2 und die inneren Unterwellen I und II).
+3. Trage die ausführliche Analyse im Feld 'analysis_text' ein.
+4. Ordne den Drehpunkten im Array 'waves' die exakten Wellen-Labels zu. Nutze dafür AUSSCHLIESSLICH die im ENUM vorgegebenen Zeichen. Unterwellen bezeichnest du als I oder II (große römische Buchstaben ohne Klammern).
 
 Antworte strikt im geforderten JSON-Schema.`;
 
@@ -188,8 +187,12 @@ Antworte strikt im geforderten JSON-Schema.`;
                 items: {
                   type: Type.OBJECT,
                   properties: {
-                    label: { type: Type.STRING, description: "Wellen-Label z.B. 1, 2, 3, 4, 5, A, B, C, (i), (ii)" },
-                    date: { type: Type.STRING, description: "Das exakte Datum aus den Kursdaten." }
+                    label: { 
+                      type: Type.STRING, 
+                      // STRIKTER ENUM-FILTER: Keine Klammern oder Freitexte erlaubt!
+                      enum: ["1", "2", "3", "4", "5", "A", "B", "C", "I", "II"] 
+                    },
+                    date: { type: Type.STRING }
                   },
                   required: ["label", "date"]
                 }
@@ -202,12 +205,12 @@ Antworte strikt im geforderten JSON-Schema.`;
       
       responseText = response.text || "";
       if (responseText) break;
-      else throw new Error("Leere Struktur erhalten.");
+      else throw new Error("Leere Struktur.");
     } catch (apiError: any) {
       attempts--;
       console.error(`⚠️ Schema-Fehler: ${apiError.message}`);
       if (attempts === 0) {
-        return ctx.reply(`❌ API-Übertragungsfehler: Verbindung blockiert. Bitte starte die Anfrage noch einmal neu.`);
+        return ctx.reply(`❌ API-Übertragungsfehler: Die Google-Sicherheitsprüfung verweigert den Zugriff. Bitte starte den Befehl neu.`);
       }
       await new Promise(resolve => setTimeout(resolve, delay));
       delay += 2000;
