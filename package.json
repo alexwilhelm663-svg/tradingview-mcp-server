@@ -1,19 +1,17 @@
 {
   "name": "elliott-wellen-bot",
-  "version": "1.1.0",
+  "version": "1.3.0",
   "type": "module",
-  "description": "Telegram Bot für flexible Elliott-Wellen-Analysen mit numerischer Datenvalidierung",
+  "description": "Telegram Bot für rein mathematische Elliott-Wellen-Analysen via Matplotlib",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && pip3 install Pillow",
+    "build": "tsc && pip3 install Pillow numpy matplotlib",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts"
   },
   "dependencies": {
     "@google/genai": "latest",
-    "playwright": "latest",
-    "telegraf": "latest",
-    "yahoo-finance2": "latest"
+    "telegraf": "latest"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
