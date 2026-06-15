@@ -7,7 +7,7 @@ import yahooFinance from "yahoo-finance2";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft im Numeric-Data-Modus...");
+console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft im RAM-optimierten Modus...");
 
 interface ChatSession {
   lastScreenshotBuffer: Buffer | null;
@@ -74,7 +74,6 @@ bot.command("analyse", async (ctx) => {
     const today = new Date();
     const priorDate = new Date(new Date().setDate(today.getDate() - 500));
     
-    // KORREKTUR: Explizite Typisierung des Ergebnisses als 'any', um tsc-Fehler zu vermeiden
     const queryResult: any = await yahooFinance.historical(yahooSymbol, {
       period1: priorDate.toISOString().split("T")[0],
       interval: yahooInterval
@@ -92,7 +91,22 @@ bot.command("analyse", async (ctx) => {
 
   await ctx.reply(`⏳ Rufe Widget-Chart für ${symbol} (${rawInterval}) ab...`);
 
-  const browser = await chromium.launch({ headless: true });
+  // KORREKTOR: Radikale RAM-Schonung für Chromium auf Render Free
+  const browser = await chromium.launch({ 
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-accelerated-2d-canvas",
+      "--disable-gpu",
+      "--no-first-run",
+      "--no-zygote",
+      "--single-process",
+      "--disable-audio-output"
+    ]
+  });
+  
   const context = await browser.newContext({
     viewport: { width: 1920, height: 1080 },
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
