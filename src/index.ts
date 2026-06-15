@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft im kugelsicheren Regex-Text-Modus ohne Parse-Fallen...");
+console.log("🤖 Bot läuft im asynchronen Anti-Timeout- und Safety-Bypass-Modus...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -27,8 +27,6 @@ function getWeekNumber(dateStr: string): string {
   return `${d.getUTCFullYear()}-W${weekNo}`;
 }
 
-// Der absolut wasserdichte Regex-Parser.
-// Erkennt jetzt auch I, II, III, IV, V fehlerfrei.
 function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
   const waves: Array<{ label: string; date: string }> = [];
   const regex = /\[(?:Welle\s+)?([12345ABCWXYIV]+):\s*(\d{4}-\d{2}-\d{2})\]/gi;
@@ -73,7 +71,7 @@ bot.command("analyse", async (ctx) => {
     
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0'
       }
     });
 
@@ -87,7 +85,6 @@ bot.command("analyse", async (ctx) => {
     const timestamps = result.timestamp;
     const quote = result.indicators.quote[0];
 
-    // DATEN-SANITIZER: Eliminiert Null-Werte und API-Glitches (verhindert falsche Spikes)
     const rawHistorical = timestamps.map((ts: number, i: number) => {
       const d = new Date(ts * 1000);
       const o = Number(quote.open[i]);
@@ -125,27 +122,6 @@ bot.command("analyse", async (ctx) => {
         };
       }).slice(-75);
 
-    } else if (requestedInterval === "1m" || requestedInterval === "m" || requestedInterval === "mo") {
-      finalIntervalLabel = "1M";
-      const groups: Record<string, any[]> = {};
-      rawHistorical.forEach((c: any) => {
-        const mKey = c.date.substring(0, 7);
-        if (!groups[mKey]) groups[mKey] = [];
-        groups[mKey].push(c);
-      });
-
-      const mKeys = Object.keys(groups).sort();
-      candlesArray = mKeys.map(k => {
-        const candles = groups[k];
-        return {
-          date: candles[candles.length - 1].date,
-          open: Number(candles[0].open).toFixed(2),
-          high: Math.max(...candles.map(c => c.high)).toFixed(2),
-          low: Math.min(...candles.map(c => c.low)).toFixed(2),
-          close: Number(candles[candles.length - 1].close).toFixed(2)
-        };
-      }).slice(-75);
-
     } else {
       finalIntervalLabel = "1D";
       candlesArray = rawHistorical.slice(-75).map((c: any) => ({
@@ -163,20 +139,19 @@ bot.command("analyse", async (ctx) => {
 
   const dataInputJson = JSON.stringify(candlesArray);
 
-  // Keinerlei Schema-Zwang. Reiner Text. Keine Formatierungs-Sperren.
   const mainPrompt = `Du bist ein Mathematiker für fraktale Datenreihen. Analysiere das übermittelte JSON-Array auf zyklische Elliott-Wellen.
   
 Daten-Array:
 ${dataInputJson}
 
 Aufgabe:
-1. Untersuche den Verlauf auf fraktale Kontraktion und anschließende Expansion (Fokus auf "Third of a Third" Setups).
-2. Verfasse eine rein akademische Beschreibung der Wellenverhältnisse und Kursziele (1.618 Extension).
+1. Untersuche den Verlauf auf fraktale Kontraktion und Expansion (Fokus auf "Third of a Third" Setups).
+2. Verfasse eine Beschreibung der Wellenverhältnisse und Kursziele (1.618 Extension).
 3. Markiere JEDEN wichtigen Wendepunkt im Text zwingend in diesem Format: [Welle 3: 2026-04-24].
 WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffern oder Standard-Buchstaben (1, 2, 3, 4, 5, A, B, C, W, X, Y, I, II, III, IV, V).`;
 
   let responseText = "";
-  let attempts = 4; 
+  let attempts = 3; 
   let delay = 2000; 
   
   await ctx.reply(`🧠 Scanne Struktur auf ${finalIntervalLabel}-Basis nach Mustern...`);
@@ -185,7 +160,16 @@ WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffer
     try {
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: mainPrompt
+        contents: mainPrompt,
+        // DER FEHLENDE SAFETY BYPASS: Zwingt Google, die Finanzdaten durchzuwinken
+        config: {
+          safetySettings: [
+            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE }
+          ]
+        }
       });
       
       responseText = response.text || "";
@@ -195,7 +179,7 @@ WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffer
       attempts--;
       console.error(`⚠️ API Fehler: ${apiError.message}`);
       if (attempts === 0) {
-        return ctx.reply(`❌ Systemfehler: Google blockiert die Anfrage. Bitte versuche es später noch einmal.`);
+        return ctx.reply(`❌ Systemfehler: Google blockiert die Anfrage permanent. Log: ${apiError.message}`);
       }
       await new Promise(resolve => setTimeout(resolve, delay));
       delay += 2000;
@@ -227,7 +211,6 @@ WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffer
         await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${finalIntervalLabel})` });
       }
       
-      // Reiner Textversand. Kein Parse-Mode, kein Markdown, kein HTML. Keine Abstürze mehr.
       await ctx.reply(`📝 Struktur-Bericht:\n\n${analysisText}`);
     });
 
@@ -262,7 +245,6 @@ bot.on("text", async (ctx) => {
 
     const answerText = response.text || "Keine Antwort möglich.";
     session.history.push({ role: "model", text: answerText });
-    // Ebenfalls reiner Text bei Rückfragen
     await ctx.reply(`💬 Antwort:\n\n${answerText}`);
   } catch (error: any) {
     await ctx.reply(`❌ Fehler: ${error.message}`);
@@ -280,10 +262,20 @@ if (RENDER_EXTERNAL_URL) {
       req.on("end", () => {
         try {
           const update = JSON.parse(body);
-          bot.handleUpdate(update, res);
+          
+          // DER WEBHOOK-KILLER: 
+          // Wir senden SOFORT 200 OK an Telegram, bevor Telegraf den Befehl verarbeitet.
+          // Das verhindert zu 100%, dass Telegram wegen Timeouts Retries triggert!
+          res.writeHead(200);
+          res.end();
+          
+          // Asynchrone Verarbeitung im Hintergrund
+          bot.handleUpdate(update);
         } catch (e) {
-          res.writeHead(400);
-          res.end("Bad Request");
+          if (!res.headersSent) {
+            res.writeHead(400);
+            res.end("Bad Request");
+          }
         }
       });
     } else if (req.url === "/health" || req.url === "/") {
