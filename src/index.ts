@@ -7,7 +7,7 @@ import yahooFinance from "yahoo-finance2";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft im optimierten Modus...");
+console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft im fehlerresistenten Modus...");
 
 interface ChatSession {
   lastScreenshotBuffer: Buffer | null;
@@ -80,9 +80,10 @@ bot.command("analyse", async (ctx) => {
     });
 
     if (queryResult && Array.isArray(queryResult)) {
-      const slice = queryResult.slice(-60);
+      // Komprimieren auf die letzten 40 Kerzen, um den Prompt-Context klein und sauber zu halten
+      const slice = queryResult.slice(-40);
       historicalData = slice
-        .map((c: any) => `Datum: ${c.date instanceof Date ? c.date.toISOString().split("T")[0] : String(c.date)} -> High: ${Number(c.high).toFixed(2)}, Low: ${Number(c.low).toFixed(2)}, Close: ${Number(c.close).toFixed(2)}`)
+        .map((c: any) => `Date: ${c.date instanceof Date ? c.date.toISOString().split("T")[0] : String(c.date)} -> H: ${Number(c.high).toFixed(2)}, L: ${Number(c.low).toFixed(2)}, C: ${Number(c.close).toFixed(2)}`)
         .join("\n");
     }
   } catch (dataError) {
@@ -115,7 +116,6 @@ bot.command("analyse", async (ctx) => {
   const url = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(symbol)}&interval=${widgetInterval}&theme=dark`;
 
   try {
-    // KORREKTUR: Time-out auf 60 Sekunden hochgesetzt für langsame Render-CPUs
     await page.goto(url, { waitUntil: "networkidle", timeout: 60000 });
     await page.waitForTimeout(5000); 
 
@@ -142,18 +142,15 @@ bot.command("analyse", async (ctx) => {
       },
     };
 
-    const jsonPrompt = `Du bist ein unbestechlicher Elliott-Wellen-Analyst. Vor dir liegt ein TradingView-Chart (1920x1080 Pixel).
-Der reale Kerzenbereich befindet sich AUSSCHLIESSLICH vertikal zwischen Y = 180 und Y = 850. Alles außerhalb ist leerer Raum.
+    const jsonPrompt = `Du bist ein Elliott-Wellen-Experte. Analysiere das Chartbild (1920x1080) und die folgenden numerischen Kursdaten:
+${historicalData || "Nutze die visuelle Chartstruktur."}
 
-Hier sind die ECHTEN, mathematischen Kursdaten der im Chart sichtbaren Kerzen:
-${historicalData || "Keine numerischen Daten verfügbar. Nutze ausschließlich die visuelle Struktur."}
+Aufgabe:
+1. Bestimme die wichtigsten Hochs und Tiefs im Kerzenbereich (Y von 180 bis 850). Platziere KEINE Punkte außerhalb oder im leeren Raum links.
+2. Ordne den Punkten chronologisch von links nach rechts Wellen-Labels zu (1-5, A-C oder W-X-Y).
+3. Schreibe eine prägnante technische Analyse in 'analysis_text'.
 
-Deine Aufgabe:
-1. Gleiche das Chartbild mit den echten Kursdaten ab.
-2. Identifiziere die echten strukturellen Hochs und Tiefs. Setze NIEMALS Punkte in den leeren Raum links oder in den Himmel oberhalb der Kerzen.
-3. Ordne den Wendepunkten die korrekten Wellen-Labels (1-5, A-C, W-X-Y) zu. Chronologisch sortiert von links nach rechts.
-
-Befülle das JSON-Schema präzise. Die X/Y Koordinaten müssen exakt auf den realen Spitzen/Tälern des Kursverlaufs im Bild liegen.`;
+Gib AUSSCHLIESSLICH das geforderte JSON-Schema zurück. Keine Markdown-Ummantelung.`;
 
     let responseText = "";
     let attempts = 3;
@@ -168,10 +165,9 @@ Befülle das JSON-Schema präzise. Die X/Y Koordinaten müssen exakt auf den rea
             responseSchema: {
               type: Type.OBJECT,
               properties: {
-                analysis_text: { type: Type.STRING, description: "Kompakte technische Analyse basierend auf den echten Zahlenwerten." },
+                analysis_text: { type: Type.STRING },
                 waves: {
                   type: Type.ARRAY,
-                  description: "Chronologische Liste der Wellenpunkte, exakt auf den realen Kerzen platziert.",
                   items: {
                     type: Type.OBJECT,
                     properties: {
@@ -191,15 +187,18 @@ Befülle das JSON-Schema präzise. Die X/Y Koordinaten müssen exakt auf den rea
         break;
       } catch (apiError: any) {
         attempts--;
-        if (apiError.status === 503 || apiError.message?.includes("503")) {
-          await new Promise(resolve => setTimeout(resolve, 3000));
-        } else {
-          throw apiError;
-        }
+        if (attempts === 0) throw apiError;
+        await new Promise(resolve => setTimeout(resolve, 3000));
       }
     }
 
-    const result = JSON.parse(responseText.trim());
+    // ROBUSTER CLEANER: Entfernt eventuelle Markdown-Blöcke (```json ... ```), falls die KI patzt
+    let cleanJson = responseText.trim();
+    if (cleanJson.startsWith("```")) {
+      cleanJson = cleanJson.replace(/^```json/, "").replace(/^```/, "").replace(/```$/, "").trim();
+    }
+
+    const result = JSON.parse(cleanJson);
     const wavesData = result.waves || [];
     const analysisText = result.analysis_text || "Keine Analyse generiert.";
 
@@ -240,7 +239,6 @@ Befülle das JSON-Schema präzise. Die X/Y Koordinaten müssen exakt auf den rea
     }
 
   } catch (error: any) {
-    await browser.close();
     console.error("❌ Haupt-Fehler:", error);
     await ctx.reply(`❌ Fehler bei der Analyse: ${error.message}`);
   }
@@ -293,3 +291,4 @@ bot.launch();
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
+  
