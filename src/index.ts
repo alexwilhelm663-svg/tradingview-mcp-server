@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft im fehlerfreien Freitext-Parsing-Modus...");
+console.log("🤖 Bot läuft im optimierten Aggregations-Modus...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -37,10 +37,8 @@ function getWeekNumber(dateStr: string): string {
   return `${d.getUTCFullYear()}-W${weekNo}`;
 }
 
-// KORREKTUR: 'function' statt 'def' und erweiterte Regex für Sub-Wellen in Klammern
 function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
   const waves: Array<{ label: string; date: string }> = [];
-  // Erkennt: [Welle 3: 2026-04-24], [Welle (ii): 2026-06-05], [(i): 2026-05-10], [3: 2026-04-24]
   const regex = /\[(?:Welle\s+)?([12345ABCWXYiIvcV()]+):\s*(\d{4}-\d{2}-\d{2})\]/g;
   let match;
   while ((match = regex.exec(text)) !== null) {
@@ -127,7 +125,7 @@ bot.command("analyse", async (ctx) => {
           low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
         };
-      }).slice(-120); 
+      }).slice(-100); // Auf 100 verkleinert, um den Prompt kompakt zu halten
 
     } else if (requestedInterval === "1m" || requestedInterval === "m" || requestedInterval === "mo") {
       finalIntervalLabel = "1M";
@@ -148,11 +146,11 @@ bot.command("analyse", async (ctx) => {
           low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
         };
-      }).slice(-120);
+      }).slice(-100);
 
     } else {
       finalIntervalLabel = "1D";
-      candlesArray = rawHistorical.slice(-130).map((c: any) => ({
+      candlesArray = rawHistorical.slice(-100).map((c: any) => ({
         date: c.date,
         open: Number(c.open).toFixed(2),
         high: Number(c.high).toFixed(2),
@@ -167,21 +165,20 @@ bot.command("analyse", async (ctx) => {
 
   const formattedDataText = candlesArray.map(c => `Date: ${c.date} -> O: ${c.open}, H: ${c.high}, L: ${c.low}, C: ${c.close}`).join("\n");
 
-  const textPrompt = `Du bist ein hochkarätiger Elliott-Wellen-Analyst, der gezielt nach hochexplosiven "Third of a Third" Setups (Welle 3 einer untergeordneten Welle 3) sucht.
-Vor dir liegen die historischen Kursdaten:
+  const textPrompt = `Du bist ein Elliott-Wellen-Analyst. Suche nach "Third of a Third" Setups (Beginn Welle 3 von 3).
+Hier sind die Kursdaten:
 ${formattedDataText}
 
 Aufgabe:
-1. Untersuche die übergeordnete Marktstruktur. Prüfe, ob eine markante Korrektur beendet wurde.
-2. Suche nach Anzeichen für ein "Third of a Third"-Szenario (Nestbau aus Welle 1, 2 und Unterwellen (i), (ii)).
-3. Schreibe einen professionellen Marktbericht mit konkreten Fibonacci-Zielen und dem Invalidation-Level.
-4. WICHTIG FÜR DIE CHART-GENERIERUNG: Füge im Text für JEDEN identifizierten Wellen-Umkehrpunkt zwingend ein Tag im exakten Format [Welle Bezeichnung: YYYY-MM-DD] ein. 
-Beispiel: "... Welle 3 vollendete sich am markanten Hoch [Welle 3: 2026-04-24], woraufhin die Korrektur [Welle 4: 2026-05-15] folgte..."
-Nutze Bezeichnungen wie 1, 2, 3, 4, 5, A, B, C, (i), (ii).`;
+1. Prüfe, ob eine Korrektur beendet wurde.
+2. Identifiziere den Nestbau (Welle 1, 2 und Unterwellen (i), (ii)).
+3. Schreibe einen kurzen Bericht mit Kurszielen.
+4. FÜR DEN CHART: Füge für jeden Wendepunkt ein Tag ein: [Welle Bezeichnung: YYYY-MM-DD]. Beispiel: [Welle 3: 2026-04-24].
+Nutze Labels: 1, 2, 3, 4, 5, A, B, C, (i), (ii).`;
 
   let responseText = "";
-  let attempts = 5; 
-  let delay = 2000; 
+  let attempts = 3; 
+  let delay = 3000; 
   
   await ctx.reply(`🧠 Scanne Struktur auf ${finalIntervalLabel}-Basis nach Third-of-Third Patterns...`);
 
@@ -198,11 +195,10 @@ Nutze Bezeichnungen wie 1, 2, 3, 4, 5, A, B, C, (i), (ii).`;
     } catch (apiError: any) {
       attempts--;
       if (attempts === 0) {
-        return ctx.reply(`❌ API überlastet. Bitte versuche es gleich noch einmal.`);
+        return ctx.reply(`❌ Fehler bei der API-Übertragung. Bitte starte die Anfrage noch einmal.`);
       }
-      await ctx.reply(`⏳ API ausgelastet, starte direkten Retry in ${delay / 1000}s...`);
       await new Promise(resolve => setTimeout(resolve, delay));
-      delay += 1500;
+      delay += 2000;
     }
   }
 
@@ -306,4 +302,3 @@ if (RENDER_EXTERNAL_URL) {
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
-      
