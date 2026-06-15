@@ -1,12 +1,12 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
-import http from "http"; // Nativer HTTP-Server
+import http from "http";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Bot läuft im nativen, unblockierbaren Yahoo-REST-Modus...");
+console.log("🤖 Bot läuft im Third-of-Third Kriterien- & Auto-Timeframe-Modus...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -38,10 +38,10 @@ bot.command("analyse", async (ctx) => {
   const chatId = ctx.chat.id;
   const args = ctx.message.text.split(" ");
   let symbol = args[1];
-  const rawInterval = (args[2] || "1D").toLowerCase().trim();
+  let requestedInterval = args[2] ? args[2].toLowerCase().trim() : "auto";
   
   if (!symbol) {
-    return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse TEAM 1w");
+    return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse TEAM");
   }
 
   let cleanSymbol = symbol.trim().toUpperCase();
@@ -52,12 +52,14 @@ bot.command("analyse", async (ctx) => {
     cleanSymbol = "P911.DE";
   }
 
-  await ctx.reply(`⏳ Extrahiere Rohdaten für ${cleanSymbol} direkt via Yahoo REST...`);
+  await ctx.reply(`⏳ Extrahiere 3-Jahres-Historie für ${cleanSymbol} via Yahoo REST...`);
 
   let candlesArray: Array<{ date: string; open: string; high: string; low: string; close: string }> = [];
+  let finalIntervalLabel = "1W";
+
   try {
     const period2 = Math.floor(Date.now() / 1000);
-    const period1 = period2 - (365 * 24 * 60 * 60);
+    const period1 = period2 - (3 * 365 * 24 * 60 * 60); // Erhöht auf 3 Jahre für Makro-Analysen
 
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=1d&events=history`;
     
@@ -88,7 +90,10 @@ bot.command("analyse", async (ctx) => {
       };
     }).filter((c: any) => c.open !== null && c.high !== null && c.low !== null && c.close !== null);
 
-    if (rawInterval === "1w" || rawInterval === "w") {
+    // --- AUTOMATISCHE ODER MANUELLE INTERVALL-LOGIK ---
+    // Wenn "auto" gewählt ist, nutzen wir den Wochenchart (1w), um das "Third of a Third" Setup im Makro-Bild zu scannen.
+    if (requestedInterval === "1w" || requestedInterval === "w" || requestedInterval === "auto") {
+      finalIntervalLabel = "1W";
       const groups: Record<string, any[]> = {};
       rawHistorical.forEach((c: any) => {
         const wKey = getWeekNumber(c.date);
@@ -97,6 +102,7 @@ bot.command("analyse", async (ctx) => {
       });
 
       const wKeys = Object.keys(groups).sort();
+      // Erhöht auf die letzten 120 Kerzen, um ausgeprägte Wellenstrukturen sichtbar zu machen
       candlesArray = wKeys.map(k => {
         const candles = groups[k];
         return {
@@ -106,9 +112,10 @@ bot.command("analyse", async (ctx) => {
           low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
         };
-      }).slice(-45);
+      }).slice(-120); 
 
-    } else if (rawInterval === "1m" || rawInterval === "m" || rawInterval === "mo") {
+    } else if (requestedInterval === "1m" || requestedInterval === "m" || requestedInterval === "mo") {
+      finalIntervalLabel = "1M";
       const groups: Record<string, any[]> = {};
       rawHistorical.forEach((c: any) => {
         const mKey = c.date.substring(0, 7);
@@ -126,10 +133,11 @@ bot.command("analyse", async (ctx) => {
           low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
         };
-      }).slice(-45);
+      }).slice(-120);
 
     } else {
-      candlesArray = rawHistorical.slice(-45).map((c: any) => ({
+      finalIntervalLabel = "1D";
+      candlesArray = rawHistorical.slice(-130).map((c: any) => ({
         date: c.date,
         open: Number(c.open).toFixed(2),
         high: Number(c.high).toFixed(2),
@@ -142,64 +150,70 @@ bot.command("analyse", async (ctx) => {
     return ctx.reply(`❌ ANALYSE ABGEBROCHEN: Datenfehler: ${dataError.message}`);
   }
 
-  await ctx.reply(`🧠 Berechne Elliott-Wellen-Muster (${rawInterval.toUpperCase()}) via Gemini...`);
-
   const formattedDataText = candlesArray.map(c => `Date: ${c.date} -> O: ${c.open}, H: ${c.high}, L: ${c.low}, C: ${c.close}`).join("\n");
 
-  const jsonPrompt = `Du bist ein präziser Elliott-Wellen-Analyst. Vor dir liegen die historischen Kursdaten eines Assets:
+  // --- ANPASSUNG DES PROMPTS AUF "THIRD OF A THIRD" SETUPS ---
+  const jsonPrompt = `Du bist ein hochkarätiger Elliott-Wellen-Analyst, der sich auf das Aufspüren von hochexplosiven "Third of a Third" (Welle 3 einer untergeordneten Welle 3) Setups spezialisiert hat.
+Vor dir liegen die historischen Kursdaten (ca. 120 bis 130 Kerzen):
 ${formattedDataText}
 
 Aufgabe:
-1. Analysiere den mathematischen Kursverlauf.
-2. Identifiziere die signifikanten Hochs und Tiefs.
-3. Ordne diesen exakten Datenpunkten (referenziert über das 'date') die korrekten Wellen-Labels zu (1-5, A-C oder W-X-Y).
-4. Schreibe im Feld 'analysis_text' eine professionelle Begründung des Musters nach Prechter-Regeln sowie Kursziele.
+1. Untersuche den übergeordneten Trend. Scanne die Daten darauf, ob eine große Korrektur (Welle 2 oder Welle B) gerade beendet wurde oder kurz vor dem Abschluss steht.
+2. Suche explizit nach Anzeichen, dass der Kurs sich im Nestbau befindet (Welle 1 fertig, Welle 2 korrigiert; gefolgt von einer inneren Welle (i) und (ii)).
+3. Ordne den exakten Drehpunkten (über das 'date') die passenden Wellen-Labels zu.
+4. Analysiere im Feld 'analysis_text', ob hier ein echtes "Third of a Third"-Szenario vorliegt. Falls ja, hebe es hervor, berechne das 161.8% Fibonacci-Erweiterungsziel und beschreibe das ungültige Niveau (Invalidation Level).
 
 Antworte AUSSCHLIESSLICH im geforderten JSON-Schema.`;
 
-  try {
-    let responseText = "";
-    let attempts = 5; 
-    let delay = 3000; 
-    
-    while (attempts > 0) {
-      try {
-        const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: jsonPrompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                analysis_text: { type: Type.STRING },
-                waves: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      label: { type: Type.STRING, description: "Wellenbezeichnung z.B. 1, 2, A, B, C" },
-                      date: { type: Type.STRING, description: "Das EXAKTE Datum des Kursdatenpunkts, an dem die Welle dreht." }
-                    },
-                    required: ["label", "date"]
-                  }
-                }
-              },
-              required: ["analysis_text", "waves"]
-            }
-          }
-        });
-        responseText = response.text || "";
-        break; 
-      } catch (apiError: any) {
-        attempts--;
-        console.warn(`⚠️ Gemini API überlastet. Versuche verbleibend: ${attempts}.`);
-        if (attempts === 0) throw apiError;
-        await new Promise(resolve => setTimeout(resolve, delay));
-        delay *= 2; 
-      }
-    }
+  let responseText = "";
+  let attempts = 5; 
+  let delay = 3000; 
+  
+  await ctx.reply(`🧠 Scanne Struktur auf ${finalIntervalLabel}-Basis nach Third-of-Third Patterns...`);
 
+  while (attempts > 0) {
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: jsonPrompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              analysis_text: { type: Type.STRING },
+              waves: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    label: { type: Type.STRING, description: "Wellenbezeichnung z.B. 1, 2, 3, 4, 5, A, B, C, (i), (ii)" },
+                    date: { type: Type.STRING, description: "Das EXAKTE Datum des Kursdatenpunkts." }
+                  },
+                  required: ["label", "date"]
+                }
+              }
+            },
+            required: ["analysis_text", "waves"]
+          }
+        }
+      });
+      
+      responseText = response.text || "";
+      if (responseText) break;
+      else throw new Error("Leere Antwort.");
+    } catch (apiError: any) {
+      attempts--;
+      if (attempts === 0) {
+        return ctx.reply(`❌ API überlastet. Bitte versuche es erneut.`);
+      }
+      await ctx.reply(`⏳ API ausgelastet, neuer Versuch in ${delay / 1000}s...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay *= 2;
+    }
+  }
+
+  try {
     let cleanJson = responseText.trim();
     if (cleanJson.startsWith("```")) {
       cleanJson = cleanJson.replace(/^```json/, "").replace(/^```/, "").replace(/```$/, "").trim();
@@ -214,7 +228,7 @@ Antworte AUSSCHLIESSLICH im geforderten JSON-Schema.`;
       history: [{ role: "user", text: "Kursdaten analysiert." }, { role: "model", text: analysisText }]
     };
 
-    await ctx.reply("🎨 Generiere mathematischen Vektor-Chart...");
+    await ctx.reply("🎨 Generiere Candlestick Makro-Chart...");
 
     const jsonArg = JSON.stringify({ waves: wavesData, candles: candlesArray });
     const pythonProcess = spawn("python3", ["python_service/drawer.py", jsonArg]);
@@ -227,13 +241,13 @@ Antworte AUSSCHLIESSLICH im geforderten JSON-Schema.`;
         await ctx.reply(`❌ Fehler beim Rendern des Vektordiagramms.`);
       } else {
         const outputBuffer = Buffer.concat(stdoutChunks);
-        await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${rawInterval.toUpperCase()})` });
+        await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${finalIntervalLabel})` });
       }
-      await ctx.reply(`📝 <b>Elliott-Wellen-Analyse:</b>\n\n${convertToTelegramHTML(analysisText)}`, { parse_mode: "HTML" });
+      await ctx.reply(`📝 <b>Elliott-Wellen Setup-Bericht:</b>\n\n${convertToTelegramHTML(analysisText)}`, { parse_mode: "HTML" });
     });
 
   } catch (err: any) {
-    await ctx.reply(`❌ Fehler bei der Verarbeitung: ${err.message}`);
+    await ctx.reply(`❌ Verarbeitungsfehler: ${err.message}`);
   }
 });
 
@@ -246,7 +260,7 @@ bot.on("text", async (ctx) => {
     return ctx.reply("❌ Starte zuerst eine Analyse mit `/analyse`.");
   }
 
-  await ctx.reply("🤔 Analysiere deine Rückfrage...");
+  await ctx.reply("🤔 Analysiere Rückfrage...");
 
   try {
     session.history.push({ role: "user", text: userQuestion });
@@ -269,17 +283,15 @@ bot.on("text", async (ctx) => {
   }
 });
 
-// START BOT
 bot.launch();
 
-// FAKE WEB-SERVER FÜR RENDERS PORT-SCANNER
 const PORT = process.env.PORT || 10000;
 const server = http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "text/plain" });
   res.end("Bot is alive");
 });
 server.listen(PORT, () => {
-  console.log(`🌐 Dummy HTTP-Server läuft auf Port ${PORT} für den Render Port-Scanner.`);
+  console.log(`🌐 Dummy HTTP-Server läuft auf Port ${PORT}`);
 });
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
