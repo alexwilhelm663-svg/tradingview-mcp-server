@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft im kugelsicheren ENUM- und Markdown-Modus...");
+console.log("🤖 Bot läuft im robusten Regex-Text-Modus ohne Schema-Restriktionen...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -18,9 +18,14 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-// Robuster Escaper für Telegram MarkdownV2 (verhindert Parse-Abstürze)
-function escapeMarkdownV2(text: string): string {
-  return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, "\\$&");
+function convertToTelegramHTML(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
+    .replace(/\*(.*?)\*/g, "<i>$1</i>")
+    .replace(/`(.*?)`/g, "<code>$1</code>");
 }
 
 function getWeekNumber(dateStr: string): string {
@@ -30,6 +35,20 @@ function getWeekNumber(dateStr: string): string {
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
   return `${d.getUTCFullYear()}-W${weekNo}`;
+}
+
+// Extremer robuster Regex-Parser, der Klammern und Textmüll ignoriert
+function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
+  const waves: Array<{ label: string; date: string }> = [];
+  const regex = /\[(?:Welle\s+)?([12345ABCWXY]+):\s*(\d{4}-\d{2}-\d{2})\]/gi;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    waves.push({
+      label: match[1].toUpperCase().trim(),
+      date: match[2].trim()
+    });
+  }
+  return waves;
 }
 
 bot.command("analyse", async (ctx) => {
@@ -77,7 +96,6 @@ bot.command("analyse", async (ctx) => {
     const timestamps = result.timestamp;
     const quote = result.indicators.quote[0];
 
-    // DATEN-SANITIZER: Eliminiert Null-Werte und API-Glitches
     const rawHistorical = timestamps.map((ts: number, i: number) => {
       const d = new Date(ts * 1000);
       const o = Number(quote.open[i]);
@@ -113,7 +131,7 @@ bot.command("analyse", async (ctx) => {
           low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
         };
-      }).slice(-70);
+      }).slice(-75);
 
     } else if (requestedInterval === "1m" || requestedInterval === "m" || requestedInterval === "mo") {
       finalIntervalLabel = "1M";
@@ -134,11 +152,11 @@ bot.command("analyse", async (ctx) => {
           low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
         };
-      }).slice(-70);
+      }).slice(-75);
 
     } else {
       finalIntervalLabel = "1D";
-      candlesArray = rawHistorical.slice(-70).map((c: any) => ({
+      candlesArray = rawHistorical.slice(-75).map((c: any) => ({
         date: c.date,
         open: Number(c.open).toFixed(2),
         high: Number(c.high).toFixed(2),
@@ -153,18 +171,18 @@ bot.command("analyse", async (ctx) => {
 
   const dataInputJson = JSON.stringify(candlesArray);
 
-  const mainPrompt = `Du bist ein Mathematiker für fraktale Datenreihen. Analysiere das übermittelte JSON-Array auf spezifische, zyklische Wellenmuster nach den strukturellen Formeln von Elliott.
+  // Völlig freier Text-Prompt, schützt vor 400er Schema-Abstürzen.
+  // Explizites Verbot römischer Ziffern, um den Logik-Fehler im Python-Drawer zu umgehen.
+  const mainPrompt = `Du bist ein Mathematiker für fraktale Datenreihen. Analysiere das übermittelte JSON-Array auf zyklische Elliott-Wellen.
   
 Daten-Array:
 ${dataInputJson}
 
 Aufgabe:
-1. Untersuche den Verlauf auf fraktale Kontraktion und anschließende Expansion (Fokus auf Beginn einer primären Expansionsphase - Struktur Welle 3 von 3).
-2. Identifiziere die lokalen Wendepunkte im Array und ordne ihnen im Feld 'waves' die exakten Datumswerte zu.
-3. Unterwellen bezeichnest du strikt als I, II, III, IV oder V (große römische Buchstaben im ENUM).
-4. Verfasse im Feld 'analysis_text' eine rein akademische Beschreibung der Wellenverhältnisse (inkl. Berechnungen auf Basis von Verhältnismäßigkeiten wie 1.618).
-
-Antworte strikt im geforderten JSON-Schema.`;
+1. Untersuche den Verlauf auf fraktale Kontraktion und anschließende Expansion (Fokus auf "Third of a Third" Setups).
+2. Verfasse eine rein akademische Beschreibung der Wellenverhältnisse und Kursziele (1.618 Extension).
+3. Markiere JEDEN wichtigen Wendepunkt im Text zwingend in diesem Format: [Welle 3: 2026-04-24].
+WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffern oder Standard-Buchstaben (1, 2, 3, 4, 5, A, B, C, W, X, Y). Verwende absolut keine römischen Ziffern oder Klammern!`;
 
   let responseText = "";
   let attempts = 4; 
@@ -174,34 +192,10 @@ Antworte strikt im geforderten JSON-Schema.`;
 
   while (attempts > 0) {
     try {
+      // Keinerlei Schema-Einschränkungen mehr, um API-Abbrüche zu verhindern
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: mainPrompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              analysis_text: { type: Type.STRING },
-              waves: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    label: { 
-                      type: Type.STRING, 
-                      // Das vollständige, synchronisierte Vokabular
-                      enum: ["1", "2", "3", "4", "5", "A", "B", "C", "W", "X", "Y", "I", "II", "III", "IV", "V"] 
-                    },
-                    date: { type: Type.STRING }
-                  },
-                  required: ["label", "date"]
-                }
-              }
-            },
-            required: ["analysis_text", "waves"]
-          }
-        }
+        contents: mainPrompt
       });
       
       responseText = response.text || "";
@@ -209,9 +203,9 @@ Antworte strikt im geforderten JSON-Schema.`;
       else throw new Error("Leere Struktur.");
     } catch (apiError: any) {
       attempts--;
-      console.error(`⚠️ Schnittstellen-Konflikt: ${apiError.message}`);
+      console.error(`⚠️ API Fehler: ${apiError.message}`);
       if (attempts === 0) {
-        return ctx.reply(`❌ Systemfehler: Google blockiert die automatisierte Verarbeitung. Bitte starte die Anfrage neu.`);
+        return ctx.reply(`❌ Systemfehler: Google blockiert die Anfrage. Bitte versuche es in wenigen Minuten noch einmal.`);
       }
       await new Promise(resolve => setTimeout(resolve, delay));
       delay += 2000;
@@ -219,14 +213,8 @@ Antworte strikt im geforderten JSON-Schema.`;
   }
 
   try {
-    let cleanJson = responseText.trim();
-    if (cleanJson.startsWith("```")) {
-      cleanJson = cleanJson.replace(/^```json/, "").replace(/^```/, "").replace(/```$/, "").trim();
-    }
-
-    const result = JSON.parse(cleanJson);
-    const wavesData = result.waves || [];
-    const analysisText = result.analysis_text || "Keine Analyse generiert.";
+    const wavesData = parseWavesFromText(responseText);
+    const analysisText = responseText;
 
     chatSessions[chatId] = {
       lastDataPayload: { candles: candlesArray, waves: wavesData },
@@ -249,12 +237,11 @@ Antworte strikt im geforderten JSON-Schema.`;
         await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${finalIntervalLabel})` });
       }
       
-      const escapedReport = escapeMarkdownV2(analysisText);
-      await ctx.reply(`📝 *Struktur\\-Bericht:*\n\n${escapedReport}`, { parse_mode: "MarkdownV2" });
+      await ctx.reply(`📝 <b>Struktur-Bericht:</b>\n\n${convertToTelegramHTML(analysisText)}`, { parse_mode: "HTML" });
     });
 
   } catch (err: any) {
-    await ctx.reply(`❌ Verarbeitungsfehler beim JSON-Parsing: ${err.message}`);
+    await ctx.reply(`❌ Verarbeitungsfehler: ${err.message}`);
   }
 });
 
@@ -284,7 +271,7 @@ bot.on("text", async (ctx) => {
 
     const answerText = response.text || "Keine Antwort möglich.";
     session.history.push({ role: "model", text: answerText });
-    await ctx.reply(`💬 *Antwort:*\n\n${escapeMarkdownV2(answerText)}`, { parse_mode: "MarkdownV2" });
+    await ctx.reply(`💬 <b>Antwort:</b>\n\n${convertToTelegramHTML(answerText)}`, { parse_mode: "HTML" });
   } catch (error: any) {
     await ctx.reply(`❌ Fehler: ${error.message}`);
   }
@@ -326,3 +313,4 @@ if (RENDER_EXTERNAL_URL) {
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
+      
