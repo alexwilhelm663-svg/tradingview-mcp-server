@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
+import http from "http"; // Nativer HTTP-Server
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
@@ -56,7 +57,7 @@ bot.command("analyse", async (ctx) => {
   let candlesArray: Array<{ date: string; open: string; high: string; low: string; close: string }> = [];
   try {
     const period2 = Math.floor(Date.now() / 1000);
-    const period1 = period2 - (365 * 24 * 60 * 60); // 1 Jahr Historie
+    const period1 = period2 - (365 * 24 * 60 * 60);
 
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=1d&events=history`;
     
@@ -268,7 +269,18 @@ bot.on("text", async (ctx) => {
   }
 });
 
+// START BOT
 bot.launch();
+
+// FAKE WEB-SERVER FÜR RENDERS PORT-SCANNER
+const PORT = process.env.PORT || 10000;
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("Bot is alive");
+});
+server.listen(PORT, () => {
+  console.log(`🌐 Dummy HTTP-Server läuft auf Port ${PORT} für den Render Port-Scanner.`);
+});
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
