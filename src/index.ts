@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft im unblockierbaren Markdown-Modus...");
+console.log("🤖 Bot läuft im kugelsicheren ENUM- und Markdown-Modus...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -18,9 +18,9 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-// Robuster Escaper für Telegram MarkdownV2
+// Robuster Escaper für Telegram MarkdownV2 (verhindert Parse-Abstürze)
 function escapeMarkdownV2(text: string): string {
-  return text.replace(/[_*\[\]()~`>#+\-=|{}.!]/g, "\\$&");
+  return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, "\\$&");
 }
 
 function getWeekNumber(dateStr: string): string {
@@ -77,6 +77,7 @@ bot.command("analyse", async (ctx) => {
     const timestamps = result.timestamp;
     const quote = result.indicators.quote[0];
 
+    // DATEN-SANITIZER: Eliminiert Null-Werte und API-Glitches
     const rawHistorical = timestamps.map((ts: number, i: number) => {
       const d = new Date(ts * 1000);
       const o = Number(quote.open[i]);
@@ -160,8 +161,8 @@ ${dataInputJson}
 Aufgabe:
 1. Untersuche den Verlauf auf fraktale Kontraktion und anschließende Expansion (Fokus auf Beginn einer primären Expansionsphase - Struktur Welle 3 von 3).
 2. Identifiziere die lokalen Wendepunkte im Array und ordne ihnen im Feld 'waves' die exakten Datumswerte zu.
-3. Unterwellen bezeichnest du strikt als I oder II (große römische Buchstaben im ENUM).
-4. Verfasse im Feld 'analysis_text' eine rein akademische Beschreibung der Wellenverhältnisse (inkl. Berechnungen auf Basis von Verhältnismäßigkeiten wie 1.618). Do NOT use any HTML tags.
+3. Unterwellen bezeichnest du strikt als I, II, III, IV oder V (große römische Buchstaben im ENUM).
+4. Verfasse im Feld 'analysis_text' eine rein akademische Beschreibung der Wellenverhältnisse (inkl. Berechnungen auf Basis von Verhältnismäßigkeiten wie 1.618).
 
 Antworte strikt im geforderten JSON-Schema.`;
 
@@ -189,7 +190,8 @@ Antworte strikt im geforderten JSON-Schema.`;
                   properties: {
                     label: { 
                       type: Type.STRING, 
-                      enum: ["1", "2", "3", "4", "5", "A", "B", "C", "I", "II"] 
+                      // Das vollständige, synchronisierte Vokabular
+                      enum: ["1", "2", "3", "4", "5", "A", "B", "C", "W", "X", "Y", "I", "II", "III", "IV", "V"] 
                     },
                     date: { type: Type.STRING }
                   },
@@ -247,9 +249,8 @@ Antworte strikt im geforderten JSON-Schema.`;
         await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${finalIntervalLabel})` });
       }
       
-      // KORREKTUR: Sicherer MarkdownV2-Versand verhindert Abstürze durch unpaarige HTML-Tags vollständig
       const escapedReport = escapeMarkdownV2(analysisText);
-      await ctx.reply(`*Struktur\-Bericht:* \n\n${escapedReport}`, { parse_mode: "MarkdownV2" });
+      await ctx.reply(`📝 *Struktur\\-Bericht:*\n\n${escapedReport}`, { parse_mode: "MarkdownV2" });
     });
 
   } catch (err: any) {
@@ -283,7 +284,7 @@ bot.on("text", async (ctx) => {
 
     const answerText = response.text || "Keine Antwort möglich.";
     session.history.push({ role: "model", text: answerText });
-    await ctx.reply(`💬 *Antwort:* \n\n${escapeMarkdownV2(answerText)}`, { parse_mode: "MarkdownV2" });
+    await ctx.reply(`💬 *Antwort:*\n\n${escapeMarkdownV2(answerText)}`, { parse_mode: "MarkdownV2" });
   } catch (error: any) {
     await ctx.reply(`❌ Fehler: ${error.message}`);
   }
