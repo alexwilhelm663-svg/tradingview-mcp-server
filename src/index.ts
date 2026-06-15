@@ -7,7 +7,7 @@ import yahooFinance from "yahoo-finance2";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft im RAM-optimierten Modus...");
+console.log("🤖 Telegram Elliott-Wellen-Analyst Bot läuft im optimierten Modus...");
 
 interface ChatSession {
   lastScreenshotBuffer: Buffer | null;
@@ -91,7 +91,6 @@ bot.command("analyse", async (ctx) => {
 
   await ctx.reply(`⏳ Rufe Widget-Chart für ${symbol} (${rawInterval}) ab...`);
 
-  // KORREKTOR: Radikale RAM-Schonung für Chromium auf Render Free
   const browser = await chromium.launch({ 
     headless: true,
     args: [
@@ -101,9 +100,7 @@ bot.command("analyse", async (ctx) => {
       "--disable-accelerated-2d-canvas",
       "--disable-gpu",
       "--no-first-run",
-      "--no-zygote",
-      "--single-process",
-      "--disable-audio-output"
+      "--no-zygote"
     ]
   });
   
@@ -118,8 +115,9 @@ bot.command("analyse", async (ctx) => {
   const url = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(symbol)}&interval=${widgetInterval}&theme=dark`;
 
   try {
-    await page.goto(url, { waitUntil: "load", timeout: 20000 });
-    await page.waitForTimeout(3000); 
+    // KORREKTUR: Time-out auf 60 Sekunden hochgesetzt für langsame Render-CPUs
+    await page.goto(url, { waitUntil: "networkidle", timeout: 60000 });
+    await page.waitForTimeout(5000); 
 
     await ctx.reply("📊 Stauche Zeitachse für optimale Candlestick-Anzeige...");
     await page.mouse.click(960, 540);
