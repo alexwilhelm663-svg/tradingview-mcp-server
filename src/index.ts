@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft im optimierten Aggregations-Modus...");
+console.log("🤖 Bot läuft im fehlerfreien Safety-Bypass-Modus...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -125,7 +125,7 @@ bot.command("analyse", async (ctx) => {
           low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
         };
-      }).slice(-100); // Auf 100 verkleinert, um den Prompt kompakt zu halten
+      }).slice(-90); // Kompakter Context
 
     } else if (requestedInterval === "1m" || requestedInterval === "m" || requestedInterval === "mo") {
       finalIntervalLabel = "1M";
@@ -146,11 +146,11 @@ bot.command("analyse", async (ctx) => {
           low: Math.min(...candles.map(c => c.low)).toFixed(2),
           close: Number(candles[candles.length - 1].close).toFixed(2)
         };
-      }).slice(-100);
+      }).slice(-90);
 
     } else {
       finalIntervalLabel = "1D";
-      candlesArray = rawHistorical.slice(-100).map((c: any) => ({
+      candlesArray = rawHistorical.slice(-90).map((c: any) => ({
         date: c.date,
         open: Number(c.open).toFixed(2),
         high: Number(c.high).toFixed(2),
@@ -165,16 +165,16 @@ bot.command("analyse", async (ctx) => {
 
   const formattedDataText = candlesArray.map(c => `Date: ${c.date} -> O: ${c.open}, H: ${c.high}, L: ${c.low}, C: ${c.close}`).join("\n");
 
-  const textPrompt = `Du bist ein Elliott-Wellen-Analyst. Suche nach "Third of a Third" Setups (Beginn Welle 3 von 3).
-Hier sind die Kursdaten:
+  const textPrompt = `Du bist ein professioneller Elliott-Wellen-Analyst. Analysiere die Kursdaten auf strukturelle Muster, insbesondere im Hinblick auf ein potenzielles "Third of a Third" Setup (Beginn einer kraftvollen Welle 3 von 3).
+Hier sind die historischen Kursdaten:
 ${formattedDataText}
 
 Aufgabe:
-1. Prüfe, ob eine Korrektur beendet wurde.
-2. Identifiziere den Nestbau (Welle 1, 2 und Unterwellen (i), (ii)).
-3. Schreibe einen kurzen Bericht mit Kurszielen.
-4. FÜR DEN CHART: Füge für jeden Wendepunkt ein Tag ein: [Welle Bezeichnung: YYYY-MM-DD]. Beispiel: [Welle 3: 2026-04-24].
-Nutze Labels: 1, 2, 3, 4, 5, A, B, C, (i), (ii).`;
+1. Bestimme, ob eine signifikante Korrektur abgeschlossen wurde.
+2. Identifiziere den strukturellen Nestbau (Welle 1, Welle 2 sowie die inneren Unterwellen (i) und (ii)).
+3. Verfasse eine prägnante Analyse mit konkreten Zielen und dem Invalidation-Level.
+4. FÜR DIE CHART-GENERIERUNG: Platziere im Text für jeden markanten Drehpunkt ein exaktes Tag im Format [Welle Bezeichnung: YYYY-MM-DD]. Beispiel: [Welle 3: 2026-04-24].
+Nutze ausschließlich diese Bezeichnungen: 1, 2, 3, 4, 5, A, B, C, (i), (ii).`;
 
   let responseText = "";
   let attempts = 3; 
@@ -186,7 +186,16 @@ Nutze Labels: 1, 2, 3, 4, 5, A, B, C, (i), (ii).`;
     try {
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: textPrompt
+        contents: textPrompt,
+        config: {
+          // DEAKTIVIERUNG DER INHALTSFILTER FÜR MATHEMATISCHE ANALYSEN
+          safetySettings: [
+            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
+          ]
+        }
       });
       
       responseText = response.text || "";
@@ -195,7 +204,7 @@ Nutze Labels: 1, 2, 3, 4, 5, A, B, C, (i), (ii).`;
     } catch (apiError: any) {
       attempts--;
       if (attempts === 0) {
-        return ctx.reply(`❌ Fehler bei der API-Übertragung. Bitte starte die Anfrage noch einmal.`);
+        return ctx.reply(`❌ Kritischer API-Fehler: Die Verbindung zu Google wurde blockiert. Bitte passe den Prompt an oder versuche es erneut.`);
       }
       await new Promise(resolve => setTimeout(resolve, delay));
       delay += 2000;
