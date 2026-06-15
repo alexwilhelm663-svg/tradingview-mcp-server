@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft im robusten Regex-Text-Modus ohne Schema-Restriktionen...");
+console.log("🤖 Bot läuft im kugelsicheren Regex-Text-Modus ohne Parse-Fallen...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -17,16 +17,6 @@ interface ChatSession {
 }
 
 const chatSessions: Record<number, ChatSession> = {};
-
-function convertToTelegramHTML(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
-    .replace(/\*(.*?)\*/g, "<i>$1</i>")
-    .replace(/`(.*?)`/g, "<code>$1</code>");
-}
 
 function getWeekNumber(dateStr: string): string {
   const d = new Date(dateStr);
@@ -37,10 +27,11 @@ function getWeekNumber(dateStr: string): string {
   return `${d.getUTCFullYear()}-W${weekNo}`;
 }
 
-// Extremer robuster Regex-Parser, der Klammern und Textmüll ignoriert
+// Der absolut wasserdichte Regex-Parser.
+// Erkennt jetzt auch I, II, III, IV, V fehlerfrei.
 function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
   const waves: Array<{ label: string; date: string }> = [];
-  const regex = /\[(?:Welle\s+)?([12345ABCWXY]+):\s*(\d{4}-\d{2}-\d{2})\]/gi;
+  const regex = /\[(?:Welle\s+)?([12345ABCWXYIV]+):\s*(\d{4}-\d{2}-\d{2})\]/gi;
   let match;
   while ((match = regex.exec(text)) !== null) {
     waves.push({
@@ -96,6 +87,7 @@ bot.command("analyse", async (ctx) => {
     const timestamps = result.timestamp;
     const quote = result.indicators.quote[0];
 
+    // DATEN-SANITIZER: Eliminiert Null-Werte und API-Glitches (verhindert falsche Spikes)
     const rawHistorical = timestamps.map((ts: number, i: number) => {
       const d = new Date(ts * 1000);
       const o = Number(quote.open[i]);
@@ -171,8 +163,7 @@ bot.command("analyse", async (ctx) => {
 
   const dataInputJson = JSON.stringify(candlesArray);
 
-  // Völlig freier Text-Prompt, schützt vor 400er Schema-Abstürzen.
-  // Explizites Verbot römischer Ziffern, um den Logik-Fehler im Python-Drawer zu umgehen.
+  // Keinerlei Schema-Zwang. Reiner Text. Keine Formatierungs-Sperren.
   const mainPrompt = `Du bist ein Mathematiker für fraktale Datenreihen. Analysiere das übermittelte JSON-Array auf zyklische Elliott-Wellen.
   
 Daten-Array:
@@ -182,7 +173,7 @@ Aufgabe:
 1. Untersuche den Verlauf auf fraktale Kontraktion und anschließende Expansion (Fokus auf "Third of a Third" Setups).
 2. Verfasse eine rein akademische Beschreibung der Wellenverhältnisse und Kursziele (1.618 Extension).
 3. Markiere JEDEN wichtigen Wendepunkt im Text zwingend in diesem Format: [Welle 3: 2026-04-24].
-WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffern oder Standard-Buchstaben (1, 2, 3, 4, 5, A, B, C, W, X, Y). Verwende absolut keine römischen Ziffern oder Klammern!`;
+WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffern oder Standard-Buchstaben (1, 2, 3, 4, 5, A, B, C, W, X, Y, I, II, III, IV, V).`;
 
   let responseText = "";
   let attempts = 4; 
@@ -192,7 +183,6 @@ WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffer
 
   while (attempts > 0) {
     try {
-      // Keinerlei Schema-Einschränkungen mehr, um API-Abbrüche zu verhindern
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
         contents: mainPrompt
@@ -205,7 +195,7 @@ WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffer
       attempts--;
       console.error(`⚠️ API Fehler: ${apiError.message}`);
       if (attempts === 0) {
-        return ctx.reply(`❌ Systemfehler: Google blockiert die Anfrage. Bitte versuche es in wenigen Minuten noch einmal.`);
+        return ctx.reply(`❌ Systemfehler: Google blockiert die Anfrage. Bitte versuche es später noch einmal.`);
       }
       await new Promise(resolve => setTimeout(resolve, delay));
       delay += 2000;
@@ -237,7 +227,8 @@ WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH arabische Ziffer
         await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${finalIntervalLabel})` });
       }
       
-      await ctx.reply(`📝 <b>Struktur-Bericht:</b>\n\n${convertToTelegramHTML(analysisText)}`, { parse_mode: "HTML" });
+      // Reiner Textversand. Kein Parse-Mode, kein Markdown, kein HTML. Keine Abstürze mehr.
+      await ctx.reply(`📝 Struktur-Bericht:\n\n${analysisText}`);
     });
 
   } catch (err: any) {
@@ -271,7 +262,8 @@ bot.on("text", async (ctx) => {
 
     const answerText = response.text || "Keine Antwort möglich.";
     session.history.push({ role: "model", text: answerText });
-    await ctx.reply(`💬 <b>Antwort:</b>\n\n${convertToTelegramHTML(answerText)}`, { parse_mode: "HTML" });
+    // Ebenfalls reiner Text bei Rückfragen
+    await ctx.reply(`💬 Antwort:\n\n${answerText}`);
   } catch (error: any) {
     await ctx.reply(`❌ Fehler: ${error.message}`);
   }
@@ -313,4 +305,3 @@ if (RENDER_EXTERNAL_URL) {
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
-      
