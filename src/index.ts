@@ -6,7 +6,11 @@ import http from "http";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
-console.log("🤖 Bot läuft im Third-of-Third Kriterien- & Auto-Timeframe-Modus...");
+// Die öffentliche URL deiner Render-Instanz (z.B. https://tradingview-mcp-server.onrender.com)
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
+const PORT = process.env.PORT || 10000;
+
+console.log("🤖 Bot läuft in professioneller Webhook-Architektur...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -59,7 +63,7 @@ bot.command("analyse", async (ctx) => {
 
   try {
     const period2 = Math.floor(Date.now() / 1000);
-    const period1 = period2 - (3 * 365 * 24 * 60 * 60); // Erhöht auf 3 Jahre für Makro-Analysen
+    const period1 = period2 - (3 * 365 * 24 * 60 * 60);
 
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=1d&events=history`;
     
@@ -90,8 +94,6 @@ bot.command("analyse", async (ctx) => {
       };
     }).filter((c: any) => c.open !== null && c.high !== null && c.low !== null && c.close !== null);
 
-    // --- AUTOMATISCHE ODER MANUELLE INTERVALL-LOGIK ---
-    // Wenn "auto" gewählt ist, nutzen wir den Wochenchart (1w), um das "Third of a Third" Setup im Makro-Bild zu scannen.
     if (requestedInterval === "1w" || requestedInterval === "w" || requestedInterval === "auto") {
       finalIntervalLabel = "1W";
       const groups: Record<string, any[]> = {};
@@ -102,7 +104,6 @@ bot.command("analyse", async (ctx) => {
       });
 
       const wKeys = Object.keys(groups).sort();
-      // Erhöht auf die letzten 120 Kerzen, um ausgeprägte Wellenstrukturen sichtbar zu machen
       candlesArray = wKeys.map(k => {
         const candles = groups[k];
         return {
@@ -152,7 +153,6 @@ bot.command("analyse", async (ctx) => {
 
   const formattedDataText = candlesArray.map(c => `Date: ${c.date} -> O: ${c.open}, H: ${c.high}, L: ${c.low}, C: ${c.close}`).join("\n");
 
-  // --- ANPASSUNG DES PROMPTS AUF "THIRD OF A THIRD" SETUPS ---
   const jsonPrompt = `Du bist ein hochkarätiger Elliott-Wellen-Analyst, der sich auf das Aufspüren von hochexplosiven "Third of a Third" (Welle 3 einer untergeordneten Welle 3) Setups spezialisiert hat.
 Vor dir liegen die historischen Kursdaten (ca. 120 bis 130 Kerzen):
 ${formattedDataText}
@@ -283,16 +283,41 @@ bot.on("text", async (ctx) => {
   }
 });
 
-bot.launch();
+// --- NATIVE WEBHOOK INTEGRATION (ERSETZT POLLING) ---
+if (RENDER_EXTERNAL_URL) {
+  const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
+  bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
+  
+  const server = http.createServer((req, res) => {
+    if (req.url === webhookPath && req.method === "POST") {
+      let body = "";
+      req.on("data", chunk => body += chunk);
+      req.on("end", () => {
+        try {
+          const update = JSON.parse(body);
+          bot.handleUpdate(update, res);
+        } catch (e) {
+          res.writeHead(400);
+          res.end("Bad Request");
+        }
+      });
+    } else if (req.url === "/health" || req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("Bot Server is healthy");
+    } else {
+      res.writeHead(404);
+      res.end("Not Found");
+    }
+  });
 
-const PORT = process.env.PORT || 10000;
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("Bot is alive");
-});
-server.listen(PORT, () => {
-  console.log(`🌐 Dummy HTTP-Server läuft auf Port ${PORT}`);
-});
+  server.listen(PORT, () => {
+    console.log(`🌐 Webhook-Server aktiv auf Port ${PORT}. Route: ${webhookPath}`);
+  });
+} else {
+  // Lokaler Fallback, falls RENDER_EXTERNAL_URL nicht existiert
+  console.log("⚠️ RENDER_EXTERNAL_URL fehlt. Nutze Polling als Fallback...");
+  bot.launch();
+}
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
