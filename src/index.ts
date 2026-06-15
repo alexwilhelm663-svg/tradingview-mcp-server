@@ -30,7 +30,7 @@ function getWeekNumber(dateStr: string): string {
   const d = new Date(dateStr);
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.utc(d.getUTCFullYear(),0,1));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1)); // Korrigiert: Date.UTC statt Date.utc
   const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
   return `${d.getUTCFullYear()}-W${weekNo}`;
 }
@@ -71,7 +71,7 @@ bot.command("analyse", async (ctx) => {
       throw new Error("Symbol nicht gefunden oder API-Limit erreicht.");
     }
 
-    // Holen uns genug Historie (z.B. die letzten 200 Tage), um Wochen/Monate zu bauen
+    // Holen uns genug Historie (z.B. die letzten 220 Tage), um Wochen/Monate zu bauen
     const rawHistorical = resData.historical.slice(0, 220).reverse();
 
     if (rawInterval === "1w" || rawInterval === "w") {
