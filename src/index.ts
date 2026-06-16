@@ -81,7 +81,6 @@ bot.on("photo", async (ctx) => {
 
   try {
     const period2 = Math.floor(Date.now() / 1000);
-    // Erhöhte Historie für den API-Abruf, um genug Daten für Wochen/Monats-Charts zu haben
     const lookbackDays = finalIntervalLabel === "1H" ? 30 : (10 * 365); 
     const period1 = period2 - (lookbackDays * 24 * 60 * 60);
 
@@ -110,14 +109,13 @@ bot.on("photo", async (ctx) => {
       };
     }).filter((c: any) => Number(c.open) > 0 && Number(c.high) > 0 && Number(c.low) > 0 && Number(c.close) > 0);
 
-    // Dynamischer Lookback basierend auf Timeframe
     let lookback = 150;
     if (finalIntervalLabel === "1W") {
-      lookback = 500; // ca. 10 Jahre Historie für Makro-Zyklen
+      lookback = 500; 
     } else if (finalIntervalLabel === "1D") {
-      lookback = 400; // ca. 1,5 Jahre Historie
+      lookback = 400; 
     } else if (finalIntervalLabel === "1M") {
-      lookback = 240; // ca. 20 Jahre
+      lookback = 240; 
     } else if (finalIntervalLabel === "1H") {
       lookback = 200;
     }
@@ -137,22 +135,28 @@ bot.on("photo", async (ctx) => {
 
   const dataInputJson = JSON.stringify(candlesArray);
 
-  const mainPrompt = `Du bist ein Mathematiker für fraktale Datenreihen. Analysiere das übermittelte Bild (TradingView Chart) UND das JSON-Array der Marktdaten.
+  // NEU: Extrem restriktiver Prompt mit strikten EW-Regeln
+  const mainPrompt = `Du bist ein strenger technischer Analyst für Elliott-Wellen. Analysiere das übermittelte Bild (TradingView Chart) UND das JSON-Array der Marktdaten.
   
 Daten-Array (Referenz für exakte Timestamps/Preise):
 ${dataInputJson}
 
-Aufgabe:
-1. Analysiere primär das BILD auf fraktale Kontraktion und anschließende Expansion (Fokus auf "Third of a Third" Setups).
-2. Verknüpfe die visuellen Wendepunkte aus dem Bild mit den exakten Daten/Kerzen im beigefügten JSON-Array.
-3. Markiere AUSSCHLIESSLICH den dominanten Makro-Zyklus (Welle I, II, III, IV, V und die Korrektur A, B, C) im Text zwingend in diesem Format: [Welle III: 2026-04-24].
-WICHTIG: Markiere KEINE internen Unterwellen in eckigen Klammern. Jedes Label (I, II, III, IV, V, A, B, C) darf im gesamten Text nur EXAKT EINMAL markiert werden!`;
+Aufgabe & Strikte Regeln:
+1. Analysiere das BILD und finde den dominanten Makro-Zyklus.
+2. Halte dich an die absoluten Elliott-Wellen-Regeln:
+   - Welle III darf niemals die kürzeste der Antriebswellen (I, III, V) sein.
+   - Welle IV darf preislich NICHT in das Territorium von Welle I zurückfallen.
+   - Das absolute Allzeithoch (Peak des Bullenmarktes) ist Welle V (5). Setze Welle III NICHT auf das Allzeithoch, wenn danach ein niedriges Hoch als Welle V gelabelt wird! Welle V muss zwingend über Welle III liegen.
+   - Nach dem Peak (Welle V) folgt der Bärenmarkt als Korrektur: A (tief), B (niedrigeres Hoch), C (tief).
+3. Verknüpfe die visuellen Wendepunkte aus dem Bild mit den exakten Kerzen im JSON-Array.
+4. Markiere AUSSCHLIESSLICH den dominanten Makro-Zyklus (I, II, III, IV, V, A, B, C) im Text zwingend in diesem Format: [Welle III: 2026-04-24].
+WICHTIG: Jedes Label (I, II, III, IV, V, A, B, C) darf nur EXAKT EINMAL vorkommen!`;
 
   let responseText = "";
   let attempts = 4; 
   let delay = 2000; 
   
-  await ctx.reply(`🧠 Scanne multimodale Struktur nach Mustern...`);
+  await ctx.reply(`🧠 Scanne multimodale Struktur nach strikten Elliott-Regeln...`);
 
   while (attempts > 0) {
     try {
@@ -192,7 +196,6 @@ WICHTIG: Markiere KEINE internen Unterwellen in eckigen Klammern. Jedes Label (I
   try {
     const rawWaves = parseWavesFromText(responseText);
     
-    // FILTER: Rigorose Deduplizierung. Jedes Label darf nur 1x ans Python-Skript gehen.
     const uniqueWavesMap = new Map<string, {label: string, date: string}>();
     rawWaves.forEach(w => {
       if (!uniqueWavesMap.has(w.label)) {
