@@ -16,9 +16,9 @@ COPY package*.json ./
 RUN npm install
 
 # 4. Python-Abhängigkeiten kopieren und über pip installieren
-# Das Flag --break-system-packages ist in neueren Debian-Versionen nötig für globale pip-Installs im Container
+# (Ohne das Flag, da bullseye-slim eine ältere pip-Version nutzt, die es nicht benötigt)
 COPY python_service/requirements.txt ./python_service/
-RUN pip3 install --no-cache-dir -r python_service/requirements.txt --break-system-packages
+RUN pip3 install --no-cache-dir -r python_service/requirements.txt
 
 # 5. Den restlichen Quellcode in den Container kopieren
 COPY . .
