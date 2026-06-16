@@ -25,7 +25,7 @@ const chatSessions: Record<number, ChatSession> = {};
 
 function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
   const waves: Array<{ label: string; date: string }> = [];
-  const regex = /\[(?:Welle\s+)?([12345ABCWXYIV]+):\s*(\d{4}-\d{2}-\d{2})\]/gi;
+  const regex = /\[(?:Welle\s+)?([12345ABCWXYIV]+):\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]/gi;
   let match;
   while ((match = regex.exec(text)) !== null) {
     waves.push({
@@ -36,12 +36,11 @@ function parseWavesFromText(text: string): Array<{ label: string; date: string }
   return waves;
 }
 
-// Handler für Fotos mit Bildunterschrift (Caption)
 bot.on("photo", async (ctx) => {
   const caption = ctx.message.caption || "";
   
   if (!caption.toLowerCase().startsWith("/analyse")) {
-    return ctx.reply("❌ Bitte füge dem Bild als Unterschrift den Analyse-Befehl hinzu. Beispiel: /analyse TEAM 1D");
+    return ctx.reply("❌ Bitte füge dem Bild als Unterschrift den Analyse-Befehl hinzu. Beispiel: /analyse TEAM 1W");
   }
 
   const chatId = ctx.chat.id;
@@ -81,10 +80,9 @@ bot.on("photo", async (ctx) => {
   let base64Image = "";
 
   try {
-    // 1. Yahoo Daten abrufen
     const period2 = Math.floor(Date.now() / 1000);
-    // Bei 1H Intervall können wir nicht 3 Jahre zurückgehen, Yahoo limitiert das.
-    const lookbackDays = finalIntervalLabel === "1H" ? 30 : (3 * 365); 
+    // Erhöhte Historie für den API-Abruf, um genug Daten für Wochen/Monats-Charts zu haben
+    const lookbackDays = finalIntervalLabel === "1H" ? 30 : (10 * 365); 
     const period1 = period2 - (lookbackDays * 24 * 60 * 60);
 
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=${yahooInterval}&events=history`;
@@ -99,7 +97,6 @@ bot.on("photo", async (ctx) => {
     const quote = result.indicators.quote[0];
 
     const rawHistorical = timestamps.map((ts: number, i: number) => {
-      // Formatiere Datum um Stunden/Minuten bei 1H-Charts zu behalten, oder nur YYYY-MM-DD für den Rest
       const d = new Date(ts * 1000);
       const dateStr = finalIntervalLabel === "1H" ? d.toISOString().replace('T', ' ').substring(0, 16) : d.toISOString().split('T')[0];
       
@@ -113,11 +110,22 @@ bot.on("photo", async (ctx) => {
       };
     }).filter((c: any) => Number(c.open) > 0 && Number(c.high) > 0 && Number(c.low) > 0 && Number(c.close) > 0);
 
-    candlesArray = rawHistorical.slice(-150);
+    // Dynamischer Lookback basierend auf Timeframe
+    let lookback = 150;
+    if (finalIntervalLabel === "1W") {
+      lookback = 500; // ca. 10 Jahre Historie für Makro-Zyklen
+    } else if (finalIntervalLabel === "1D") {
+      lookback = 400; // ca. 1,5 Jahre Historie
+    } else if (finalIntervalLabel === "1M") {
+      lookback = 240; // ca. 20 Jahre
+    } else if (finalIntervalLabel === "1H") {
+      lookback = 200;
+    }
+    
+    candlesArray = rawHistorical.slice(-lookback);
 
-    // 2. Telegram Bild herunterladen und umwandeln
     await ctx.reply("👁️ Verarbeite TradingView-Screenshot für die multimodale Analyse...");
-    const highestResPhoto = ctx.message.photo[ctx.message.photo.length - 1]; // Höchste Auflösung nehmen
+    const highestResPhoto = ctx.message.photo[ctx.message.photo.length - 1]; 
     const fileLink = await ctx.telegram.getFileLink(highestResPhoto.file_id);
     const imageResponse = await fetch(fileLink.href);
     const imageBuffer = await imageResponse.arrayBuffer();
@@ -153,7 +161,7 @@ WICHTIG: Nutze AUSSCHLIESSLICH arabische Ziffern oder Standard-Buchstaben für d
         model: "gemini-2.5-flash",
         contents: [
           mainPrompt, 
-          { inlineData: { data: base64Image, mimeType: "image/jpeg" } } // Fügt das Bild zum Prompt hinzu
+          { inlineData: { data: base64Image, mimeType: "image/jpeg" } } 
         ],
         config: {
           safetySettings: [
@@ -182,7 +190,6 @@ WICHTIG: Nutze AUSSCHLIESSLICH arabische Ziffern oder Standard-Buchstaben für d
     }
   }
 
-  // --- Rendering & Output bleiben identisch ---
   try {
     const wavesData = parseWavesFromText(responseText);
     const analysisText = responseText;
@@ -226,13 +233,11 @@ WICHTIG: Nutze AUSSCHLIESSLICH arabische Ziffern oder Standard-Buchstaben für d
   }
 });
 
-// Befehl ohne Bild abfangen und warnen
 bot.command("analyse", (ctx) => {
-  ctx.reply("⚠️ Dieser Befehl benötigt jetzt ein Bild! Bitte lade einen TradingView-Screenshot hoch und nutze z.B. '/analyse TEAM 1D' als Bildunterschrift.");
+  ctx.reply("⚠️ Dieser Befehl benötigt jetzt ein Bild! Bitte lade einen TradingView-Screenshot hoch und nutze z.B. '/analyse TEAM 1W' als Bildunterschrift.");
 });
 
 bot.on("text", async (ctx) => {
-  // Chat-Historie Handling bleibt unverändert
   const chatId = ctx.chat.id;
   const userQuestion = ctx.message.text;
   const session = chatSessions[chatId];
