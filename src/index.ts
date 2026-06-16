@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Multimodaler Bot läuft. Bereit für Bild-Uploads...");
+console.log("🤖 Multimodaler Bot läuft. Ultrastrenge EW-Regeln aktiv...");
 
 bot.catch((err, ctx) => {
   console.error(`⚠️ Globaler Telegraf-Fehler für Update-Typ ${ctx.updateType}:`, err);
@@ -139,18 +139,19 @@ bot.on("photo", async (ctx) => {
 
   const dataInputJson = JSON.stringify(candlesArray);
 
-  // Der neue, strenge Prompt, der das Abkürzen verbietet
-  const mainPrompt = `Du bist ein technischer Analyst für Elliott-Wellen. Analysiere das übermittelte Bild (TradingView Chart) UND das JSON-Array.
+  // ULTRARIEGEL-PROMPT: Verbietet Faulheit und Abkürzungen
+  const mainPrompt = `Du bist ein strenger mathematischer Analyst für Elliott-Wellen. Analysiere das übermittelte Bild (TradingView Chart) UND das JSON-Array.
   
 Daten-Array (Referenz für exakte Timestamps/Preise):
 ${dataInputJson}
 
-Aufgabe & Strikte Regeln:
+Aufgabe & Strikte Regeln (DULDET KEINE ABWEICHUNG):
 1. Analysiere den gesamten Chart. Das absolute Allzeithoch im Bild MUSS zwingend die Makro-Welle V (5) sein.
 2. DU DARFST NICHT ABKÜRZEN. Du MUSST zwingend den kompletten Makro-Zyklus (I, II, III, IV, V, A, B, C) finden.
-3. ZWINGENDE SUB-STRUKTUR: Du MUSST für den Weg zur Makro-Welle III oder V zwingend die Unterwellen (1, 2, 3, 4, 5) identifizieren.
-4. Verknüpfe die visuellen Wendepunkte aus dem Bild mit den exakten Kerzen im JSON-Array.
-5. Markiere JEDEN Wendepunkt im Text in diesem Format: [Welle III: 2026-04-24] oder [Welle 3: 2026-04-24].
+3. AKRIBISCHE SUB-STRUKTUR REGEL: Es sollen **alle** Subwellen eingezeichnet werden. Das ist ein Befehl. Du **MUSST** zwingend für JEDE Makro-Impulswelle (I, III, V) die vollen 5 Unterwellen (1, 2, 3, 4, 5) identifizieren. Du **MUSST** zwingend für JEDE Makro-Korrekturwelle (II, IV, A, C) die vollen 3 Unterwellen (a, b, c) identifizieren.
+4. Versage nicht bei der mathematischen Genauigkeit. Wenn du eine Sub-Welle 3 nennst, suche im JSON nach dem exakten Preishoch dieser Kerze.
+5. Verknüpfe die visuellen Wendepunkte aus dem Bild mit den exakten Kerzen im JSON-Array.
+6. Markiere JEDEN Wendepunkt im Text in diesem Format: [Welle III: 2026-04-24] oder [Welle 3: 2026-04-24] oder [Welle c: 2026-04-24].
 
 WICHTIG ZUR UNTERSCHEIDUNG (STRENG EINHALTEN):
 - Nutze RÖMISCHE Ziffern und GROSSBUCHSTABEN (I, II, III, IV, V, A, B, C) für die Haupt-Makrowellen.
@@ -161,7 +162,7 @@ Jedes spezifische Label darf nur EXAKT EINMAL markiert werden!`;
   let attempts = 4; 
   let delay = 2000; 
   
-  await ctx.reply(`🧠 Scanne Struktur inklusive Unterwellen (Sub-Waves)...`);
+  await ctx.reply(`🧠 Scanne akribisch den gesamten Chart nach JEDER Unterwelle...`);
 
   while (attempts > 0) {
     try {
@@ -216,7 +217,7 @@ Jedes spezifische Label darf nur EXAKT EINMAL markiert werden!`;
       history: [{ role: "user", text: "Kursdaten und Bild analysiert." }, { role: "model", text: analysisText }]
     };
 
-    await ctx.reply("🎨 Generiere Multi-Level Candlestick Chart...");
+    await ctx.reply("🎨 Generiere Multi-Level Candlestick Chart mit ALLEN Subwellen...");
 
     const jsonArg = JSON.stringify({ waves: wavesData, candles: candlesArray });
     const pythonProcess = spawn("python3", ["python_service/drawer.py", jsonArg]);
@@ -230,7 +231,7 @@ Jedes spezifische Label darf nur EXAKT EINMAL markiert werden!`;
           await ctx.reply(`❌ Fehler beim Rendern des Vektordiagramms.`);
         } else {
           const outputBuffer = Buffer.concat(stdoutChunks);
-          await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${finalIntervalLabel})` });
+          await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Akribische Struktur-Analyse: ${cleanSymbol} (${finalIntervalLabel})` });
         }
         
         const fullText = `📝 Struktur-Bericht:\n\n${analysisText}`;
