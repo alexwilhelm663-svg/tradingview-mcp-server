@@ -46,10 +46,10 @@ def main():
         ax.add_patch(rect)
 
     # --- ZWEI-EBENEN ELLIOTT-WELLEN LOGIK ---
-    impulse_color = "#00F0FF"        # Makro Impuls (Hellblau)
-    corrective_color = "#FF9800"     # Makro Korrektur (Orange)
-    sub_impulse_color = "#4ba3e3"    # Sub Impuls (Dunkleres Blau)
-    sub_corrective_color = "#e37933" # Sub Korrektur (Dunkleres Orange)
+    impulse_color = "#00F0FF"        
+    corrective_color = "#FF9800"     
+    sub_impulse_color = "#4ba3e3"    
+    sub_corrective_color = "#e37933" 
     
     macro_points = []
     sub_points = []
@@ -57,7 +57,6 @@ def main():
     last_macro_price = None
     last_sub_price = None
 
-    # Punkte identifizieren und in Makro vs. Sub trennen
     for w in waves:
         w_date = w.get("date")
         label = str(w.get("label", ""))
@@ -70,7 +69,6 @@ def main():
         low_p = float(candle["low"])
         close_p = float(candle["close"])
 
-        # Unterscheidung: Römische/Großbuchstaben = Makro, Arabische/Kleinbuchstaben = Sub
         is_macro = label in ["I", "II", "III", "IV", "V", "A", "B", "C", "W", "X", "Y"]
         
         if is_macro:
@@ -103,21 +101,18 @@ def main():
     macro_points = sorted(macro_points, key=lambda k: k[0])
     sub_points = sorted(sub_points, key=lambda k: k[0])
 
-    # 1. Unterwellen zeichnen (Gestrichelt, im Hintergrund)
     for i in range(len(sub_points) - 1):
         p1, p2 = sub_points[i], sub_points[i+1]
         is_corrective = any(char in p2[2].lower() for char in ["a", "b", "c", "x", "y", "ii", "iv"])
         line_color = sub_corrective_color if is_corrective else sub_impulse_color
         ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color=line_color, linewidth=1.0, linestyle="--", zorder=3)
 
-    # 2. Makrowellen zeichnen (Fett, im Vordergrund)
     for i in range(len(macro_points) - 1):
         p1, p2 = macro_points[i], macro_points[i+1]
         is_corrective = any(char in p2[2] for char in ["A", "B", "C", "W", "X", "Y", "II", "IV"])
         line_color = corrective_color if is_corrective else impulse_color
         ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color=line_color, linewidth=2.5, zorder=4)
 
-    # 3. Labels für alle Punkte setzen
     all_points = macro_points + sub_points
     y_limits = ax.get_ylim()
     offset = (y_limits[1] - y_limits[0]) * 0.03  
