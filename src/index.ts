@@ -1,388 +1,85 @@
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import OpenAI from "openai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
+const openai = new OpenAI({
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: "https://api.groq.com/openai/v1"
+});
 
+const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Multimodaler Bot läuft. Hybrid-Modus (Flash für OCR, 1.5-Pro für Analyse) aktiv...");
+console.log("🤖 Multimodaler Bot läuft. Groq-API (Llama-3.2-Vision) aktiv...");
 
 bot.catch((err, ctx) => {
-  console.error(`⚠️ Globaler Telegraf-Fehler für Update-Typ ${ctx.updateType}:`, err);
-  ctx.reply("❌ Interner Timeout. Der Server war überlastet, bitte versuche es noch einmal.").catch(() => {});
+  console.error("⚠️ Bot-Fehler:", err);
 });
-
-interface ChatSession {
-  lastDataPayload: any;
-  history: Array<{ role: "user" | "model"; text: string }>;
-}
-
-const chatSessions: Record<number, ChatSession> = {};
-
-function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
-  const waves: Array<{ label: string; date: string }> = [];
-  const regex = /\[(?:Welle\s+)?([12345a-cA-CWXYIViv]+):\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]/gi;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    let rawLabel = match[1].trim();
-    if (["i","ii","iii","iv","v","w","x","y"].includes(rawLabel.toLowerCase())) {
-        rawLabel = rawLabel.toUpperCase();
-    }
-    waves.push({
-      label: rawLabel,
-      date: match[2].trim()
-    });
-  }
-  return waves;
-}
 
 bot.on("photo", async (ctx) => {
-  const caption = ctx.message.caption || "";
-  
-  if (!caption.toLowerCase().startsWith("/analyse")) {
-    return ctx.reply("❌ Bitte füge dem Bild als Unterschrift den Analyse-Befehl hinzu. Beispiel: /analyse");
-  }
+  if (!ctx.message.caption?.toLowerCase().startsWith("/analyse")) return;
 
-  const chatId = ctx.chat.id;
-  const args = caption.split(" ");
-  let symbol = args[1];
-  let requestedInterval = args[2];
+  await ctx.reply("📥 Lade Chart und berechne Elliott-Wellen via Groq...");
 
-  await ctx.reply("📥 Lade Screenshot herunter...");
+  // 1. Bild zu Base64
+  const fileLink = await ctx.telegram.getFileLink(ctx.message.photo[ctx.message.photo.length - 1].file_id);
+  const imageResponse = await fetch(fileLink.href);
+  const base64Image = Buffer.from(await imageResponse.arrayBuffer()).toString("base64");
 
-  let base64Image = "";
+  // 2. Analyse via Llama-3.2-90b-vision
   try {
-    const highestResPhoto = ctx.message.photo[ctx.message.photo.length - 1]; 
-    const fileLink = await ctx.telegram.getFileLink(highestResPhoto.file_id);
-    const imageResponse = await fetch(fileLink.href);
-    const imageBuffer = await imageResponse.arrayBuffer();
-    base64Image = Buffer.from(imageBuffer).toString("base64");
-  } catch (err: any) {
-    return ctx.reply(`❌ Fehler beim Herunterladen des Bildes: ${err.message}`);
-  }
-
-  if (!symbol || !requestedInterval) {
-    await ctx.reply("🔍 Lese Ticker und Timeframe aus dem Chart ab...");
-    
-    const extractPrompt = `Du bist ein OCR-Assistent. Lese den Ticker (Symbol) und den Timeframe aus diesem TradingView-Screenshot ab.
-Antworte AUSSCHLIESSLICH mit einem validen JSON in exakt diesem Format:
-{"symbol": "TICKER", "timeframe": "TIMEFRAME"}
-Beispiele für Ticker: AAPL, TSLA, TEAM, ADBE, SAP, PYPL, BTCUSD
-Beispiele für Timeframe: 1M, 1W, 1D, 4H, 1H, 30m, 15m, 5m, 1m
-
-WICHTIG: Schau zwingend UNTEN LINKS auf das Bild (direkt über der unteren schwarzen Menüleiste). Dort stehen der korrekte Ticker und der Timeframe nebeneinander.
-IGNORIERE die Anzeigen ganz oben links, diese sind oft irreführend! 
-Antworte NUR mit dem reinen JSON-Objekt. Keine Erklärungen, kein Markdown.`;
-
-    try {
-      // OCR nutzt weiterhin das schnelle und kostenlose Flash-Modell
-      const extResponse = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [extractPrompt, { inlineData: { data: base64Image, mimeType: "image/jpeg" } }],
-      });
-      
-      let rawText = extResponse.text || "";
-      rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
-      
-      const textMatches = rawText.match(/\{[\s\S]*\}/);
-      if (textMatches) {
-        const parsed = JSON.parse(textMatches[0]);
-        symbol = parsed.symbol;
-        requestedInterval = parsed.timeframe;
-        await ctx.reply(`✅ Erkannt (Unten Links): ${symbol} auf ${requestedInterval}-Basis`);
-      } else {
-        throw new Error(`Kein gültiges JSON gefunden. Rohtext: ${rawText}`);
-      }
-    } catch (err: any) {
-      console.error("OCR Fehler:", err);
-      return ctx.reply(`❌ OCR-Erkennung fehlgeschlagen. Bitte gib Symbol und Timeframe manuell an: /analyse TEAM 1W\n(Grund: ${err.message})`);
-    }
-  }
-
-  let cleanSymbol = symbol.trim().toUpperCase();
-  
-  if (cleanSymbol.includes(":")) {
-    cleanSymbol = cleanSymbol.split(":").pop()!;
-  }
-  if (cleanSymbol === "P911") {
-    cleanSymbol = "P911.DE";
-  }
-  if (cleanSymbol.endsWith("USD") && !cleanSymbol.includes("-")) {
-    cleanSymbol = cleanSymbol.replace("USD", "-USD");
-  } else if (cleanSymbol.endsWith("USDT") && !cleanSymbol.includes("-")) {
-    cleanSymbol = cleanSymbol.replace("USDT", "-USD");
-  }
-
-  let yahooInterval = "1wk";
-  let finalIntervalLabel = "1W";
-  let lookbackDays = 3650; 
-  let lookbackCandles = 500;
-
-  const ri = requestedInterval ? requestedInterval.trim() : "1W";
-
-  if (ri === "1m") {
-    yahooInterval = "1m"; finalIntervalLabel = "1m"; lookbackDays = 7; lookbackCandles = 300;
-  } else if (ri === "5m") {
-    yahooInterval = "5m"; finalIntervalLabel = "5m"; lookbackDays = 60; lookbackCandles = 300;
-  } else if (ri === "15m") {
-    yahooInterval = "15m"; finalIntervalLabel = "15m"; lookbackDays = 60; lookbackCandles = 300;
-  } else if (ri === "30m") {
-    yahooInterval = "30m"; finalIntervalLabel = "30m"; lookbackDays = 60; lookbackCandles = 300;
-  } else if (ri.toLowerCase() === "1h" || ri.toLowerCase() === "h" || ri === "60m") {
-    yahooInterval = "1h"; finalIntervalLabel = "1H"; lookbackDays = 730; lookbackCandles = 300;
-  } else if (ri.toLowerCase() === "1d" || ri.toLowerCase() === "d") {
-    yahooInterval = "1d"; finalIntervalLabel = "1D"; lookbackDays = 1800; lookbackCandles = 400;
-  } else if (ri === "1M" || ri.toLowerCase() === "1mo" || ri.toLowerCase() === "mo") {
-    yahooInterval = "1mo"; finalIntervalLabel = "1M"; lookbackDays = 7300; lookbackCandles = 240;
-  } else {
-    yahooInterval = "1wk"; finalIntervalLabel = "1W"; lookbackDays = 3650; lookbackCandles = 500;
-  }
-
-  await ctx.reply(`⏳ Lade native ${finalIntervalLabel}-Historie für ${cleanSymbol} von Yahoo...`);
-
-  let candlesArray: Array<{ date: string; open: string; high: string; low: string; close: string }> = [];
-
-  try {
-    const period2 = Math.floor(Date.now() / 1000);
-    const period1 = period2 - (lookbackDays * 24 * 60 * 60);
-
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=${yahooInterval}&events=history`;
-    
-    const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    const resData: any = await response.json();
-    const result = resData?.chart?.result?.[0];
-    
-    if (!result || !result.timestamp) throw new Error("Symbol an der API nicht verfügbar.");
-
-    const timestamps = result.timestamp;
-    const quote = result.indicators.quote[0];
-
-    const rawHistorical = timestamps.map((ts: number, i: number) => {
-      const d = new Date(ts * 1000);
-      const dateStr = ["1m", "5m", "15m", "30m", "1H"].includes(finalIntervalLabel) 
-                      ? d.toISOString().replace('T', ' ').substring(0, 16) 
-                      : d.toISOString().split('T')[0];
-      
-      const o = Number(quote.open[i]);
-      const h = Number(quote.high[i]);
-      const l = Number(quote.low[i]);
-      const c = Number(quote.close[i]);
-
-      return {
-        date: dateStr, open: o.toFixed(2), high: h.toFixed(2), low: l.toFixed(2), close: c.toFixed(2)
-      };
-    }).filter((c: any) => Number(c.open) > 0 && Number(c.high) > 0 && Number(c.low) > 0 && Number(c.close) > 0);
-
-    candlesArray = rawHistorical.slice(-lookbackCandles);
-
-    await ctx.reply("👁️ Verknüpfe Bild mit API-Daten...");
-
-  } catch (err: any) {
-    return ctx.reply(`❌ ANALYSE ABGEBROCHEN: Daten- oder Bildfehler: ${err.message}`);
-  }
-
-  const dataInputJson = JSON.stringify(candlesArray);
-
-  const mainPrompt = `Du bist ein strenger mathematischer Analyst für Elliott-Wellen. Analysiere das übermittelte Bild (TradingView Chart) UND das JSON-Array.
-  
-Daten-Array (Referenz für exakte Timestamps/Preise):
-${dataInputJson}
-
-Aufgabe & Strikte Regeln (DULDET KEINE ABWEICHUNG):
-1. Analysiere den gesamten Chart. Das absolute Allzeithoch im Bild MUSS zwingend die Makro-Welle V (5) sein.
-2. DU DARFST NICHT ABKÜRZEN. Du MUSST zwingend den kompletten Makro-Zyklus (I, II, III, IV, V, A, B, C) finden.
-3. AKRIBISCHE SUB-STRUKTUR REGEL: Es sollen **alle** Subwellen eingezeichnet werden. Das ist ein Befehl. Du **MUSST** zwingend für JEDE Makro-Impulswelle (I, III, V) die vollen 5 Unterwellen (1, 2, 3, 4, 5) identifizieren. Du **MUSST** zwingend für JEDE Makro-Korrekturwelle (II, IV, A, C) die vollen 3 Unterwellen (a, b, c) identifizieren.
-4. Versage nicht bei der mathematischen Genauigkeit. Wenn du eine Sub-Welle 3 nennst, suche im JSON nach dem exakten Preishoch dieser Kerze.
-5. Verknüpfe die visuellen Wendepunkte aus dem Bild mit den exakten Kerzen im JSON-Array.
-6. Markiere JEDEN Wendepunkt im Text in diesem Format: [Welle III: 2026-04-24] oder [Welle 3: 2026-04-24 14:30] oder [Welle c: 2026-04-24].
-
-WICHTIG ZUR UNTERSCHEIDUNG (STRENG EINHALTEN):
-- Nutze RÖMISCHE Ziffern und GROSSBUCHSTABEN (I, II, III, IV, V, A, B, C) für die Haupt-Makrowellen.
-- Nutze ARABISCHE Ziffern und KLEINBUCHSTABEN (1, 2, 3, 4, 5, a, b, c) für die internen Unterwellen.
-Jedes spezifische Label darf nur EXAKT EINMAL markiert werden!`;
-
-  let responseText = "";
-  let attempts = 4; 
-  let delay = 2000; 
-  
-  await ctx.reply(`🧠 Scanne akribisch den gesamten Chart nach JEDER Unterwelle (1.5-PRO Modell)...`);
-
-  while (attempts > 0) {
-    try {
-      // HIER IST DAS KORRIGIERTE MODELL FÜR DIE KOSTENLOSE NUTZUNG
-      const response = await ai.models.generateContent({
-        model: "gemini-1.5-pro",
-        contents: [
-          mainPrompt, 
-          { inlineData: { data: base64Image, mimeType: "image/jpeg" } } 
-        ],
-        config: {
-          safetySettings: [
-            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE }
+    const response = await openai.chat.completions.create({
+      model: "llama-3.2-90b-vision-preview",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: `Du bist ein Elliott-Wellen Profi. 
+            Aufgabe: Analysiere den Chart. Identifiziere den Makro-Zyklus (I, II, III, IV, V, A, B, C) und AKRIBISCH ALLE Subwellen (1,2,3,4,5 bzw a,b,c).
+            Regel: Allzeithoch ist Welle V. Markiere Wendepunkte mit [Welle Name: YYYY-MM-DD].
+            Antworte detailliert und liste alle gefundenen Wellen mit Datum auf.` },
+            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
           ]
         }
-      });
-      
-      responseText = response.text || "";
-      if (responseText) break;
-      else throw new Error("Leere Struktur.");
-    } catch (apiError: any) {
-      attempts--;
-      console.error(`⚠️ API Fehler: ${apiError.message}`);
-      
-      if (attempts === 0) {
-        return ctx.reply(`❌ Systemfehler: Google blockiert die Anfrage endgültig.\n\nGrund: ${apiError.message}`);
-      }
-      
-      await ctx.reply(`⚠️ API antwortet nicht sofort. Starte Versuch ${4 - attempts}... (Wartezeit: ${delay/1000}s)`);
-      await new Promise(resolve => setTimeout(resolve, delay));
-      delay += 2000;
-    }
-  }
-
-  try {
-    const rawWaves = parseWavesFromText(responseText);
-    
-    const uniqueWavesMap = new Map<string, {label: string, date: string}>();
-    rawWaves.forEach(w => {
-      if (!uniqueWavesMap.has(w.label)) {
-        uniqueWavesMap.set(w.label, w);
-      }
+      ]
     });
+
+    const analysisText = response.choices[0].message.content || "";
+    await ctx.reply(analysisText.substring(0, 4000));
+
+    // 3. Yahoo Daten für die Visualisierung abrufen (vereinfacht)
+    // Extrahiere hier Ticker aus analysisText oder nutze fallback
+    const symbol = "BTC-USD"; // Beispiel-Fallback
+    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1y`;
+    const yResponse = await fetch(yahooUrl);
+    const yData = await yResponse.json();
     
-    const wavesData = Array.from(uniqueWavesMap.values());
-    const analysisText = responseText;
-
-    chatSessions[chatId] = {
-      lastDataPayload: { candles: candlesArray, waves: wavesData },
-      history: [{ role: "user", text: "Kursdaten und Bild analysiert." }, { role: "model", text: analysisText }]
-    };
-
-    await ctx.reply("🎨 Generiere Multi-Level Candlestick Chart mit ALLEN Subwellen...");
-
-    const jsonArg = JSON.stringify({ waves: wavesData, candles: candlesArray });
-    const pythonProcess = spawn("python3", ["python_service/drawer.py", jsonArg]);
+    // 4. Drawer.py Aufruf
+    const drawerInput = JSON.stringify({ analysis: analysisText, data: yData.chart.result[0].indicators.quote[0] });
+    const py = spawn("python3", ["python_service/drawer.py", drawerInput]);
     
-    const stdoutChunks: Buffer[] = [];
-    pythonProcess.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-
-    pythonProcess.on("close", async (code) => {
-      try {
-        if (code !== 0 || stdoutChunks.length === 0) {
-          await ctx.reply(`❌ Fehler beim Rendern des Vektordiagramms.`);
-        } else {
-          const outputBuffer = Buffer.concat(stdoutChunks);
-          await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Akribische Struktur-Analyse: ${cleanSymbol} (${finalIntervalLabel})` });
-        }
-        
-        const fullText = `📝 Struktur-Bericht:\n\n${analysisText}`;
-        const maxLength = 4000;
-        for (let i = 0; i < fullText.length; i += maxLength) {
-          await ctx.reply(fullText.substring(i, i + maxLength));
-        }
-
-      } catch (innerErr: any) {
-        console.error("Fehler beim Versand von Chart/Text:", innerErr);
-        await ctx.reply(`❌ Fehler bei der Telegram-Ausgabe: ${innerErr.message}`);
-      }
+    let imgBuffer = Buffer.alloc(0);
+    py.stdout.on("data", (c) => imgBuffer = Buffer.concat([imgBuffer, c]));
+    py.on("close", () => {
+      ctx.replyWithPhoto({ source: imgBuffer }, { caption: "📊 Struktur-Analyse abgeschlossen" });
     });
 
   } catch (err: any) {
-    await ctx.reply(`❌ Verarbeitungsfehler: ${err.message}`);
+    ctx.reply("❌ Fehler: " + err.message);
   }
 });
 
-bot.command("analyse", (ctx) => {
-  ctx.reply("⚠️ Dieser Befehl benötigt jetzt ein Bild! Bitte lade einen TradingView-Screenshot hoch und nutze einfach '/analyse' als Bildunterschrift.");
-});
-
-bot.on("text", async (ctx) => {
-  const chatId = ctx.chat.id;
-  const userQuestion = ctx.message.text;
-  const session = chatSessions[chatId];
-
-  if (!session || !session.lastDataPayload) {
-    return ctx.reply("❌ Starte zuerst eine Analyse mit einem Bild und dem Befehl in der Unterschrift.");
-  }
-
-  await ctx.reply("🤔 Analysiere Rückfrage...");
-
-  try {
-    session.history.push({ role: "user", text: userQuestion });
-    const contents: any[] = [];
-    session.history.forEach(msg => {
-      contents.push(`${msg.role === "user" ? "User" : "Model"}: ${msg.text}`);
-    });
-    contents.push(`Beziehe dich auf folgende Rohdaten: ${JSON.stringify(session.lastDataPayload.candles)}. Beantworte die Frage kurz.`);
-
-    // Chat-Rückfragen laufen zur Sicherheit wieder über Flash, um Quotas zu sparen
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: contents,
-      config: {
-        safetySettings: [
-          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE }
-        ]
-      }
-    });
-
-    const answerText = response.text || "Keine Antwort möglich.";
-    session.history.push({ role: "model", text: answerText });
-    await ctx.reply(`💬 Antwort:\n\n${answerText}`);
-  } catch (error: any) {
-    await ctx.reply(`❌ Fehler: ${error.message}`);
-  }
-});
-
+// Webhook-Server
 if (RENDER_EXTERNAL_URL) {
   const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
   bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
-  
-  const server = http.createServer((req, res) => {
+  http.createServer((req, res) => {
     if (req.url === webhookPath && req.method === "POST") {
       let body = "";
-      req.on("data", chunk => body += chunk);
-      req.on("end", () => {
-        try {
-          const update = JSON.parse(body);
-          res.writeHead(200);
-          res.end();
-          bot.handleUpdate(update).catch((err) => {
-            console.error("❌ Webhook Update Fehler:", err);
-          });
-        } catch (e) {
-          if (!res.headersSent) {
-            res.writeHead(400);
-            res.end("Bad Request");
-          }
-        }
-      });
-    } else if (req.url === "/health" || req.url === "/") {
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end("Bot Server is healthy");
-    } else {
-      res.writeHead(404);
-      res.end("Not Found");
-    }
-  });
-
-  server.listen(PORT, () => {
-    console.log(`🌐 Webhook-Server aktiv auf Port ${PORT}.`);
-  });
-} else {
-  console.log("⚠️ RENDER_EXTERNAL_URL fehlt. Nutze Polling als Fallback...");
-  bot.launch();
-}
-
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+      req.on("data", c => body += c);
+      req.on("end", () => bot.handleUpdate(JSON.parse(body), res));
+    } else { res.writeHead(200); res.end("OK"); }
+  }).listen(PORT);
+} else { bot.launch(); }
