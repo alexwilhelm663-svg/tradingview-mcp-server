@@ -25,11 +25,17 @@ const chatSessions: Record<number, ChatSession> = {};
 
 function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
   const waves: Array<{ label: string; date: string }> = [];
-  const regex = /\[(?:Welle\s+)?([12345ABCWXYIV]+):\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]/gi;
+  // Regex erlaubt nun auch kleine Buchstaben a, b, c für Unterwellen
+  const regex = /\[(?:Welle\s+)?([12345a-cA-CWXYIViv]+):\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]/gi;
   let match;
   while ((match = regex.exec(text)) !== null) {
+    let rawLabel = match[1].trim();
+    // Makro-Ziffern und Buchstaben großschreiben, aber a,b,c für Unterwellen so belassen
+    if (["i","ii","iii","iv","v","w","x","y"].includes(rawLabel.toLowerCase())) {
+        rawLabel = rawLabel.toUpperCase();
+    }
     waves.push({
-      label: match[1].toUpperCase().trim(),
+      label: rawLabel,
       date: match[2].trim()
     });
   }
@@ -135,28 +141,26 @@ bot.on("photo", async (ctx) => {
 
   const dataInputJson = JSON.stringify(candlesArray);
 
-  // NEU: Extrem restriktiver Prompt mit strikten EW-Regeln
-  const mainPrompt = `Du bist ein strenger technischer Analyst für Elliott-Wellen. Analysiere das übermittelte Bild (TradingView Chart) UND das JSON-Array der Marktdaten.
+  const mainPrompt = `Du bist ein technischer Analyst für Elliott-Wellen. Analysiere das übermittelte Bild (TradingView Chart) UND das JSON-Array.
   
 Daten-Array (Referenz für exakte Timestamps/Preise):
 ${dataInputJson}
 
 Aufgabe & Strikte Regeln:
-1. Analysiere das BILD und finde den dominanten Makro-Zyklus.
-2. Halte dich an die absoluten Elliott-Wellen-Regeln:
-   - Welle III darf niemals die kürzeste der Antriebswellen (I, III, V) sein.
-   - Welle IV darf preislich NICHT in das Territorium von Welle I zurückfallen.
-   - Das absolute Allzeithoch (Peak des Bullenmarktes) ist Welle V (5). Setze Welle III NICHT auf das Allzeithoch, wenn danach ein niedriges Hoch als Welle V gelabelt wird! Welle V muss zwingend über Welle III liegen.
-   - Nach dem Peak (Welle V) folgt der Bärenmarkt als Korrektur: A (tief), B (niedrigeres Hoch), C (tief).
+1. Finde den Makro-Zyklus und zusätzlich die wichtigsten internen Unterwellen.
+2. Halte dich an die absoluten Elliott-Wellen-Regeln (Allzeithoch ist V oder 5, Welle 4 überschneidet nicht mit 1, etc.).
 3. Verknüpfe die visuellen Wendepunkte aus dem Bild mit den exakten Kerzen im JSON-Array.
-4. Markiere AUSSCHLIESSLICH den dominanten Makro-Zyklus (I, II, III, IV, V, A, B, C) im Text zwingend in diesem Format: [Welle III: 2026-04-24].
-WICHTIG: Jedes Label (I, II, III, IV, V, A, B, C) darf nur EXAKT EINMAL vorkommen!`;
+4. Markiere JEDEN Wendepunkt im Text zwingend in diesem Format: [Welle III: 2026-04-24] oder [Welle 3: 2026-04-24].
+WICHTIG ZUR UNTERSCHEIDUNG:
+- Nutze RÖMISCHE Ziffern und GROSSBUCHSTABEN (I, II, III, IV, V, A, B, C) für die Haupt-Makrowellen.
+- Nutze ARABISCHE Ziffern und KLEINBUCHSTABEN (1, 2, 3, 4, 5, a, b, c) für die internen Unterwellen.
+Jedes spezifische Label darf nur EXAKT EINMAL markiert werden!`;
 
   let responseText = "";
   let attempts = 4; 
   let delay = 2000; 
   
-  await ctx.reply(`🧠 Scanne multimodale Struktur nach strikten Elliott-Regeln...`);
+  await ctx.reply(`🧠 Scanne Struktur inklusive Unterwellen (Sub-Waves)...`);
 
   while (attempts > 0) {
     try {
@@ -211,7 +215,7 @@ WICHTIG: Jedes Label (I, II, III, IV, V, A, B, C) darf nur EXAKT EINMAL vorkomme
       history: [{ role: "user", text: "Kursdaten und Bild analysiert." }, { role: "model", text: analysisText }]
     };
 
-    await ctx.reply("🎨 Generiere sauberen Candlestick Makro-Chart...");
+    await ctx.reply("🎨 Generiere Multi-Level Candlestick Chart...");
 
     const jsonArg = JSON.stringify({ waves: wavesData, candles: candlesArray });
     const pythonProcess = spawn("python3", ["python_service/drawer.py", jsonArg]);
