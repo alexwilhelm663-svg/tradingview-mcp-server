@@ -1,7 +1,7 @@
-# Basis-Image mit vorinstalliertem Playwright und Browser-Abhängigkeiten
-FROM mcr.microsoft.com/playwright:v1.44.0-jammy
+# Schlankes Basis-Image (spart extrem viel RAM im Vergleich zu Playwright)
+FROM node:18-bullseye-slim
 
-# 1. System-Abhängigkeiten aktualisieren und Python + Pip installieren
+# 1. System-Abhängigkeiten für Python und Matplotlib installieren
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -11,13 +11,14 @@ RUN apt-get update && apt-get install -y \
 # 2. Arbeitsverzeichnis im Container erstellen
 WORKDIR /app
 
-# 3. Node.js Abhängigkeiten kopieren und installieren (KORREKTUR: npm install statt npm ci)
+# 3. Node.js Abhängigkeiten kopieren und installieren
 COPY package*.json ./
 RUN npm install
 
 # 4. Python-Abhängigkeiten kopieren und über pip installieren
+# Das Flag --break-system-packages ist in neueren Debian-Versionen nötig für globale pip-Installs im Container
 COPY python_service/requirements.txt ./python_service/
-RUN pip3 install --no-cache-dir -r python_service/requirements.txt
+RUN pip3 install --no-cache-dir -r python_service/requirements.txt --break-system-packages
 
 # 5. Den restlichen Quellcode in den Container kopieren
 COPY . .
@@ -25,8 +26,5 @@ COPY . .
 # 6. TypeScript-Code zu JavaScript kompilieren
 RUN npm run build
 
-# 7. Sicherstellen, dass der Chromium-Browser für Playwright bereitsteht
-RUN npx playwright install chromium
-
-# Startbefehl für den Bot
+# 7. Startbefehl für den Bot
 CMD ["npm", "start"]
