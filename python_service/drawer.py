@@ -1,9 +1,18 @@
 import sys
 import json
 import io
+import datetime
 import matplotlib
 matplotlib.use('Agg')  
 import matplotlib.pyplot as plt
+
+def parse_date(d_str):
+    try:
+        # Schneidet die Uhrzeit bei 1H-Daten weg für den reinen Datumsvergleich, 
+        # oder parst das YYYY-MM-DD Format.
+        return datetime.datetime.strptime(d_str[:10], "%Y-%m-%d")
+    except Exception:
+        return datetime.datetime.now()
 
 def main():
     try:
@@ -38,30 +47,42 @@ def main():
         rect = plt.Rectangle((i - 0.35, body_bottom), 0.7, body_height, facecolor=color, edgecolor=color, zorder=3)
         ax.add_patch(rect)
 
-    # --- ELLIOTT-WELLEN (KORREKTE RÖMISCHE ZUORDNUNG) ---
+    # --- ELLIOTT-WELLEN (SMART MATCHING) ---
     impulse_color = "#00F0FF"     
     corrective_color = "#FF9800"  
     
     wave_points = []
+    last_price = None
+
     for w in waves:
         w_date = w.get("date")
         label = str(w.get("label", "")).upper()
         
-        matched_idx = next((i for i, candle in enumerate(candles) if candle["date"] == w_date), None)
-        if matched_idx is not None:
-            candle = candles[matched_idx]
-            high_p = float(candle["high"])
-            low_p = float(candle["low"])
+        # FUZZY MATCHING: Finde die Kerze, die dem KI-Datum am nächsten liegt
+        target_dt = parse_date(w_date)
+        closest_idx = min(range(len(candles)), key=lambda i: abs((parse_date(candles[i]["date"]) - target_dt).days))
+        
+        candle = candles[closest_idx]
+        high_p = float(candle["high"])
+        low_p = float(candle["low"])
+        close_p = float(candle["close"])
 
-            # KORREKTUR: Römische Ziffern I, III, V als Hochpunkte definieren
-            if any(char in label for char in ["1", "3", "5", "B", "X", "III", "V"]) and "II" not in label:
-                price = high_p
-                is_high = True
-            else:
+        # DYNAMISCHE HOCH/TIEF-ERKENNUNG: 
+        if last_price is None:
+            # Erster Punkt: Heuristik (näher am Docht oder an der Lunte?)
+            is_high = True if abs(close_p - high_p) < abs(close_p - low_p) else False
+            price = high_p if is_high else low_p
+        else:
+            # Ist der neue Punkt tiefer als der vorherige Welle-Punkt? -> Tiefpunkt nutzen
+            if close_p < last_price:
                 price = low_p
                 is_high = False
-
-            wave_points.append((matched_idx, price, label, is_high))
+            else:
+                price = high_p
+                is_high = True
+                
+        last_price = price
+        wave_points.append((closest_idx, price, label, is_high))
 
     wave_points = sorted(wave_points, key=lambda k: k[0])
 
@@ -89,9 +110,13 @@ def main():
 
     ax.grid(True, color='#2a2e39', linestyle=':', linewidth=0.5)
     ax.spines['bottom'].set_color('#2a2e39')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#2a2e39')
     ax.tick_params(colors='#b2b5be', labelsize=10)
 
-    step = max(1, len(dates) // 6)
+    # X-Achsen-Beschriftung aufräumen
+    step = max(1, len(dates) // 8)
     ax.set_xticks(x_indices[::step])
     ax.set_xticklabels(dates[::step], color='#b2b5be', rotation=0)
 
