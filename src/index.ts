@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Multimodaler Bot läuft. Automatische OCR-Erkennung aktiv...");
+console.log("🤖 Multimodaler Bot läuft. PRO-Modell für Analyse aktiv...");
 
 bot.catch((err, ctx) => {
   console.error(`⚠️ Globaler Telegraf-Fehler für Update-Typ ${ctx.updateType}:`, err);
@@ -70,7 +70,7 @@ bot.on("photo", async (ctx) => {
     const extractPrompt = `Du bist ein OCR-Assistent. Lese den Ticker (Symbol) und den Timeframe aus diesem TradingView-Screenshot ab.
 Antworte AUSSCHLIESSLICH mit einem validen JSON in exakt diesem Format:
 {"symbol": "TICKER", "timeframe": "TIMEFRAME"}
-Beispiele für Ticker: AAPL, TSLA, TEAM, ADBE, P911, PYPL
+Beispiele für Ticker: AAPL, TSLA, TEAM, ADBE, P911, PYPL, BTCUSD
 Beispiele für Timeframe: 1M, 1W, 1D, 4H, 1H, 30m, 15m, 5m, 1m
 Die Infos stehen meist oben links oder in der Legende. Achte extrem auf Groß-/Kleinschreibung beim Timeframe (M=Monat, m=Minute). Keine Erklärungen im Text, nur das reine JSON!`;
 
@@ -94,14 +94,19 @@ Die Infos stehen meist oben links oder in der Legende. Achte extrem auf Groß-/K
   }
 
   let cleanSymbol = symbol.trim().toUpperCase();
+  
   if (cleanSymbol.includes(":")) {
     cleanSymbol = cleanSymbol.split(":").pop()!;
   }
   if (cleanSymbol === "P911") {
     cleanSymbol = "P911.DE";
   }
+  if (cleanSymbol.endsWith("USD") && !cleanSymbol.includes("-")) {
+    cleanSymbol = cleanSymbol.replace("USD", "-USD");
+  } else if (cleanSymbol.endsWith("USDT") && !cleanSymbol.includes("-")) {
+    cleanSymbol = cleanSymbol.replace("USDT", "-USD");
+  }
 
-  // Erweitertes, striktes Timeframe-Routing inklusive Yahoo-Limits
   let yahooInterval = "1wk";
   let finalIntervalLabel = "1W";
   let lookbackDays = 3650; 
@@ -148,7 +153,6 @@ Die Infos stehen meist oben links oder in der Legende. Achte extrem auf Groß-/K
 
     const rawHistorical = timestamps.map((ts: number, i: number) => {
       const d = new Date(ts * 1000);
-      // Intraday-Zeitstempel exakt parsen, Tages-Charts ohne Uhrzeit
       const dateStr = ["1m", "5m", "15m", "30m", "1H"].includes(finalIntervalLabel) 
                       ? d.toISOString().replace('T', ' ').substring(0, 16) 
                       : d.toISOString().split('T')[0];
@@ -195,12 +199,13 @@ Jedes spezifische Label darf nur EXAKT EINMAL markiert werden!`;
   let attempts = 4; 
   let delay = 2000; 
   
-  await ctx.reply(`🧠 Scanne akribisch den gesamten Chart nach JEDER Unterwelle...`);
+  await ctx.reply(`🧠 Scanne akribisch den gesamten Chart nach JEDER Unterwelle (PRO-Modell)...`);
 
   while (attempts > 0) {
     try {
+      // HIER IST DAS UPGRADE AUF DAS STARKE PRO-MODELL
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-2.5-pro",
         contents: [
           mainPrompt, 
           { inlineData: { data: base64Image, mimeType: "image/jpeg" } } 
@@ -308,7 +313,7 @@ bot.on("text", async (ctx) => {
     contents.push(`Beziehe dich auf folgende Rohdaten: ${JSON.stringify(session.lastDataPayload.candles)}. Beantworte die Frage kurz.`);
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.5-pro",
       contents: contents,
       config: {
         safetySettings: [
@@ -370,3 +375,4 @@ if (RENDER_EXTERNAL_URL) {
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
+    
