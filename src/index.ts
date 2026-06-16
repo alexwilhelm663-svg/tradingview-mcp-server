@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Multimodaler Bot läuft. PRO-Modell für Analyse aktiv...");
+console.log("🤖 Multimodaler Bot läuft. Hybrid-Modus (Flash für OCR, 1.5-Pro für Analyse) aktiv...");
 
 bot.catch((err, ctx) => {
   console.error(`⚠️ Globaler Telegraf-Fehler für Update-Typ ${ctx.updateType}:`, err);
@@ -68,7 +68,6 @@ bot.on("photo", async (ctx) => {
   if (!symbol || !requestedInterval) {
     await ctx.reply("🔍 Lese Ticker und Timeframe aus dem Chart ab...");
     
-    // NEUER, KORRIGIERTER OCR PROMPT: Fokus zwingend auf UNTEN LINKS
     const extractPrompt = `Du bist ein OCR-Assistent. Lese den Ticker (Symbol) und den Timeframe aus diesem TradingView-Screenshot ab.
 Antworte AUSSCHLIESSLICH mit einem validen JSON in exakt diesem Format:
 {"symbol": "TICKER", "timeframe": "TIMEFRAME"}
@@ -80,6 +79,7 @@ IGNORIERE die Anzeigen ganz oben links, diese sind oft irreführend!
 Antworte NUR mit dem reinen JSON-Objekt. Keine Erklärungen, kein Markdown.`;
 
     try {
+      // OCR nutzt weiterhin das schnelle und kostenlose Flash-Modell
       const extResponse = await ai.models.generateContent({
         model: "gemini-2.5-flash",
         contents: [extractPrompt, { inlineData: { data: base64Image, mimeType: "image/jpeg" } }],
@@ -209,12 +209,13 @@ Jedes spezifische Label darf nur EXAKT EINMAL markiert werden!`;
   let attempts = 4; 
   let delay = 2000; 
   
-  await ctx.reply(`🧠 Scanne akribisch den gesamten Chart nach JEDER Unterwelle (PRO-Modell)...`);
+  await ctx.reply(`🧠 Scanne akribisch den gesamten Chart nach JEDER Unterwelle (1.5-PRO Modell)...`);
 
   while (attempts > 0) {
     try {
+      // HIER IST DAS KORRIGIERTE MODELL FÜR DIE KOSTENLOSE NUTZUNG
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-pro",
+        model: "gemini-1.5-pro",
         contents: [
           mainPrompt, 
           { inlineData: { data: base64Image, mimeType: "image/jpeg" } } 
@@ -321,8 +322,9 @@ bot.on("text", async (ctx) => {
     });
     contents.push(`Beziehe dich auf folgende Rohdaten: ${JSON.stringify(session.lastDataPayload.candles)}. Beantworte die Frage kurz.`);
 
+    // Chat-Rückfragen laufen zur Sicherheit wieder über Flash, um Quotas zu sparen
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-pro",
+      model: "gemini-2.5-flash",
       contents: contents,
       config: {
         safetySettings: [
