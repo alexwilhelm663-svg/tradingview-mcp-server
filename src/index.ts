@@ -67,29 +67,39 @@ bot.on("photo", async (ctx) => {
 
   if (!symbol || !requestedInterval) {
     await ctx.reply("🔍 Lese Ticker und Timeframe aus dem Chart ab...");
+    
+    // NEUER, KORRIGIERTER OCR PROMPT: Fokus zwingend auf UNTEN LINKS
     const extractPrompt = `Du bist ein OCR-Assistent. Lese den Ticker (Symbol) und den Timeframe aus diesem TradingView-Screenshot ab.
 Antworte AUSSCHLIESSLICH mit einem validen JSON in exakt diesem Format:
 {"symbol": "TICKER", "timeframe": "TIMEFRAME"}
-Beispiele für Ticker: AAPL, TSLA, TEAM, ADBE, P911, PYPL, BTCUSD
+Beispiele für Ticker: AAPL, TSLA, TEAM, ADBE, SAP, PYPL, BTCUSD
 Beispiele für Timeframe: 1M, 1W, 1D, 4H, 1H, 30m, 15m, 5m, 1m
-Die Infos stehen meist oben links oder in der Legende. Achte extrem auf Groß-/Kleinschreibung beim Timeframe (M=Monat, m=Minute). Keine Erklärungen im Text, nur das reine JSON!`;
+
+WICHTIG: Schau zwingend UNTEN LINKS auf das Bild (direkt über der unteren schwarzen Menüleiste). Dort stehen der korrekte Ticker und der Timeframe nebeneinander.
+IGNORIERE die Anzeigen ganz oben links, diese sind oft irreführend! 
+Antworte NUR mit dem reinen JSON-Objekt. Keine Erklärungen, kein Markdown.`;
 
     try {
       const extResponse = await ai.models.generateContent({
         model: "gemini-2.5-flash",
         contents: [extractPrompt, { inlineData: { data: base64Image, mimeType: "image/jpeg" } }],
       });
-      const textMatches = extResponse.text?.match(/\{[\s\S]*\}/);
+      
+      let rawText = extResponse.text || "";
+      rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
+      
+      const textMatches = rawText.match(/\{[\s\S]*\}/);
       if (textMatches) {
         const parsed = JSON.parse(textMatches[0]);
         symbol = parsed.symbol;
         requestedInterval = parsed.timeframe;
-        await ctx.reply(`✅ Erkannt: ${symbol} auf ${requestedInterval}-Basis`);
+        await ctx.reply(`✅ Erkannt (Unten Links): ${symbol} auf ${requestedInterval}-Basis`);
       } else {
-        throw new Error("Konnte kein JSON auslesen.");
+        throw new Error(`Kein gültiges JSON gefunden. Rohtext: ${rawText}`);
       }
     } catch (err: any) {
-      return ctx.reply("❌ OCR-Erkennung fehlgeschlagen. Bitte gib Symbol und Timeframe manuell an: /analyse TEAM 1W");
+      console.error("OCR Fehler:", err);
+      return ctx.reply(`❌ OCR-Erkennung fehlgeschlagen. Bitte gib Symbol und Timeframe manuell an: /analyse TEAM 1W\n(Grund: ${err.message})`);
     }
   }
 
@@ -203,7 +213,6 @@ Jedes spezifische Label darf nur EXAKT EINMAL markiert werden!`;
 
   while (attempts > 0) {
     try {
-      // HIER IST DAS UPGRADE AUF DAS STARKE PRO-MODELL
       const response = await ai.models.generateContent({
         model: "gemini-2.5-pro",
         contents: [
@@ -375,4 +384,3 @@ if (RENDER_EXTERNAL_URL) {
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
-    
