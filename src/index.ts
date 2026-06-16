@@ -102,7 +102,7 @@ bot.command("analyse", async (ctx) => {
       };
     }).filter((c: any) => Number(c.open) > 0 && Number(c.high) > 0 && Number(c.low) > 0 && Number(c.close) > 0);
 
-    candlesArray = rawHistorical.slice(-80);
+    candlesArray = rawHistorical.slice(-300);
 
   } catch (dataError: any) {
     return ctx.reply(`❌ ANALYSE ABGEBROCHEN: Datenfehler: ${dataError.message}`);
