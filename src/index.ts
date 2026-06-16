@@ -25,12 +25,10 @@ const chatSessions: Record<number, ChatSession> = {};
 
 function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
   const waves: Array<{ label: string; date: string }> = [];
-  // Regex erlaubt nun auch kleine Buchstaben a, b, c für Unterwellen
   const regex = /\[(?:Welle\s+)?([12345a-cA-CWXYIViv]+):\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]/gi;
   let match;
   while ((match = regex.exec(text)) !== null) {
     let rawLabel = match[1].trim();
-    // Makro-Ziffern und Buchstaben großschreiben, aber a,b,c für Unterwellen so belassen
     if (["i","ii","iii","iv","v","w","x","y"].includes(rawLabel.toLowerCase())) {
         rawLabel = rawLabel.toUpperCase();
     }
@@ -141,17 +139,20 @@ bot.on("photo", async (ctx) => {
 
   const dataInputJson = JSON.stringify(candlesArray);
 
+  // Der neue, strenge Prompt, der das Abkürzen verbietet
   const mainPrompt = `Du bist ein technischer Analyst für Elliott-Wellen. Analysiere das übermittelte Bild (TradingView Chart) UND das JSON-Array.
   
 Daten-Array (Referenz für exakte Timestamps/Preise):
 ${dataInputJson}
 
 Aufgabe & Strikte Regeln:
-1. Finde den Makro-Zyklus und zusätzlich die wichtigsten internen Unterwellen.
-2. Halte dich an die absoluten Elliott-Wellen-Regeln (Allzeithoch ist V oder 5, Welle 4 überschneidet nicht mit 1, etc.).
-3. Verknüpfe die visuellen Wendepunkte aus dem Bild mit den exakten Kerzen im JSON-Array.
-4. Markiere JEDEN Wendepunkt im Text zwingend in diesem Format: [Welle III: 2026-04-24] oder [Welle 3: 2026-04-24].
-WICHTIG ZUR UNTERSCHEIDUNG:
+1. Analysiere den gesamten Chart. Das absolute Allzeithoch im Bild MUSS zwingend die Makro-Welle V (5) sein.
+2. DU DARFST NICHT ABKÜRZEN. Du MUSST zwingend den kompletten Makro-Zyklus (I, II, III, IV, V, A, B, C) finden.
+3. ZWINGENDE SUB-STRUKTUR: Du MUSST für den Weg zur Makro-Welle III oder V zwingend die Unterwellen (1, 2, 3, 4, 5) identifizieren.
+4. Verknüpfe die visuellen Wendepunkte aus dem Bild mit den exakten Kerzen im JSON-Array.
+5. Markiere JEDEN Wendepunkt im Text in diesem Format: [Welle III: 2026-04-24] oder [Welle 3: 2026-04-24].
+
+WICHTIG ZUR UNTERSCHEIDUNG (STRENG EINHALTEN):
 - Nutze RÖMISCHE Ziffern und GROSSBUCHSTABEN (I, II, III, IV, V, A, B, C) für die Haupt-Makrowellen.
 - Nutze ARABISCHE Ziffern und KLEINBUCHSTABEN (1, 2, 3, 4, 5, a, b, c) für die internen Unterwellen.
 Jedes spezifische Label darf nur EXAKT EINMAL markiert werden!`;
