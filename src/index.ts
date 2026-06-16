@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Multimodaler Bot läuft. Ultrastrenge EW-Regeln aktiv...");
+console.log("🤖 Multimodaler Bot läuft. Automatische OCR-Erkennung aktiv...");
 
 bot.catch((err, ctx) => {
   console.error(`⚠️ Globaler Telegraf-Fehler für Update-Typ ${ctx.updateType}:`, err);
@@ -44,16 +44,53 @@ bot.on("photo", async (ctx) => {
   const caption = ctx.message.caption || "";
   
   if (!caption.toLowerCase().startsWith("/analyse")) {
-    return ctx.reply("❌ Bitte füge dem Bild als Unterschrift den Analyse-Befehl hinzu. Beispiel: /analyse TEAM 1W");
+    return ctx.reply("❌ Bitte füge dem Bild als Unterschrift den Analyse-Befehl hinzu. Beispiel: /analyse");
   }
 
   const chatId = ctx.chat.id;
   const args = caption.split(" ");
   let symbol = args[1];
-  let requestedInterval = args[2] ? args[2].toLowerCase().trim() : "auto";
-  
-  if (!symbol) {
-    return ctx.reply("❌ Bitte gib ein Symbol in der Unterschrift an! Beispiel: /analyse TEAM 1W");
+  let requestedInterval = args[2];
+
+  await ctx.reply("📥 Lade Screenshot herunter...");
+
+  let base64Image = "";
+  try {
+    const highestResPhoto = ctx.message.photo[ctx.message.photo.length - 1]; 
+    const fileLink = await ctx.telegram.getFileLink(highestResPhoto.file_id);
+    const imageResponse = await fetch(fileLink.href);
+    const imageBuffer = await imageResponse.arrayBuffer();
+    base64Image = Buffer.from(imageBuffer).toString("base64");
+  } catch (err: any) {
+    return ctx.reply(`❌ Fehler beim Herunterladen des Bildes: ${err.message}`);
+  }
+
+  if (!symbol || !requestedInterval) {
+    await ctx.reply("🔍 Lese Ticker und Timeframe aus dem Chart ab...");
+    const extractPrompt = `Du bist ein OCR-Assistent. Lese den Ticker (Symbol) und den Timeframe aus diesem TradingView-Screenshot ab.
+Antworte AUSSCHLIESSLICH mit einem validen JSON in exakt diesem Format:
+{"symbol": "TICKER", "timeframe": "TIMEFRAME"}
+Beispiele für Ticker: AAPL, TSLA, TEAM, ADBE, P911, PYPL
+Beispiele für Timeframe: 1M, 1W, 1D, 4H, 1H, 30m, 15m, 5m, 1m
+Die Infos stehen meist oben links oder in der Legende. Achte extrem auf Groß-/Kleinschreibung beim Timeframe (M=Monat, m=Minute). Keine Erklärungen im Text, nur das reine JSON!`;
+
+    try {
+      const extResponse = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [extractPrompt, { inlineData: { data: base64Image, mimeType: "image/jpeg" } }],
+      });
+      const textMatches = extResponse.text?.match(/\{[\s\S]*\}/);
+      if (textMatches) {
+        const parsed = JSON.parse(textMatches[0]);
+        symbol = parsed.symbol;
+        requestedInterval = parsed.timeframe;
+        await ctx.reply(`✅ Erkannt: ${symbol} auf ${requestedInterval}-Basis`);
+      } else {
+        throw new Error("Konnte kein JSON auslesen.");
+      }
+    } catch (err: any) {
+      return ctx.reply("❌ OCR-Erkennung fehlgeschlagen. Bitte gib Symbol und Timeframe manuell an: /analyse TEAM 1W");
+    }
   }
 
   let cleanSymbol = symbol.trim().toUpperCase();
@@ -64,28 +101,38 @@ bot.on("photo", async (ctx) => {
     cleanSymbol = "P911.DE";
   }
 
+  // Erweitertes, striktes Timeframe-Routing inklusive Yahoo-Limits
   let yahooInterval = "1wk";
   let finalIntervalLabel = "1W";
+  let lookbackDays = 3650; 
+  let lookbackCandles = 500;
 
-  if (requestedInterval === "1m" || requestedInterval === "mo" || requestedInterval === "m") {
-    yahooInterval = "1mo";
-    finalIntervalLabel = "1M";
-  } else if (requestedInterval === "1d" || requestedInterval === "d") {
-    yahooInterval = "1d";
-    finalIntervalLabel = "1D";
-  } else if (requestedInterval === "1h" || requestedInterval === "h") {
-    yahooInterval = "1h";
-    finalIntervalLabel = "1H";
+  const ri = requestedInterval ? requestedInterval.trim() : "1W";
+
+  if (ri === "1m") {
+    yahooInterval = "1m"; finalIntervalLabel = "1m"; lookbackDays = 7; lookbackCandles = 300;
+  } else if (ri === "5m") {
+    yahooInterval = "5m"; finalIntervalLabel = "5m"; lookbackDays = 60; lookbackCandles = 300;
+  } else if (ri === "15m") {
+    yahooInterval = "15m"; finalIntervalLabel = "15m"; lookbackDays = 60; lookbackCandles = 300;
+  } else if (ri === "30m") {
+    yahooInterval = "30m"; finalIntervalLabel = "30m"; lookbackDays = 60; lookbackCandles = 300;
+  } else if (ri.toLowerCase() === "1h" || ri.toLowerCase() === "h" || ri === "60m") {
+    yahooInterval = "1h"; finalIntervalLabel = "1H"; lookbackDays = 730; lookbackCandles = 300;
+  } else if (ri.toLowerCase() === "1d" || ri.toLowerCase() === "d") {
+    yahooInterval = "1d"; finalIntervalLabel = "1D"; lookbackDays = 1800; lookbackCandles = 400;
+  } else if (ri === "1M" || ri.toLowerCase() === "1mo" || ri.toLowerCase() === "mo") {
+    yahooInterval = "1mo"; finalIntervalLabel = "1M"; lookbackDays = 7300; lookbackCandles = 240;
+  } else {
+    yahooInterval = "1wk"; finalIntervalLabel = "1W"; lookbackDays = 3650; lookbackCandles = 500;
   }
 
-  await ctx.reply(`🖼️ Bild empfangen. Lade native ${finalIntervalLabel}-Historie für ${cleanSymbol} von Yahoo...`);
+  await ctx.reply(`⏳ Lade native ${finalIntervalLabel}-Historie für ${cleanSymbol} von Yahoo...`);
 
   let candlesArray: Array<{ date: string; open: string; high: string; low: string; close: string }> = [];
-  let base64Image = "";
 
   try {
     const period2 = Math.floor(Date.now() / 1000);
-    const lookbackDays = finalIntervalLabel === "1H" ? 30 : (10 * 365); 
     const period1 = period2 - (lookbackDays * 24 * 60 * 60);
 
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=${yahooInterval}&events=history`;
@@ -101,7 +148,10 @@ bot.on("photo", async (ctx) => {
 
     const rawHistorical = timestamps.map((ts: number, i: number) => {
       const d = new Date(ts * 1000);
-      const dateStr = finalIntervalLabel === "1H" ? d.toISOString().replace('T', ' ').substring(0, 16) : d.toISOString().split('T')[0];
+      // Intraday-Zeitstempel exakt parsen, Tages-Charts ohne Uhrzeit
+      const dateStr = ["1m", "5m", "15m", "30m", "1H"].includes(finalIntervalLabel) 
+                      ? d.toISOString().replace('T', ' ').substring(0, 16) 
+                      : d.toISOString().split('T')[0];
       
       const o = Number(quote.open[i]);
       const h = Number(quote.high[i]);
@@ -113,25 +163,9 @@ bot.on("photo", async (ctx) => {
       };
     }).filter((c: any) => Number(c.open) > 0 && Number(c.high) > 0 && Number(c.low) > 0 && Number(c.close) > 0);
 
-    let lookback = 150;
-    if (finalIntervalLabel === "1W") {
-      lookback = 500; 
-    } else if (finalIntervalLabel === "1D") {
-      lookback = 400; 
-    } else if (finalIntervalLabel === "1M") {
-      lookback = 240; 
-    } else if (finalIntervalLabel === "1H") {
-      lookback = 200;
-    }
-    
-    candlesArray = rawHistorical.slice(-lookback);
+    candlesArray = rawHistorical.slice(-lookbackCandles);
 
-    await ctx.reply("👁️ Verarbeite TradingView-Screenshot für die multimodale Analyse...");
-    const highestResPhoto = ctx.message.photo[ctx.message.photo.length - 1]; 
-    const fileLink = await ctx.telegram.getFileLink(highestResPhoto.file_id);
-    const imageResponse = await fetch(fileLink.href);
-    const imageBuffer = await imageResponse.arrayBuffer();
-    base64Image = Buffer.from(imageBuffer).toString("base64");
+    await ctx.reply("👁️ Verknüpfe Bild mit API-Daten...");
 
   } catch (err: any) {
     return ctx.reply(`❌ ANALYSE ABGEBROCHEN: Daten- oder Bildfehler: ${err.message}`);
@@ -139,7 +173,6 @@ bot.on("photo", async (ctx) => {
 
   const dataInputJson = JSON.stringify(candlesArray);
 
-  // ULTRARIEGEL-PROMPT: Verbietet Faulheit und Abkürzungen
   const mainPrompt = `Du bist ein strenger mathematischer Analyst für Elliott-Wellen. Analysiere das übermittelte Bild (TradingView Chart) UND das JSON-Array.
   
 Daten-Array (Referenz für exakte Timestamps/Preise):
@@ -151,7 +184,7 @@ Aufgabe & Strikte Regeln (DULDET KEINE ABWEICHUNG):
 3. AKRIBISCHE SUB-STRUKTUR REGEL: Es sollen **alle** Subwellen eingezeichnet werden. Das ist ein Befehl. Du **MUSST** zwingend für JEDE Makro-Impulswelle (I, III, V) die vollen 5 Unterwellen (1, 2, 3, 4, 5) identifizieren. Du **MUSST** zwingend für JEDE Makro-Korrekturwelle (II, IV, A, C) die vollen 3 Unterwellen (a, b, c) identifizieren.
 4. Versage nicht bei der mathematischen Genauigkeit. Wenn du eine Sub-Welle 3 nennst, suche im JSON nach dem exakten Preishoch dieser Kerze.
 5. Verknüpfe die visuellen Wendepunkte aus dem Bild mit den exakten Kerzen im JSON-Array.
-6. Markiere JEDEN Wendepunkt im Text in diesem Format: [Welle III: 2026-04-24] oder [Welle 3: 2026-04-24] oder [Welle c: 2026-04-24].
+6. Markiere JEDEN Wendepunkt im Text in diesem Format: [Welle III: 2026-04-24] oder [Welle 3: 2026-04-24 14:30] oder [Welle c: 2026-04-24].
 
 WICHTIG ZUR UNTERSCHEIDUNG (STRENG EINHALTEN):
 - Nutze RÖMISCHE Ziffern und GROSSBUCHSTABEN (I, II, III, IV, V, A, B, C) für die Haupt-Makrowellen.
@@ -252,7 +285,7 @@ Jedes spezifische Label darf nur EXAKT EINMAL markiert werden!`;
 });
 
 bot.command("analyse", (ctx) => {
-  ctx.reply("⚠️ Dieser Befehl benötigt jetzt ein Bild! Bitte lade einen TradingView-Screenshot hoch und nutze z.B. '/analyse TEAM 1W' als Bildunterschrift.");
+  ctx.reply("⚠️ Dieser Befehl benötigt jetzt ein Bild! Bitte lade einen TradingView-Screenshot hoch und nutze einfach '/analyse' als Bildunterschrift.");
 });
 
 bot.on("text", async (ctx) => {
