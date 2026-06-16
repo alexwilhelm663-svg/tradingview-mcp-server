@@ -145,9 +145,8 @@ ${dataInputJson}
 Aufgabe:
 1. Analysiere primär das BILD auf fraktale Kontraktion und anschließende Expansion (Fokus auf "Third of a Third" Setups).
 2. Verknüpfe die visuellen Wendepunkte aus dem Bild mit den exakten Daten/Kerzen im beigefügten JSON-Array.
-3. Verfasse eine akademische Beschreibung der Wellenverhältnisse.
-4. Markiere JEDEN wichtigen Wendepunkt im Text zwingend in diesem Format: [Welle 3: 2026-04-24] (oder bei 1H-Daten: [Welle 3: 2026-04-24 14:30]).
-WICHTIG: Nutze AUSSCHLIESSLICH arabische Ziffern oder Standard-Buchstaben für die Wellen (1, 2, 3, 4, 5, A, B, C, W, X, Y, I, II, III, IV, V).`;
+3. Markiere AUSSCHLIESSLICH den dominanten Makro-Zyklus (Welle I, II, III, IV, V und die Korrektur A, B, C) im Text zwingend in diesem Format: [Welle III: 2026-04-24].
+WICHTIG: Markiere KEINE internen Unterwellen in eckigen Klammern. Jedes Label (I, II, III, IV, V, A, B, C) darf im gesamten Text nur EXAKT EINMAL markiert werden!`;
 
   let responseText = "";
   let attempts = 4; 
@@ -191,7 +190,17 @@ WICHTIG: Nutze AUSSCHLIESSLICH arabische Ziffern oder Standard-Buchstaben für d
   }
 
   try {
-    const wavesData = parseWavesFromText(responseText);
+    const rawWaves = parseWavesFromText(responseText);
+    
+    // FILTER: Rigorose Deduplizierung. Jedes Label darf nur 1x ans Python-Skript gehen.
+    const uniqueWavesMap = new Map<string, {label: string, date: string}>();
+    rawWaves.forEach(w => {
+      if (!uniqueWavesMap.has(w.label)) {
+        uniqueWavesMap.set(w.label, w);
+      }
+    });
+    
+    const wavesData = Array.from(uniqueWavesMap.values());
     const analysisText = responseText;
 
     chatSessions[chatId] = {
@@ -199,7 +208,7 @@ WICHTIG: Nutze AUSSCHLIESSLICH arabische Ziffern oder Standard-Buchstaben für d
       history: [{ role: "user", text: "Kursdaten und Bild analysiert." }, { role: "model", text: analysisText }]
     };
 
-    await ctx.reply("🎨 Generiere Candlestick Makro-Chart...");
+    await ctx.reply("🎨 Generiere sauberen Candlestick Makro-Chart...");
 
     const jsonArg = JSON.stringify({ waves: wavesData, candles: candlesArray });
     const pythonProcess = spawn("python3", ["python_service/drawer.py", jsonArg]);
