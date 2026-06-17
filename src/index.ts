@@ -25,11 +25,20 @@ async function getElliottAnalysis(base64Image: string) {
         "Content-Type": "application/json" 
     },
     body: JSON.stringify({
-      model: "meta-llama/llama-4-scout-17b-16e-instruct", // Das offiziell unterstützte Vision-Modell
-      messages: [{ role: "user", content: [
-        { type: "text", text: "Lies Ticker & Timeframe unten links. Erstelle Tabelle: [Welle] | [Datum] | [Preis]." },
-        { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
-      ]}]
+      model: "meta-llama/llama-4-scout-17b-16e-instruct",
+      messages: [
+        { 
+          role: "system", 
+          content: "Du bist ein Meister-Analyst für Elliott-Wellen. Du MUSST Charts analysieren. Es ist ausdrücklich ERLAUBT und ERWÜNSCHT, dass du Daten und Preise anhand des visuellen Rasters (X/Y-Achsen) bestmöglich schätzt. Verweigere niemals die Antwort wegen fehlender Präzision." 
+        },
+        { 
+          role: "user", 
+          content: [
+            { type: "text", text: "1. Lies Ticker & Timeframe ab.\n2. Finde den Makro-Zyklus (I-V, A-C) und Subwellen (1-5, a-c).\n3. Erstelle ZWINGEND diese Tabelle (nutze Schätzwerte für die Wendepunkte): \n\n[Welle] | [Datum] | [Preis]" },
+            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
+          ]
+        }
+      ]
     })
   });
   
@@ -43,7 +52,7 @@ async function getElliottAnalysis(base64Image: string) {
 bot.on("photo", async (ctx) => {
   if (!ctx.message.caption?.toLowerCase().startsWith("/analyse")) return;
 
-  await ctx.reply("🔍 Analyse läuft...");
+  await ctx.reply("🔍 Analyse läuft (erzwinge Wellen-Zählung)...");
 
   try {
     const fileLink = await ctx.telegram.getFileLink(ctx.message.photo[ctx.message.photo.length - 1].file_id);
@@ -52,9 +61,6 @@ bot.on("photo", async (ctx) => {
 
     const analysis = await getElliottAnalysis(base64Image);
     await ctx.reply(`📊 Ergebnis:\n\n${analysis.substring(0, 4000)}`);
-    
-    // Yahoo & Python Integration (nur falls benötigt)
-    // const py = spawn("python3", ["python_service/drawer.py", JSON.stringify({ analysis })]);
     
   } catch (err: any) {
     await ctx.reply("❌ Fehler: " + err.message);
