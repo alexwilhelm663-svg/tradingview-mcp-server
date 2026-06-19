@@ -7,7 +7,6 @@ from datetime import timedelta
 
 def draw_chart():
     try:
-        # FIX: Liest die Daten jetzt vom stdin Stream
         input_data = sys.stdin.read()
         if not input_data:
             print("Fehler: Keine Daten empfangen.", file=sys.stderr)
@@ -49,8 +48,15 @@ def draw_chart():
                 
                 if window_df.empty:
                     nearest_idx = df.index.get_indexer([target_date], method='nearest')[0]
-                    snapped_date = df.index[nearest_idx]
-                    snapped_price = df.iloc[nearest_idx]['h'] if is_high else df.iloc[nearest_idx]['l']
+                    nearest_date = df.index[nearest_idx]
+                    
+                    # Schutz vor Zukunftsprognosen: Verhindert das Festkleben am letzten Chartbalken
+                    if abs((target_date - nearest_date).days) > 20:
+                        snapped_date = target_date
+                        snapped_price = w['price']
+                    else:
+                        snapped_date = nearest_date
+                        snapped_price = df.iloc[nearest_idx]['h'] if is_high else df.iloc[nearest_idx]['l']
                 else:
                     if is_high:
                         snapped_date = window_df['h'].idxmax()
