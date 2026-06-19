@@ -44,13 +44,15 @@ async function fetchYahooData(symbol: string, timeframe: string) {
     return candles;
 }
 
-// Robuster Parser: Ignoriert leere Rand-Spalten, Header und repariert unvollständige Datumsangaben
 function parseWavesFromTable(text: string) {
     const waves = [];
     const lines = text.split('\n');
+    let fallbackMonth = 1;
+
     for (const line of lines) {
         if (!line.includes('|')) continue;
         
+        // Trimmt und filtert leere Elemente heraus, die durch äußere Tabellenränder entstehen
         const parts = line.split('|').map(p => p.trim()).filter(p => p !== '');
         
         if (parts.length >= 3 && !parts[0].includes('---') && !parts[0].toLowerCase().includes('welle')) {
@@ -61,16 +63,24 @@ function parseWavesFromTable(text: string) {
             if (!priceMatch) continue;
             const price = parseFloat(priceMatch[0].replace(',', '.'));
             
-            if (label.length > 0 && label.length <= 30 && !isNaN(price) && dateStr.match(/\d{4}/)) {
-                
-                // Datums-Korrektur (z.B. 2023-10 zu 2023-10-15)
-                if (!dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            if (label.length > 0 && label.length <= 30 && !isNaN(price)) {
+                const exactMatch = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/);
+                if (exactMatch) {
+                    dateStr = exactMatch[0];
+                } else {
                     const ymMatch = dateStr.match(/(\d{4})-(\d{2})/);
                     if (ymMatch) {
                         dateStr = `${ymMatch[1]}-${ymMatch[2]}-15`;
                     } else {
                         const yMatch = dateStr.match(/\d{4}/);
-                        if (yMatch) dateStr = `${yMatch[0]}-06-15`; 
+                        if (yMatch) {
+                            // Künstliche Streuung für identische Jahreszahlen, um Stapelung zu verhindern
+                            const month = String(fallbackMonth).padStart(2, '0');
+                            dateStr = `${yMatch[0]}-${month}-15`;
+                            fallbackMonth = fallbackMonth >= 11 ? 1 : fallbackMonth + 2; 
+                        } else {
+                            continue;
+                        }
                     }
                 }
                 waves.push({ label, date: dateStr, price });
@@ -93,12 +103,12 @@ async function getElliottAnalysis(base64Image: string) {
       messages: [
         { 
           role: "system", 
-          content: "Du bist Analyst. Du MUSST Charts analysieren. Es ist ZWINGEND ERLAUBT Daten und Preise anhand des X/Y-Rasters bestmöglich zu schätzen. Verweigere nie die Antwort." 
+          content: "Du bist Analyst. Du MUSST Charts analysieren. Schätze Preise und Daten anhand der Achsen bestmöglich ab. Verweigere nie die Antwort." 
         },
         { 
           role: "user", 
           content: [
-            { type: "text", text: "1. Schreibe ZWINGEND als erste Zeile exakt dieses Format: 'Ticker: [SYMBOL], Timeframe: [WERT]'.\n2. Finde Makro-Zyklus und Subwellen.\n3. Erstelle diese Tabelle (nutze Schätzwerte für Wendepunkte): \n\n[Welle] | [Datum] | [Preis]" },
+            { type: "text", text: "1. Schreibe ZWINGEND als erste Zeile exakt dieses Format: 'Ticker: [SYMBOL], Timeframe: [WERT]'.\n2. Finde Makro-Zyklus und Subwellen.\n3. Erstelle diese Tabelle. Schätze das Datum ZWINGEND im exakten Format YYYY-MM-DD oder zumindest YYYY-MM:\n\n[Welle] | [Datum] | [Preis]" },
             { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
           ]
         }
@@ -144,7 +154,6 @@ bot.on("photo", async (ctx) => {
         return;
     }
 
-    // Python-Skript via stdin ansteuern
     const pyProcess = spawn("python3", ["python_service/drawer.py"]);
     
     pyProcess.stdin.write(JSON.stringify({ candles, waves }));
