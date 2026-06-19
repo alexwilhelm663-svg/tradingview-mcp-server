@@ -9,61 +9,64 @@ def draw_chart():
     try:
         input_data = sys.stdin.read()
         if not input_data:
-            print("Fehler: Keine Daten empfangen.", file=sys.stderr)
             sys.exit(1)
             
         data = json.loads(input_data)
-        
         candles = data.get("candles", [])
         waves_input = data.get("waves", [])
         
         if not candles:
-            print("Fehler: Keine Candlestick-Daten empfangen.", file=sys.stderr)
             sys.exit(1)
 
+        # 1. Sicherer DataFrame OHNE Index-Magie
         df = pd.DataFrame(candles)
         df['d'] = pd.to_datetime(df['d'])
-        df.set_index('d', inplace=True)
+        df = df.sort_values('d').reset_index(drop=True)
         
         snapped_dates = []
         snapped_prices = []
         labels = []
         
+        # 2. Wellen verarbeiten (mit puren Masken, kein .loc auf Indizes)
         for i, w in enumerate(waves_input):
             try:
                 target_date = pd.to_datetime(w['date'])
                 
+                # Richtung bestimmen
                 if i > 0:
-                    prev_price = waves_input[i-1]['price']
-                    is_high = w['price'] > prev_price
+                    is_high = w['price'] > waves_input[i-1]['price']
                 elif len(waves_input) > 1:
-                    next_price = waves_input[1]['price']
-                    is_high = w['price'] < next_price
+                    is_high = w['price'] < waves_input[1]['price']
                 else:
                     is_high = True
 
+                # Suchfenster als boolesche Maske (sicherste Methode in Pandas)
                 start_window = target_date - timedelta(days=14)
                 end_window = target_date + timedelta(days=14)
-                window_df = df.loc[start_window:end_window]
+                mask = (df['d'] >= start_window) & (df['d'] <= end_window)
+                window_df = df[mask]
                 
                 if window_df.empty:
-                    nearest_idx = df.index.get_indexer([target_date], method='nearest')[0]
-                    nearest_date = df.index[nearest_idx]
+                    # Finde das absolute nächste Datum mathematisch (ohne get_indexer)
+                    time_diffs = (df['d'] - target_date).abs()
+                    nearest_idx = time_diffs.idxmin()
+                    nearest_date = df.loc[nearest_idx, 'd']
                     
-                    # Schutz vor Zukunftsprognosen: Verhindert das Festkleben am letzten Chartbalken
-                    if abs((target_date - nearest_date).days) > 20:
+                    if time_diffs.min().days > 20:
                         snapped_date = target_date
                         snapped_price = w['price']
                     else:
                         snapped_date = nearest_date
-                        snapped_price = df.iloc[nearest_idx]['h'] if is_high else df.iloc[nearest_idx]['l']
+                        snapped_price = df.loc[nearest_idx, 'h'] if is_high else df.loc[nearest_idx, 'l']
                 else:
+                    # Maximum/Minimum im Fenster finden
                     if is_high:
-                        snapped_date = window_df['h'].idxmax()
-                        snapped_price = window_df.loc[snapped_date, 'h']
+                        best_idx = window_df['h'].idxmax()
+                        snapped_price = window_df.loc[best_idx, 'h']
                     else:
-                        snapped_date = window_df['l'].idxmin()
-                        snapped_price = window_df.loc[snapped_date, 'l']
+                        best_idx = window_df['l'].idxmin()
+                        snapped_price = window_df.loc[best_idx, 'l']
+                    snapped_date = window_df.loc[best_idx, 'd']
                 
                 snapped_dates.append(snapped_date)
                 snapped_prices.append(snapped_price)
@@ -71,6 +74,7 @@ def draw_chart():
             except Exception:
                 pass 
 
+        # 3. Rendern
         plt.style.use('dark_background')
         fig, ax = plt.subplots(figsize=(12, 6))
         fig.patch.set_facecolor('#121212')
@@ -79,13 +83,15 @@ def draw_chart():
         up = df[df['c'] >= df['o']]
         down = df[df['c'] < df['o']]
         
-        ax.vlines(up.index, up['l'], up['h'], color='#00ffcc', linewidth=1)
-        ax.vlines(down.index, down['l'], down['h'], color='#ff00ff', linewidth=1)
+        # Kerzen explizit mit der Datums-Spalte ('d') zeichnen
+        ax.vlines(up['d'], up['l'], up['h'], color='#00ffcc', linewidth=1)
+        ax.vlines(down['d'], down['l'], down['h'], color='#ff00ff', linewidth=1)
         
         width = timedelta(days=3)
-        ax.bar(up.index, up['c'] - up['o'], width, bottom=up['o'], color='#00ffcc')
-        ax.bar(down.index, down['o'] - down['c'], width, bottom=down['c'], color='#ff00ff')
+        ax.bar(up['d'], up['c'] - up['o'], width, bottom=up['o'], color='#00ffcc')
+        ax.bar(down['d'], down['o'] - down['c'], width, bottom=down['c'], color='#ff00ff')
 
+        # Wellen zeichnen
         if len(snapped_dates) > 1:
             ax.plot(snapped_dates, snapped_prices, color='white', linewidth=2, linestyle='-', marker='o', markersize=6)
             
@@ -95,7 +101,7 @@ def draw_chart():
                             textcoords="offset points", xytext=(0, y_offset), 
                             ha='center', color='yellow', fontsize=12, fontweight='bold')
 
-        plt.title('Elliott-Wellen-Analyse (Auto-Snapping)', color='white', fontsize=14)
+        plt.title('Elliott-Wellen-Analyse (Robuste Engine)', color='white', fontsize=14)
         plt.grid(color='#333333', linestyle='--', alpha=0.5)
         ax.tick_params(colors='white')
         
