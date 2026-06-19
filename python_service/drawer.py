@@ -1,159 +1,116 @@
 import sys
 import json
-import io
-import datetime
-import matplotlib
-matplotlib.use('Agg')  
+import pandas as pd
 import matplotlib.pyplot as plt
+import io
+from datetime import timedelta
 
-def parse_date(d_str):
+def draw_chart():
     try:
-        return datetime.datetime.strptime(d_str[:10], "%Y-%m-%d")
-    except Exception:
-        return datetime.datetime.now()
-
-def main():
-    try:
-        json_str = sys.argv[1]
-        data = json.loads(json_str)
-        waves = data.get("waves", [])
+        # 1. Daten empfangen
+        input_data = sys.argv[1]
+        data = json.loads(input_data)
+        
         candles = data.get("candles", [])
-    except Exception:
-        sys.exit(1)
-
-    if not candles:
-        sys.exit(1)
-
-    fig, ax = plt.subplots(figsize=(15, 8), facecolor='#131722')
-    ax.set_facecolor('#131722')
-
-    x_indices = list(range(len(candles)))
-    dates = [c["date"] for c in candles]
-
-    # --- CANDLESTICKS ZEICHNEN ---
-    for i, c in enumerate(candles):
-        open_p = float(c.get("open") or c["close"])
-        close_p = float(c["close"])
-        high_p = float(c["high"])
-        low_p = float(c["low"])
-
-        color = '#26a69a' if close_p >= open_p else '#ef5350'
-        ax.plot([i, i], [low_p, high_p], color=color, linewidth=1.5, zorder=2)
-
-        body_bottom = min(open_p, close_p)
-        body_height = max(abs(open_p - close_p), 0.01)
-        rect = plt.Rectangle((i - 0.35, body_bottom), 0.7, body_height, facecolor=color, edgecolor=color, zorder=3)
-        ax.add_patch(rect)
-
-    # --- ZWEI-EBENEN ELLIOTT-WELLEN LOGIK ---
-    impulse_color = "#00F0FF"        
-    corrective_color = "#FF9800"     
-    sub_impulse_color = "#4ba3e3"    
-    sub_corrective_color = "#e37933" 
-    
-    macro_points = []
-    sub_points = []
-    
-    last_macro_price = None
-    last_sub_price = None
-
-    for w in waves:
-        w_date = w.get("date")
-        label = str(w.get("label", ""))
+        waves_input = data.get("waves", [])
         
-        target_dt = parse_date(w_date)
-        closest_idx = min(range(len(candles)), key=lambda i: abs((parse_date(candles[i]["date"]) - target_dt).days))
-        
-        candle = candles[closest_idx]
-        high_p = float(candle["high"])
-        low_p = float(candle["low"])
-        close_p = float(candle["close"])
+        if not candles:
+            print("Fehler: Keine Candlestick-Daten empfangen.", file=sys.stderr)
+            sys.exit(1)
 
-        is_macro = label in ["I", "II", "III", "IV", "V", "A", "B", "C", "W", "X", "Y"]
+        # 2. DataFrame aufbauen
+        df = pd.DataFrame(candles)
+        df['d'] = pd.to_datetime(df['d'])
+        df.set_index('d', inplace=True)
         
-        if is_macro:
-            if last_macro_price is None:
-                is_high = True if abs(close_p - high_p) < abs(close_p - low_p) else False
-                price = high_p if is_high else low_p
-            else:
-                if close_p < last_macro_price:
-                    price = low_p
-                    is_high = False
+        snapped_dates = []
+        snapped_prices = []
+        labels = []
+        
+        # 3. Magnet-Logik für die Wellen
+        for i, w in enumerate(waves_input):
+            try:
+                target_date = pd.to_datetime(w['date'])
+                
+                # Richtung ermitteln (Aufwärts = High suchen, Abwärts = Low suchen)
+                if i > 0:
+                    prev_price = waves_input[i-1]['price']
+                    is_high = w['price'] > prev_price
+                elif len(waves_input) > 1:
+                    next_price = waves_input[1]['price']
+                    is_high = w['price'] < next_price
                 else:
-                    price = high_p
                     is_high = True
-            last_macro_price = price
-            macro_points.append((closest_idx, price, label, is_high))
-        else:
-            if last_sub_price is None:
-                is_high = True if abs(close_p - high_p) < abs(close_p - low_p) else False
-                price = high_p if is_high else low_p
-            else:
-                if close_p < last_sub_price:
-                    price = low_p
-                    is_high = False
+
+                # Suchfenster: +/- 14 Tage (fängt ungenaue KI-Schätzungen ab)
+                start_window = target_date - timedelta(days=14)
+                end_window = target_date + timedelta(days=14)
+                window_df = df.loc[start_window:end_window]
+                
+                if window_df.empty:
+                    # Fallback: Nächster verfügbarer Handelstag
+                    nearest_idx = df.index.get_indexer([target_date], method='nearest')[0]
+                    snapped_date = df.index[nearest_idx]
+                    snapped_price = df.iloc[nearest_idx]['h'] if is_high else df.iloc[nearest_idx]['l']
                 else:
-                    price = high_p
-                    is_high = True
-            last_sub_price = price
-            sub_points.append((closest_idx, price, label, is_high))
+                    # Magnet rastet ein
+                    if is_high:
+                        snapped_date = window_df['h'].idxmax()
+                        snapped_price = window_df.loc[snapped_date, 'h']
+                    else:
+                        snapped_date = window_df['l'].idxmin()
+                        snapped_price = window_df.loc[snapped_date, 'l']
+                
+                snapped_dates.append(snapped_date)
+                snapped_prices.append(snapped_price)
+                labels.append(w['label'])
+            except Exception as e:
+                pass # Fehlerhafte KI-Zeilen ignorieren wir schlichtweg
 
-    macro_points = sorted(macro_points, key=lambda k: k[0])
-    sub_points = sorted(sub_points, key=lambda k: k[0])
+        # 4. Rendering (Matplotlib Dark Theme)
+        plt.style.use('dark_background')
+        fig, ax = plt.subplots(figsize=(12, 6))
+        fig.patch.set_facecolor('#121212')
+        ax.set_facecolor('#121212')
 
-    for i in range(len(sub_points) - 1):
-        p1, p2 = sub_points[i], sub_points[i+1]
-        is_corrective = any(char in p2[2].lower() for char in ["a", "b", "c", "x", "y", "ii", "iv"])
-        line_color = sub_corrective_color if is_corrective else sub_impulse_color
-        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color=line_color, linewidth=1.0, linestyle="--", zorder=3)
-
-    for i in range(len(macro_points) - 1):
-        p1, p2 = macro_points[i], macro_points[i+1]
-        is_corrective = any(char in p2[2] for char in ["A", "B", "C", "W", "X", "Y", "II", "IV"])
-        line_color = corrective_color if is_corrective else impulse_color
-        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color=line_color, linewidth=2.5, zorder=4)
-
-    all_points = macro_points + sub_points
-    y_limits = ax.get_ylim()
-    offset = (y_limits[1] - y_limits[0]) * 0.03  
-
-    for p in all_points:
-        idx, price, label, is_high = p
-        is_macro_label = label in ["I", "II", "III", "IV", "V", "A", "B", "C", "W", "X", "Y"]
-        is_corrective = any(char in label.lower() for char in ["a", "b", "c", "x", "y", "ii", "iv"])
+        # Candlesticks zeichnen
+        up = df[df['c'] >= df['o']]
+        down = df[df['c'] < df['o']]
         
-        if is_macro_label:
-            text_color = corrective_color if is_corrective else impulse_color
-            size = 40
-            font_size = 12
-        else:
-            text_color = sub_corrective_color if is_corrective else sub_impulse_color
-            size = 20
-            font_size = 9
+        # Dochte (Wicks)
+        ax.vlines(up.index, up['l'], up['h'], color='#00ffcc', linewidth=1)
+        ax.vlines(down.index, down['l'], down['h'], color='#ff00ff', linewidth=1)
         
-        ax.scatter(idx, price, color='#FFFFFF', edgecolors=text_color, s=size, linewidths=1.5, zorder=5)
+        # Kerzenkörper (Bodies) - Breite anpassen
+        width = timedelta(days=3)
+        ax.bar(up.index, up['c'] - up['o'], width, bottom=up['o'], color='#00ffcc')
+        ax.bar(down.index, down['o'] - down['c'], width, bottom=down['c'], color='#ff00ff')
+
+        # Elliott-Wellen zeichnen
+        if len(snapped_dates) > 1:
+            ax.plot(snapped_dates, snapped_prices, color='white', linewidth=2, linestyle='-', marker='o', markersize=6)
+            
+            for i, txt in enumerate(labels):
+                y_offset = 15 if (i == 0 or snapped_prices[i] >= snapped_prices[i-1]) else -25
+                ax.annotate(txt, (snapped_dates[i], snapped_prices[i]), 
+                            textcoords="offset points", xytext=(0, y_offset), 
+                            ha='center', color='yellow', fontsize=12, fontweight='bold')
+
+        plt.title('Elliott-Wellen-Analyse (Auto-Snapping)', color='white', fontsize=14)
+        plt.grid(color='#333333', linestyle='--', alpha=0.5)
+        ax.tick_params(colors='white')
         
-        text_y = price + offset if is_high else price - offset
-        ax.text(idx, text_y, f"{label}", color='#FFFFFF', fontsize=font_size, fontweight='bold',
-                ha='center', va='center', bbox=dict(boxstyle="round,pad=0.2", facecolor='#131722', edgecolor=text_color, lw=1), zorder=6)
-
-    ax.grid(True, color='#2a2e39', linestyle=':', linewidth=0.5)
-    ax.spines['bottom'].set_color('#2a2e39')
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['left'].set_color('#2a2e39')
-    ax.tick_params(colors='#b2b5be', labelsize=10)
-
-    step = max(1, len(dates) // 8)
-    ax.set_xticks(x_indices[::step])
-    ax.set_xticklabels(dates[::step], color='#b2b5be', rotation=0)
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format='jpeg', dpi=130, bbox_inches='tight')
-    buf.seek(0)
-    sys.stdout.buffer.write(buf.read())
-    plt.close(fig)
+        # 5. Output als Byte-Stream an Node.js
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=fig.get_facecolor())
+        buf.seek(0)
+        
+        sys.stdout.buffer.write(buf.getvalue())
+        
+    except Exception as e:
+        print(f"Python Fehler: {str(e)}", file=sys.stderr)
+        sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    draw_chart()
     
