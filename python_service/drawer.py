@@ -7,8 +7,12 @@ from datetime import timedelta
 
 def draw_chart():
     try:
-        # 1. Daten empfangen
-        input_data = sys.argv[1]
+        # FIX: Liest die Daten jetzt vom stdin Stream
+        input_data = sys.stdin.read()
+        if not input_data:
+            print("Fehler: Keine Daten empfangen.", file=sys.stderr)
+            sys.exit(1)
+            
         data = json.loads(input_data)
         
         candles = data.get("candles", [])
@@ -18,7 +22,6 @@ def draw_chart():
             print("Fehler: Keine Candlestick-Daten empfangen.", file=sys.stderr)
             sys.exit(1)
 
-        # 2. DataFrame aufbauen
         df = pd.DataFrame(candles)
         df['d'] = pd.to_datetime(df['d'])
         df.set_index('d', inplace=True)
@@ -27,12 +30,10 @@ def draw_chart():
         snapped_prices = []
         labels = []
         
-        # 3. Magnet-Logik für die Wellen
         for i, w in enumerate(waves_input):
             try:
                 target_date = pd.to_datetime(w['date'])
                 
-                # Richtung ermitteln (Aufwärts = High suchen, Abwärts = Low suchen)
                 if i > 0:
                     prev_price = waves_input[i-1]['price']
                     is_high = w['price'] > prev_price
@@ -42,18 +43,15 @@ def draw_chart():
                 else:
                     is_high = True
 
-                # Suchfenster: +/- 14 Tage (fängt ungenaue KI-Schätzungen ab)
                 start_window = target_date - timedelta(days=14)
                 end_window = target_date + timedelta(days=14)
                 window_df = df.loc[start_window:end_window]
                 
                 if window_df.empty:
-                    # Fallback: Nächster verfügbarer Handelstag
                     nearest_idx = df.index.get_indexer([target_date], method='nearest')[0]
                     snapped_date = df.index[nearest_idx]
                     snapped_price = df.iloc[nearest_idx]['h'] if is_high else df.iloc[nearest_idx]['l']
                 else:
-                    # Magnet rastet ein
                     if is_high:
                         snapped_date = window_df['h'].idxmax()
                         snapped_price = window_df.loc[snapped_date, 'h']
@@ -64,29 +62,24 @@ def draw_chart():
                 snapped_dates.append(snapped_date)
                 snapped_prices.append(snapped_price)
                 labels.append(w['label'])
-            except Exception as e:
-                pass # Fehlerhafte KI-Zeilen ignorieren wir schlichtweg
+            except Exception:
+                pass 
 
-        # 4. Rendering (Matplotlib Dark Theme)
         plt.style.use('dark_background')
         fig, ax = plt.subplots(figsize=(12, 6))
         fig.patch.set_facecolor('#121212')
         ax.set_facecolor('#121212')
 
-        # Candlesticks zeichnen
         up = df[df['c'] >= df['o']]
         down = df[df['c'] < df['o']]
         
-        # Dochte (Wicks)
         ax.vlines(up.index, up['l'], up['h'], color='#00ffcc', linewidth=1)
         ax.vlines(down.index, down['l'], down['h'], color='#ff00ff', linewidth=1)
         
-        # Kerzenkörper (Bodies) - Breite anpassen
         width = timedelta(days=3)
         ax.bar(up.index, up['c'] - up['o'], width, bottom=up['o'], color='#00ffcc')
         ax.bar(down.index, down['o'] - down['c'], width, bottom=down['c'], color='#ff00ff')
 
-        # Elliott-Wellen zeichnen
         if len(snapped_dates) > 1:
             ax.plot(snapped_dates, snapped_prices, color='white', linewidth=2, linestyle='-', marker='o', markersize=6)
             
@@ -100,7 +93,6 @@ def draw_chart():
         plt.grid(color='#333333', linestyle='--', alpha=0.5)
         ax.tick_params(colors='white')
         
-        # 5. Output als Byte-Stream an Node.js
         buf = io.BytesIO()
         plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=fig.get_facecolor())
         buf.seek(0)
