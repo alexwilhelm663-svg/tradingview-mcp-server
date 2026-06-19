@@ -44,27 +44,34 @@ async function fetchYahooData(symbol: string, timeframe: string) {
     return candles;
 }
 
-// FIX: Erlaubt jetzt Namen wie "Startpunkt (0)" oder "Welle V (Aktuell)"
+// Robuster Parser: Ignoriert leere Rand-Spalten, Header und repariert unvollständige Datumsangaben
 function parseWavesFromTable(text: string) {
     const waves = [];
     const lines = text.split('\n');
     for (const line of lines) {
         if (!line.includes('|')) continue;
-        const parts = line.split('|').map(p => p.trim());
-        if (parts.length >= 3) {
+        
+        const parts = line.split('|').map(p => p.trim()).filter(p => p !== '');
+        
+        if (parts.length >= 3 && !parts[0].includes('---') && !parts[0].toLowerCase().includes('welle')) {
             const label = parts[0].replace(/[\*\`\[\]]/g, '').trim(); 
             let dateStr = parts[1].replace(/[\*\`\[\]]/g, '').trim();
             
-            // Isoliert die Zahl aus Texten wie "~ 130,00"
             const priceMatch = parts[2].match(/[-0-9.,]+/);
             if (!priceMatch) continue;
             const price = parseFloat(priceMatch[0].replace(',', '.'));
             
-            // Label-Länge auf 30 Zeichen erhöht!
             if (label.length > 0 && label.length <= 30 && !isNaN(price) && dateStr.match(/\d{4}/)) {
+                
+                // Datums-Korrektur (z.B. 2023-10 zu 2023-10-15)
                 if (!dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                    const yearMatch = dateStr.match(/\d{4}/);
-                    if (yearMatch) dateStr = `${yearMatch[0]}-06-15`; 
+                    const ymMatch = dateStr.match(/(\d{4})-(\d{2})/);
+                    if (ymMatch) {
+                        dateStr = `${ymMatch[1]}-${ymMatch[2]}-15`;
+                    } else {
+                        const yMatch = dateStr.match(/\d{4}/);
+                        if (yMatch) dateStr = `${yMatch[0]}-06-15`; 
+                    }
                 }
                 waves.push({ label, date: dateStr, price });
             }
@@ -137,10 +144,9 @@ bot.on("photo", async (ctx) => {
         return;
     }
 
-    // FIX: Wir übergeben die Daten jetzt als sicheren Stream (stdin) statt als Argument
+    // Python-Skript via stdin ansteuern
     const pyProcess = spawn("python3", ["python_service/drawer.py"]);
     
-    // Daten reinschreiben und schließen
     pyProcess.stdin.write(JSON.stringify({ candles, waves }));
     pyProcess.stdin.end();
     
