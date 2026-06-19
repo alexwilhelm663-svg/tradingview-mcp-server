@@ -2,7 +2,6 @@ import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
 
-// --- 1. SERVER START ---
 const PORT = process.env.PORT || 10000;
 const server = http.createServer((req, res) => {
     res.writeHead(200);
@@ -15,14 +14,17 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 process.on('uncaughtException', (err) => console.error('FATAL:', err));
 process.on('unhandledRejection', (err) => console.error('PROMISE FAIL:', err));
 
-// --- 2. HILFSFUNKTIONEN ---
 async function fetchYahooData(symbol: string, timeframe: string) {
     const interval = timeframe.toLowerCase().includes('w') ? '1wk' : '1d';
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=${interval}&range=5y`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=${interval}&range=max`;
     
     const res = await fetch(url);
     const data = await res.json();
-    if (!data.chart.result) throw new Error(`Yahoo fand den Ticker ${symbol} nicht.`);
+    
+    // DEBUG 1: Falls Yahoo komplett blockt oder Mist liefert
+    if (!data.chart || !data.chart.result) {
+        throw new Error(`Yahoo API Struktur fehlerhaft. Antwort war: ${JSON.stringify(data).substring(0, 500)}`);
+    }
     
     const result = data.chart.result[0];
     const timestamps = result.timestamp;
@@ -31,7 +33,7 @@ async function fetchYahooData(symbol: string, timeframe: string) {
     const quote = result.indicators.quote[0];
     const candles = [];
     for (let i = 0; i < timestamps.length; i++) {
-        if (quote.open[i] !== null && quote.close[i] !== null) {
+        if (quote.open && quote.close && quote.open[i] !== null && quote.close[i] !== null) {
             candles.push({
                 d: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
                 o: quote.open[i],
@@ -52,9 +54,7 @@ function parseWavesFromTable(text: string) {
     for (const line of lines) {
         if (!line.includes('|')) continue;
         
-        // Trimmt und filtert leere Elemente heraus, die durch äußere Tabellenränder entstehen
         const parts = line.split('|').map(p => p.trim()).filter(p => p !== '');
-        
         if (parts.length >= 3 && !parts[0].includes('---') && !parts[0].toLowerCase().includes('welle')) {
             const label = parts[0].replace(/[\*\`\[\]]/g, '').trim(); 
             let dateStr = parts[1].replace(/[\*\`\[\]]/g, '').trim();
@@ -74,7 +74,6 @@ function parseWavesFromTable(text: string) {
                     } else {
                         const yMatch = dateStr.match(/\d{4}/);
                         if (yMatch) {
-                            // Künstliche Streuung für identische Jahreszahlen, um Stapelung zu verhindern
                             const month = String(fallbackMonth).padStart(2, '0');
                             dateStr = `${yMatch[0]}-${month}-15`;
                             fallbackMonth = fallbackMonth >= 11 ? 1 : fallbackMonth + 2; 
@@ -90,7 +89,6 @@ function parseWavesFromTable(text: string) {
     return waves;
 }
 
-// --- 3. KI ANALYSE ---
 async function getElliottAnalysis(base64Image: string) {
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
@@ -122,10 +120,9 @@ async function getElliottAnalysis(base64Image: string) {
   return data.choices[0].message.content;
 }
 
-// --- 4. BOT HANDLER ---
 bot.on("photo", async (ctx) => {
   if (!ctx.message.caption?.toLowerCase().startsWith("/analyse")) return;
-  await ctx.reply("🔍 Analyse läuft (erzwinge Wellen-Zählung)...");
+  await ctx.reply("🔍 Analyse läuft...");
 
   try {
     const fileLink = await ctx.telegram.getFileLink(ctx.message.photo[ctx.message.photo.length - 1].file_id);
@@ -140,19 +137,22 @@ bot.on("photo", async (ctx) => {
     const symbol = tickerMatch ? tickerMatch[1].toUpperCase() : "TEAM"; 
     const timeframe = timeframeMatch ? timeframeMatch[1] : "1W";
 
-    await ctx.reply(`🧠 Text-Analyse abgeschlossen. Hole Marktdaten für ${symbol} (${timeframe}) und zeichne Chart...`);
-
     const waves = parseWavesFromTable(analysis);
     const candles = await fetchYahooData(symbol, timeframe);
 
-    if (candles.length === 0) {
-        throw new Error(`Yahoo Finance hat keine Preisdaten für den Ticker "${symbol}" geliefert.`);
-    }
-
-    if (waves.length < 2) {
-        await ctx.reply(`⚠️ Tabelle konnte nicht gelesen werden. Hier der Text:\n\n${analysis.substring(0, 4000)}`);
+    // DEBUG 2: Was genau wurde geparst? Direkte Ausgabe im Chat bei Fehlern
+    if (candles.length === 0 || waves.length < 2) {
+        await ctx.reply(`🚨 CRITICAL DEBUG INFO:\n\n` +
+                        `• Erkanntes Symbol: "${symbol}"\n` +
+                        `• Erkannter Timeframe: "${timeframe}"\n` +
+                        `• Kerzen von Yahoo erhalten: ${candles.length}\n` +
+                        `• Wellen aus Tabelle geparst: ${waves.length}\n\n` +
+                        `• Geparste Wellen-Daten:\n${JSON.stringify(waves, null, 2)}\n\n` +
+                        `• Roher KI-Text:\n${analysis.substring(0, 1500)}`);
         return;
     }
+
+    await ctx.reply(`🧠 Daten valide. Starte Python-Rendering für ${symbol}...`);
 
     const pyProcess = spawn("python3", ["python_service/drawer.py"]);
     
@@ -175,11 +175,10 @@ bot.on("photo", async (ctx) => {
     });
 
   } catch (err: any) {
-    await ctx.reply("❌ Fehler: " + err.message);
+    await ctx.reply("❌ Laufzeit-Fehler: " + err.message);
   }
 });
 
-// --- 5. WEBHOOKS ---
 if (process.env.RENDER_EXTERNAL_URL) {
     const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
     bot.telegram.setWebhook(`${process.env.RENDER_EXTERNAL_URL}${webhookPath}`);
