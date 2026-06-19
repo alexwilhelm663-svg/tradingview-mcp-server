@@ -17,7 +17,6 @@ process.on('unhandledRejection', (err) => console.error('PROMISE FAIL:', err));
 
 // --- 2. HILFSFUNKTIONEN ---
 
-// Holt die Daten von Yahoo Finance und sortiert ungültige Kerzen aus
 async function fetchYahooData(symbol: string, timeframe: string) {
     const interval = timeframe.toLowerCase().includes('w') ? '1wk' : '1d';
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=${interval}&range=5y`;
@@ -28,8 +27,11 @@ async function fetchYahooData(symbol: string, timeframe: string) {
     
     const result = data.chart.result[0];
     const timestamps = result.timestamp;
-    const quote = result.indicators.quote[0];
     
+    // Falls Yahoo zwar antwortet, aber keine Kerzen liefert (toter Ticker)
+    if (!timestamps || timestamps.length === 0) return [];
+
+    const quote = result.indicators.quote[0];
     const candles = [];
     for (let i = 0; i < timestamps.length; i++) {
         if (quote.open[i] !== null && quote.close[i] !== null) {
@@ -45,19 +47,17 @@ async function fetchYahooData(symbol: string, timeframe: string) {
     return candles;
 }
 
-// Extrahiert die Wellen aus der KI-Antwort (Tabelle)
 function parseWavesFromTable(text: string) {
     const waves = [];
     const lines = text.split('\n');
     for (const line of lines) {
         const parts = line.split('|').map(p => p.trim());
         if (parts.length >= 3) {
-            const label = parts[0].replace(/[\*\`\[\]]/g, ''); // Markdown entfernen
+            const label = parts[0].replace(/[\*\`\[\]]/g, ''); 
             let dateStr = parts[1].replace(/[\*\`\[\]]/g, '');
             const price = parseFloat(parts[2].replace(/[^0-9.,-]/g, '').replace(',', '.'));
             
             if (label.length > 0 && label.length <= 4 && !isNaN(price) && dateStr.match(/\d{4}/)) {
-                // Fallback für grobe Datumsangaben (z.B. "Mitte 2024")
                 if (!dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
                     const yearMatch = dateStr.match(/\d{4}/);
                     if (yearMatch) dateStr = `${yearMatch[0]}-06-15`; 
@@ -69,7 +69,7 @@ function parseWavesFromTable(text: string) {
     return waves;
 }
 
-// --- 3. KI ANALYSE (Groq Llama 4 Scout) ---
+// --- 3. KI ANALYSE ---
 async function getElliottAnalysis(base64Image: string) {
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
@@ -87,7 +87,7 @@ async function getElliottAnalysis(base64Image: string) {
         { 
           role: "user", 
           content: [
-            { type: "text", text: "1. Lies Ticker & Timeframe ab (Format: 'Ticker: AAPL, Timeframe: 1W').\n2. Finde Makro-Zyklus und Subwellen.\n3. Erstelle diese Tabelle (nutze Schätzwerte für Wendepunkte): \n\n[Welle] | [Datum] | [Preis]" },
+            { type: "text", text: "1. Schreibe ZWINGEND als erste Zeile exakt dieses Format: 'Ticker: [SYMBOL], Timeframe: [WERT]'. (z.B. Ticker: AAPL, Timeframe: 1W).\n2. Finde Makro-Zyklus und Subwellen.\n3. Erstelle diese Tabelle (nutze Schätzwerte für Wendepunkte): \n\n[Welle] | [Datum] | [Preis]" },
             { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
           ]
         }
@@ -113,16 +113,22 @@ bot.on("photo", async (ctx) => {
 
     const analysis = await getElliottAnalysis(base64Image);
     
-    // Ticker & Timeframe auslesen
-    const firstLine = analysis.split('\n')[0];
-    const match = firstLine.match(/([A-Z]{2,6}).*?(1W|1D|1M|4h)/i);
-    const symbol = match ? match[1].toUpperCase() : "ADBE"; 
-    const timeframe = match ? match[2] : "1W";
+    // NEU: Robuster Regex greift nur noch, wenn exakt das Wort "Ticker:" davor steht
+    const tickerMatch = analysis.match(/Ticker:\s*([A-Z0-9.-]+)/i);
+    const timeframeMatch = analysis.match(/Timeframe:\s*([A-Z0-9]+)/i);
+    
+    const symbol = tickerMatch ? tickerMatch[1].toUpperCase() : "TEAM"; 
+    const timeframe = timeframeMatch ? timeframeMatch[1] : "1W";
 
     await ctx.reply(`🧠 Text-Analyse abgeschlossen. Hole Marktdaten für ${symbol} (${timeframe}) und zeichne Chart...`);
 
     const waves = parseWavesFromTable(analysis);
     const candles = await fetchYahooData(symbol, timeframe);
+
+    // NEU: Bevor Python startet, prüfen wir, ob Yahoo echte Kerzen geliefert hat
+    if (candles.length === 0) {
+        throw new Error(`Yahoo Finance hat keine Preisdaten für den erkannten Ticker "${symbol}" geliefert. Wahrscheinlich hat die KI den Ticker nicht sauber erkannt.`);
+    }
 
     if (waves.length < 2) {
         await ctx.reply(`⚠️ Die KI hat keine sauber formatierte Tabelle geliefert. Hier ist der reine Text:\n\n${analysis.substring(0, 4000)}`);
@@ -142,7 +148,6 @@ bot.on("photo", async (ctx) => {
         if (code !== 0 || imgBuffer.length === 0) {
             await ctx.reply(`❌ Zeichnen fehlgeschlagen. Python-Fehler:\n${errorData}`);
         } else {
-            // Chart als Bild senden und die KI-Analyse als Text drunter
             await ctx.replyWithPhoto({ source: imgBuffer }, { caption: `✅ Magnet-Snapping erfolgreich für ${symbol}.` });
             await ctx.reply(analysis.substring(0, 4000));
         }
