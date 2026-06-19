@@ -2,7 +2,7 @@ import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
 
-// --- 1. BULLETPROOF SERVER START (Verhindert Render SIGTERM) ---
+// --- 1. SERVER START ---
 const PORT = process.env.PORT || 10000;
 const server = http.createServer((req, res) => {
     res.writeHead(200);
@@ -16,7 +16,6 @@ process.on('uncaughtException', (err) => console.error('FATAL:', err));
 process.on('unhandledRejection', (err) => console.error('PROMISE FAIL:', err));
 
 // --- 2. HILFSFUNKTIONEN ---
-
 async function fetchYahooData(symbol: string, timeframe: string) {
     const interval = timeframe.toLowerCase().includes('w') ? '1wk' : '1d';
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=${interval}&range=5y`;
@@ -27,8 +26,6 @@ async function fetchYahooData(symbol: string, timeframe: string) {
     
     const result = data.chart.result[0];
     const timestamps = result.timestamp;
-    
-    // Falls Yahoo zwar antwortet, aber keine Kerzen liefert (toter Ticker)
     if (!timestamps || timestamps.length === 0) return [];
 
     const quote = result.indicators.quote[0];
@@ -47,17 +44,24 @@ async function fetchYahooData(symbol: string, timeframe: string) {
     return candles;
 }
 
+// FIX: Erlaubt jetzt Namen wie "Startpunkt (0)" oder "Welle V (Aktuell)"
 function parseWavesFromTable(text: string) {
     const waves = [];
     const lines = text.split('\n');
     for (const line of lines) {
+        if (!line.includes('|')) continue;
         const parts = line.split('|').map(p => p.trim());
         if (parts.length >= 3) {
-            const label = parts[0].replace(/[\*\`\[\]]/g, ''); 
-            let dateStr = parts[1].replace(/[\*\`\[\]]/g, '');
-            const price = parseFloat(parts[2].replace(/[^0-9.,-]/g, '').replace(',', '.'));
+            const label = parts[0].replace(/[\*\`\[\]]/g, '').trim(); 
+            let dateStr = parts[1].replace(/[\*\`\[\]]/g, '').trim();
             
-            if (label.length > 0 && label.length <= 4 && !isNaN(price) && dateStr.match(/\d{4}/)) {
+            // Isoliert die Zahl aus Texten wie "~ 130,00"
+            const priceMatch = parts[2].match(/[-0-9.,]+/);
+            if (!priceMatch) continue;
+            const price = parseFloat(priceMatch[0].replace(',', '.'));
+            
+            // Label-Länge auf 30 Zeichen erhöht!
+            if (label.length > 0 && label.length <= 30 && !isNaN(price) && dateStr.match(/\d{4}/)) {
                 if (!dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
                     const yearMatch = dateStr.match(/\d{4}/);
                     if (yearMatch) dateStr = `${yearMatch[0]}-06-15`; 
@@ -87,7 +91,7 @@ async function getElliottAnalysis(base64Image: string) {
         { 
           role: "user", 
           content: [
-            { type: "text", text: "1. Schreibe ZWINGEND als erste Zeile exakt dieses Format: 'Ticker: [SYMBOL], Timeframe: [WERT]'. (z.B. Ticker: AAPL, Timeframe: 1W).\n2. Finde Makro-Zyklus und Subwellen.\n3. Erstelle diese Tabelle (nutze Schätzwerte für Wendepunkte): \n\n[Welle] | [Datum] | [Preis]" },
+            { type: "text", text: "1. Schreibe ZWINGEND als erste Zeile exakt dieses Format: 'Ticker: [SYMBOL], Timeframe: [WERT]'.\n2. Finde Makro-Zyklus und Subwellen.\n3. Erstelle diese Tabelle (nutze Schätzwerte für Wendepunkte): \n\n[Welle] | [Datum] | [Preis]" },
             { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
           ]
         }
@@ -97,11 +101,11 @@ async function getElliottAnalysis(base64Image: string) {
   
   const data = await response.json();
   if (data.error) throw new Error(data.error.message);
-  if (!data.choices || !data.choices[0].message.content) throw new Error("Keine valide KI-Antwort: " + JSON.stringify(data));
+  if (!data.choices || !data.choices[0].message.content) throw new Error("Keine valide KI-Antwort erhalten.");
   return data.choices[0].message.content;
 }
 
-// --- 4. TELEGRAM BOT HANDLER ---
+// --- 4. BOT HANDLER ---
 bot.on("photo", async (ctx) => {
   if (!ctx.message.caption?.toLowerCase().startsWith("/analyse")) return;
   await ctx.reply("🔍 Analyse läuft (erzwinge Wellen-Zählung)...");
@@ -113,7 +117,6 @@ bot.on("photo", async (ctx) => {
 
     const analysis = await getElliottAnalysis(base64Image);
     
-    // NEU: Robuster Regex greift nur noch, wenn exakt das Wort "Ticker:" davor steht
     const tickerMatch = analysis.match(/Ticker:\s*([A-Z0-9.-]+)/i);
     const timeframeMatch = analysis.match(/Timeframe:\s*([A-Z0-9]+)/i);
     
@@ -125,18 +128,21 @@ bot.on("photo", async (ctx) => {
     const waves = parseWavesFromTable(analysis);
     const candles = await fetchYahooData(symbol, timeframe);
 
-    // NEU: Bevor Python startet, prüfen wir, ob Yahoo echte Kerzen geliefert hat
     if (candles.length === 0) {
-        throw new Error(`Yahoo Finance hat keine Preisdaten für den erkannten Ticker "${symbol}" geliefert. Wahrscheinlich hat die KI den Ticker nicht sauber erkannt.`);
+        throw new Error(`Yahoo Finance hat keine Preisdaten für den Ticker "${symbol}" geliefert.`);
     }
 
     if (waves.length < 2) {
-        await ctx.reply(`⚠️ Die KI hat keine sauber formatierte Tabelle geliefert. Hier ist der reine Text:\n\n${analysis.substring(0, 4000)}`);
+        await ctx.reply(`⚠️ Tabelle konnte nicht gelesen werden. Hier der Text:\n\n${analysis.substring(0, 4000)}`);
         return;
     }
 
-    // Python Skript aufrufen
-    const pyProcess = spawn("python3", ["python_service/drawer.py", JSON.stringify({ candles, waves })]);
+    // FIX: Wir übergeben die Daten jetzt als sicheren Stream (stdin) statt als Argument
+    const pyProcess = spawn("python3", ["python_service/drawer.py"]);
+    
+    // Daten reinschreiben und schließen
+    pyProcess.stdin.write(JSON.stringify({ candles, waves }));
+    pyProcess.stdin.end();
     
     let imgBuffer = Buffer.alloc(0);
     let errorData = "";
