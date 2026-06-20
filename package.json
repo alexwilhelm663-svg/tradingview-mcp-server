@@ -10,7 +10,7 @@
   "dependencies": {
     "@google/genai": "latest",
     "telegraf": "^4.16.3",
-    "yahoo-finance2": "^2.13.3",
+    "yahoo-finance2": "latest",
     "typescript": "^5.4.5",
     "@types/node": "^20.12.7"
   }
