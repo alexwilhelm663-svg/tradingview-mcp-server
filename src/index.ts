@@ -20,11 +20,7 @@ async function fetchYahooData(symbol: string, timeframe: string) {
     
     const res = await fetch(url);
     const data = await res.json();
-    
-    // DEBUG 1: Falls Yahoo komplett blockt oder Mist liefert
-    if (!data.chart || !data.chart.result) {
-        throw new Error(`Yahoo API Struktur fehlerhaft. Antwort war: ${JSON.stringify(data).substring(0, 500)}`);
-    }
+    if (!data.chart || !data.chart.result) throw new Error(`Ticker "${symbol}" bei Yahoo nicht gefunden.`);
     
     const result = data.chart.result[0];
     const timestamps = result.timestamp;
@@ -49,7 +45,6 @@ async function fetchYahooData(symbol: string, timeframe: string) {
 function parseWavesFromTable(text: string) {
     const waves = [];
     const lines = text.split('\n');
-    let fallbackMonth = 1;
 
     for (const line of lines) {
         if (!line.includes('|')) continue;
@@ -57,32 +52,15 @@ function parseWavesFromTable(text: string) {
         const parts = line.split('|').map(p => p.trim()).filter(p => p !== '');
         if (parts.length >= 3 && !parts[0].includes('---') && !parts[0].toLowerCase().includes('welle')) {
             const label = parts[0].replace(/[\*\`\[\]]/g, '').trim(); 
-            let dateStr = parts[1].replace(/[\*\`\[\]]/g, '').trim();
+            const rawDate = parts[1].replace(/[\*\`\[\]]/g, '').trim();
             
             const priceMatch = parts[2].match(/[-0-9.,]+/);
             if (!priceMatch) continue;
             const price = parseFloat(priceMatch[0].replace(',', '.'));
             
-            if (label.length > 0 && label.length <= 30 && !isNaN(price)) {
-                const exactMatch = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/);
-                if (exactMatch) {
-                    dateStr = exactMatch[0];
-                } else {
-                    const ymMatch = dateStr.match(/(\d{4})-(\d{2})/);
-                    if (ymMatch) {
-                        dateStr = `${ymMatch[1]}-${ymMatch[2]}-15`;
-                    } else {
-                        const yMatch = dateStr.match(/\d{4}/);
-                        if (yMatch) {
-                            const month = String(fallbackMonth).padStart(2, '0');
-                            dateStr = `${yMatch[0]}-${month}-15`;
-                            fallbackMonth = fallbackMonth >= 11 ? 1 : fallbackMonth + 2; 
-                        } else {
-                            continue;
-                        }
-                    }
-                }
-                waves.push({ label, date: dateStr, price });
+            if (label.length > 0 && label.length <= 30 && !isNaN(price) && rawDate.length > 0) {
+                // Reicht den String (auch "2024-Q1") unverändert an Python weiter
+                waves.push({ label, date: rawDate, price });
             }
         }
     }
@@ -106,7 +84,7 @@ async function getElliottAnalysis(base64Image: string) {
         { 
           role: "user", 
           content: [
-            { type: "text", text: "1. Schreibe ZWINGEND als erste Zeile exakt dieses Format: 'Ticker: [SYMBOL], Timeframe: [WERT]'.\n2. Finde Makro-Zyklus und Subwellen.\n3. Erstelle diese Tabelle. Schätze das Datum ZWINGEND im exakten Format YYYY-MM-DD oder zumindest YYYY-MM:\n\n[Welle] | [Datum] | [Preis]" },
+            { type: "text", text: "1. Schreibe ZWINGEND als erste Zeile exakt dieses Format: 'Ticker: [SYMBOL], Timeframe: [WERT]'.\n2. Finde Makro-Zyklus und Subwellen.\n3. Erstelle diese Tabelle. Nutze für das Datum das Format YYYY-MM-DD. Falls ungenau, nutze YYYY-MM:\n\n[Welle] | [Datum] | [Preis]" },
             { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
           ]
         }
@@ -140,15 +118,12 @@ bot.on("photo", async (ctx) => {
     const waves = parseWavesFromTable(analysis);
     const candles = await fetchYahooData(symbol, timeframe);
 
-    // DEBUG 2: Was genau wurde geparst? Direkte Ausgabe im Chat bei Fehlern
     if (candles.length === 0 || waves.length < 2) {
         await ctx.reply(`🚨 CRITICAL DEBUG INFO:\n\n` +
                         `• Erkanntes Symbol: "${symbol}"\n` +
-                        `• Erkannter Timeframe: "${timeframe}"\n` +
                         `• Kerzen von Yahoo erhalten: ${candles.length}\n` +
                         `• Wellen aus Tabelle geparst: ${waves.length}\n\n` +
-                        `• Geparste Wellen-Daten:\n${JSON.stringify(waves, null, 2)}\n\n` +
-                        `• Roher KI-Text:\n${analysis.substring(0, 1500)}`);
+                        `• Geparste Wellen-Daten:\n${JSON.stringify(waves, null, 2)}`);
         return;
     }
 
@@ -169,7 +144,7 @@ bot.on("photo", async (ctx) => {
         if (code !== 0 || imgBuffer.length === 0) {
             await ctx.reply(`❌ Zeichnen fehlgeschlagen. Python-Fehler:\n${errorData}`);
         } else {
-            await ctx.replyWithPhoto({ source: imgBuffer }, { caption: `✅ Magnet-Snapping erfolgreich für ${symbol}.` });
+            await ctx.replyWithPhoto({ source: imgBuffer }, { caption: `✅ Analyse erfolgreich für ${symbol}.` });
             await ctx.reply(analysis.substring(0, 4000));
         }
     });
