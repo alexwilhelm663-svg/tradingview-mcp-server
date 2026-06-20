@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit 10-Jahres-Daten-Pipeline...");
+console.log("🤖 Bot läuft in der Cloud mit unzerstörbarem Tabellen-Parser (v2)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -21,6 +21,7 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
+// FIX: Kugelsicherer Parser prüft Spalte 1 auf Ziffern. Völlig immun gegen das Wort "Welle".
 function parseWavesFromText(text: string): Array<{ label: string; date: string; price: number }> {
   const waves: Array<{ label: string; date: string; price: number }> = [];
   const lines = text.split('\n');
@@ -28,24 +29,25 @@ function parseWavesFromText(text: string): Array<{ label: string; date: string; 
   for (const line of lines) {
     if (!line.includes('|')) continue;
     const parts = line.split('|').map(p => p.trim()).filter(p => p !== '');
-    if (parts.length >= 3 && !parts[0].includes('---') && !parts[0].toLowerCase().includes('welle')) {
-        const label = parts[0].replace(/[\*\`\[\]]/g, '').trim(); 
-        const rawDate = parts[1].replace(/[\*\`\[\]]/g, '').trim();
-        const priceMatch = parts[2].match(/[-0-9.,]+/);
-        const price = priceMatch ? parseFloat(priceMatch[0].replace(',', '.')) : 0;
+    
+    // Gültige Zeile: Mindestens 2 Spalten UND die Datums-Spalte (Index 1) enthält Ziffern
+    if (parts.length >= 2 && /\d/.test(parts[1])) {
+        let label = parts[0].replace(/[\*\`\[\]]/g, '').trim();
+        // Schneidet Präfixe wie "Welle " oder "Wave " weg, damit saubere Zahlen (0, I, 2) bleiben
+        label = label.replace(/^(?:Welle|Wave)\s+/i, '').trim();
         
-        if (label && rawDate.length >= 4) {
+        const rawDate = parts[1].replace(/[\*\`\[\]]/g, '').trim();
+        
+        let price = 0;
+        if (parts.length >= 3) {
+            const priceMatch = parts[2].match(/[-0-9.,]+/);
+            if (priceMatch) price = parseFloat(priceMatch[0].replace(',', '.'));
+        }
+        
+        if (label && rawDate) {
             waves.push({ label, date: rawDate, price });
         }
     }
-  }
-
-  if (waves.length === 0) {
-      const regex = /\[(?:Welle\s+)?([12345ABCWXYIV]+):\s*(\d{4}-\d{2}-\d{2})\]/gi;
-      let match;
-      while ((match = regex.exec(text)) !== null) {
-        waves.push({ label: match[1].toUpperCase().trim(), date: match[2].trim(), price: 0 });
-      }
   }
 
   return waves;
@@ -57,12 +59,7 @@ bot.command("analyse", async (ctx) => {
   const args = rawText.split(" ");
   
   const symbol = args[1];
-  const isDebug = rawText.toLowerCase().includes("debug");
-  
-  let requestedInterval = "auto";
-  if (args[2] && args[2].toLowerCase() !== "debug") {
-      requestedInterval = args[2].toLowerCase().trim();
-  }
+  let requestedInterval = args[2] ? args[2].toLowerCase().trim() : "auto";
 
   if (!symbol) return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse MSTR");
 
@@ -88,7 +85,7 @@ bot.command("analyse", async (ctx) => {
   try {
     const period2 = new Date();
     const period1 = new Date();
-    // FIX: 10 Jahre Lookback. Damit ist der Makro-Boden von Anfang 2023 bei MSTR garantiert im Speicher!
+    // FIX: 10 Jahre Lookback garantiert, dass Makro-Böden (wie MSTR Jan 2023) geladen werden
     period1.setFullYear(period2.getFullYear() - 10); 
 
     const result = await yahooFinance.historical(cleanSymbol, { period1, period2, interval: yahooInterval }) as any[];
@@ -118,7 +115,7 @@ I. Fundamentale Struktur
 Der Markt bewegt sich fraktal in 5 Wellen in Richtung des Trends und in 3 Wellen dagegen.
 
 FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
-Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem Muster. Der erste Punkt MUSS der absolute Startpunkt der Zählung sein (Welle 0 oder Start):
+Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem Muster. Der allererste Punkt MUSS der absolute Zyklus-Startpunkt sein (Welle 0 oder Start):
 
 | Welle | Datum | Preis |
 | --- | --- | --- |
@@ -149,8 +146,9 @@ Nutze als Bezeichnungen NUR: 0, 1, 2, 3, 4, 5, A, B, C, I, II, III, IV, V.`;
 
   const wavesData = parseWavesFromText(responseText);
 
+  // Falls die KI gar keine Tabelle erzeugt hat
   if (wavesData.length === 0) {
-      return ctx.reply(`🚨 **PARSER-FALLE AKTIV:** Die KI hat keine auslesbare Tabelle geliefert.\n\nRoher Output:\n\`\`\`text\n${responseText.substring(0, 3800)}\n\`\`\``);
+      return ctx.reply(`🚨 **FEHLER:** Die KI hat keine auslesbare Tabelle geliefert.\n\nRoher Output:\n\`\`\`text\n${responseText.substring(0, 3800)}\n\`\`\``);
   }
 
   chatSessions[chatId] = {
@@ -164,21 +162,17 @@ Nutze als Bezeichnungen NUR: 0, 1, 2, 3, 4, 5, A, B, C, I, II, III, IV, V.`;
   const pythonProcess = spawn(pythonCommand, ["python_service/drawer.py"]);
   
   const stdoutChunks: Buffer[] = [];
-  let telemetryJsonStr = "";
+  let errLog = "";
 
   pythonProcess.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-  pythonProcess.stderr.on("data", (chunk: Buffer) => telemetryJsonStr += chunk.toString());
+  pythonProcess.stderr.on("data", (chunk: Buffer) => errLog += chunk.toString());
 
   pythonProcess.stdin.write(jsonArg);
   pythonProcess.stdin.end();
 
   pythonProcess.on("close", async (code) => {
-    if (isDebug && telemetryJsonStr) {
-        await ctx.reply(`🩻 **PYTHON TELEMETRIE:**\n\`\`\`json\n${telemetryJsonStr.substring(0, 3800)}\n\`\`\``);
-    }
-
     if (code !== 0 || stdoutChunks.length === 0) {
-        await ctx.reply(`❌ **Zeichnen fehlgeschlagen!** Exit-Code: ${code}\nLog:\n${telemetryJsonStr}`);
+        await ctx.reply(`❌ **Zeichnen fehlgeschlagen!** Log:\n\`\`\`text\n${errLog}\n\`\`\``);
     } else {
         await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 TradingView Macro: ${cleanSymbol} (${finalIntervalLabel})` });
     }
