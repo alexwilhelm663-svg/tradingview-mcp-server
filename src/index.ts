@@ -194,14 +194,14 @@ FORMATIERUNGS-GESETZE FÜR DIE AUSGABE (ZWINGEND EINHALTEN!):
       history: [{ role: "user", text: "Kursdaten analysiert." }, { role: "model", text: analysisText }]
     };
 
-    await ctx.reply("🎨 Generiere Candlestick Makro-Chart...");
+    await ctx.reply("🎨 Generiere Makro-Chart...");
 
-    const jsonArg = JSON.stringify({ waves: wavesData, candles: candlesArray });
+    // FIX: Symbol-Übergabe an Python für den perfekten Dashboard-Titel
+    const jsonArg = JSON.stringify({ symbol: cleanSymbol, waves: wavesData, candles: candlesArray });
     
     const pythonCommand = process.platform === "win32" ? "python" : "python3";
     const pythonProcess = spawn(pythonCommand, ["python_service/drawer.py"]);
     
-    // Fehler-Scanner fängt Python-Meldungen ab
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     
