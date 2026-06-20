@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit X-Ray Telemetrie...");
+console.log("🤖 Bot läuft in der Cloud mit 10-Jahres-Daten-Pipeline...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -57,15 +57,19 @@ bot.command("analyse", async (ctx) => {
   const args = rawText.split(" ");
   
   const symbol = args[1];
-  let requestedInterval = args[2] ? args[2].toLowerCase().trim() : "auto";
+  const isDebug = rawText.toLowerCase().includes("debug");
+  
+  let requestedInterval = "auto";
+  if (args[2] && args[2].toLowerCase() !== "debug") {
+      requestedInterval = args[2].toLowerCase().trim();
+  }
 
-  if (!symbol) return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse TEAM");
+  if (!symbol) return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse MSTR");
 
   let cleanSymbol = symbol.trim().toUpperCase();
   if (cleanSymbol.includes(":")) cleanSymbol = cleanSymbol.split(":").pop()!;
   if (cleanSymbol === "P911") cleanSymbol = "P911.DE";
 
-  // Standard: Maximale Präzision auf Tagesbasis (1D)
   let yahooInterval: "1d" | "1wk" | "1mo" = "1d";
   let finalIntervalLabel = "1D";
 
@@ -77,14 +81,15 @@ bot.command("analyse", async (ctx) => {
     finalIntervalLabel = "1M";
   }
 
-  await ctx.reply(`⏳ Lade ${finalIntervalLabel}-Historie für ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Lade 10-Jahres-Historie (${finalIntervalLabel}) für ${cleanSymbol}...`);
 
   let candlesArray: any[] = [];
 
   try {
     const period2 = new Date();
     const period1 = new Date();
-    period1.setFullYear(period2.getFullYear() - 3); 
+    // FIX: 10 Jahre Lookback. Damit ist der Makro-Boden von Anfang 2023 bei MSTR garantiert im Speicher!
+    period1.setFullYear(period2.getFullYear() - 10); 
 
     const result = await yahooFinance.historical(cleanSymbol, { period1, period2, interval: yahooInterval }) as any[];
     if (!result || result.length === 0) throw new Error("Yahoo lieferte ein leeres Array.");
@@ -113,7 +118,7 @@ I. Fundamentale Struktur
 Der Markt bewegt sich fraktal in 5 Wellen in Richtung des Trends und in 3 Wellen dagegen.
 
 FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
-Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem Muster. Der erste Punkt MUSS der Startpunkt der Zählung sein (Label: 0 oder Start):
+Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem Muster. Der erste Punkt MUSS der absolute Startpunkt der Zählung sein (Welle 0 oder Start):
 
 | Welle | Datum | Preis |
 | --- | --- | --- |
@@ -144,9 +149,8 @@ Nutze als Bezeichnungen NUR: 0, 1, 2, 3, 4, 5, A, B, C, I, II, III, IV, V.`;
 
   const wavesData = parseWavesFromText(responseText);
 
-  // 🚨 PRE-FLIGHT FALLE
   if (wavesData.length === 0) {
-      return ctx.reply(`🚨 **PARSER-FALLE AKTIV:** Die KI hat keine auslesbare Tabelle geliefert.\n\n**Roher Output:**\n\`\`\`text\n${responseText.substring(0, 3800)}\n\`\`\``);
+      return ctx.reply(`🚨 **PARSER-FALLE AKTIV:** Die KI hat keine auslesbare Tabelle geliefert.\n\nRoher Output:\n\`\`\`text\n${responseText.substring(0, 3800)}\n\`\`\``);
   }
 
   chatSessions[chatId] = {
@@ -169,15 +173,14 @@ Nutze als Bezeichnungen NUR: 0, 1, 2, 3, 4, 5, A, B, C, I, II, III, IV, V.`;
   pythonProcess.stdin.end();
 
   pythonProcess.on("close", async (code) => {
-    // 🩻 POSTE TELEMETRIE VOR DEM BILD
-    if (telemetryJsonStr) {
-        await ctx.reply(`🩻 **PYTHON LIVE TELEMETRIE:**\n\`\`\`json\n${telemetryJsonStr.substring(0, 3800)}\n\`\`\``);
+    if (isDebug && telemetryJsonStr) {
+        await ctx.reply(`🩻 **PYTHON TELEMETRIE:**\n\`\`\`json\n${telemetryJsonStr.substring(0, 3800)}\n\`\`\``);
     }
 
     if (code !== 0 || stdoutChunks.length === 0) {
-        await ctx.reply(`❌ **Zeichnen fehlgeschlagen!** Exit-Code: ${code}`);
+        await ctx.reply(`❌ **Zeichnen fehlgeschlagen!** Exit-Code: ${code}\nLog:\n${telemetryJsonStr}`);
     } else {
-        await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 Macro View: ${cleanSymbol} (${finalIntervalLabel})` });
+        await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 TradingView Macro: ${cleanSymbol} (${finalIntervalLabel})` });
     }
     await ctx.reply(responseText.substring(0, 4000));
   });
