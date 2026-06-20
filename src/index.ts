@@ -11,7 +11,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft mit Yahoo-Bypass, stdin-Pipeline und Webhook-Türsteher...");
+console.log("🤖 Bot läuft mit Yahoo-Bypass, stdin-Pipeline, Webhook-Türsteher und Cross-Platform-Python...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -192,8 +192,10 @@ FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
 
     const jsonArg = JSON.stringify({ waves: wavesData, candles: candlesArray });
     
-    // Startet Python OHNE Kommandozeilenargumente
-    const pythonProcess = spawn("python3", ["python_service/drawer.py"]);
+    // --- DER CROSS-PLATFORM FIX FÜR WINDOWS (EINVAL) ---
+    // Startet dynamisch "python" unter Windows und "python3" unter Linux/macOS
+    const pythonCommand = process.platform === "win32" ? "python" : "python3";
+    const pythonProcess = spawn(pythonCommand, ["python_service/drawer.py"]);
     
     // Daten durch den stdin-Stream pushen
     pythonProcess.stdin.write(jsonArg);
