@@ -2,9 +2,10 @@ import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
-import yahooFinance from "yahoo-finance2";
+import YahooFinance from "yahoo-finance2"; // <-- v3 Import (Großgeschrieben)
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const yahooFinance = new YahooFinance(); // <-- v3 Instanz (Muss jetzt als Erstes erschaffen werden)
 
 // Bombenfeste Telegraf-Konfiguration (schaltet das 90s-Timeout ab)
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
@@ -72,8 +73,7 @@ bot.command("analyse", async (ctx) => {
     const period1 = new Date();
     period1.setFullYear(period2.getFullYear() - 3); // 3 Jahre Historie
 
-    // --- DER FIX FÜR DEN TYPE NEVER FEHLER ---
-    // Wir zwingen TypeScript mit "as any[]", die Daten zu akzeptieren
+    // --- Aufruf über die neue v3 Instanz ---
     const result = await yahooFinance.historical(cleanSymbol, {
       period1: period1,
       period2: period2,
