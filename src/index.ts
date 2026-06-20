@@ -22,15 +22,24 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
+// Robuster Parser: Zieht unfehlbar Label und Datum aus der Markdown-Tabelle der KI
 function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
   const waves: Array<{ label: string; date: string }> = [];
-  const regex = /\[(?:Welle\s+)?([12345ABCWXYIV]+):\s*(\d{4}-\d{2}-\d{2})\]/gi;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    waves.push({
-      label: match[1].toUpperCase().trim(),
-      date: match[2].trim()
-    });
+  const lines = text.split('\n');
+
+  for (const line of lines) {
+    if (!line.includes('|')) continue;
+    
+    const parts = line.split('|').map(p => p.trim()).filter(p => p !== '');
+    
+    if (parts.length >= 2 && !parts[0].includes('---') && !parts[0].toLowerCase().includes('welle')) {
+        const label = parts[0].replace(/[\*\`\[\]]/g, '').trim(); 
+        const rawDate = parts[1].replace(/[\*\`\[\]]/g, '').trim();
+        
+        if (label.length > 0 && rawDate.length >= 4) {
+            waves.push({ label, date: rawDate });
+        }
+    }
   }
   return waves;
 }
@@ -196,7 +205,7 @@ FORMATIERUNGS-GESETZE FÜR DIE AUSGABE (ZWINGEND EINHALTEN!):
 
     await ctx.reply("🎨 Generiere Makro-Chart...");
 
-    // FIX: Symbol-Übergabe an Python für den perfekten Dashboard-Titel
+    // Symbol an Python übergeben für den zweifarbigen Titel
     const jsonArg = JSON.stringify({ symbol: cleanSymbol, waves: wavesData, candles: candlesArray });
     
     const pythonCommand = process.platform === "win32" ? "python" : "python3";
@@ -324,3 +333,4 @@ if (RENDER_EXTERNAL_URL) {
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
+             
