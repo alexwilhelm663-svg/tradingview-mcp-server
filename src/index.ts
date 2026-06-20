@@ -1,169 +1,306 @@
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
 
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+// Bombenfeste Telegraf-Konfiguration (schaltet das 90s-Timeout ab)
+const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
+
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
-const server = http.createServer((req, res) => {
-    res.writeHead(200);
-    res.end("Bot alive");
-});
-server.listen(PORT, () => console.log(`🚀 Server auf Port ${PORT} gestartet.`));
 
-const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
+console.log("🤖 Bot läuft im Webhosting-Modus mit erweitertem PDF-Regelwerk und stdin-Pipeline...");
 
-process.on('uncaughtException', (err) => console.error('FATAL:', err));
-process.on('unhandledRejection', (err) => console.error('PROMISE FAIL:', err));
-
-async function fetchYahooData(symbol: string, timeframe: string) {
-    const interval = timeframe.toLowerCase().includes('w') ? '1wk' : '1d';
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=${interval}&range=max`;
-    
-    const res = await fetch(url);
-    const data = await res.json();
-    if (!data.chart || !data.chart.result) throw new Error(`Ticker "${symbol}" bei Yahoo nicht gefunden.`);
-    
-    const result = data.chart.result[0];
-    const timestamps = result.timestamp;
-    if (!timestamps || timestamps.length === 0) return [];
-
-    const quote = result.indicators.quote[0];
-    const candles = [];
-    for (let i = 0; i < timestamps.length; i++) {
-        if (quote.open && quote.close && quote.open[i] !== null && quote.close[i] !== null) {
-            candles.push({
-                d: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
-                o: quote.open[i],
-                h: quote.high[i],
-                l: quote.low[i],
-                c: quote.close[i]
-            });
-        }
-    }
-    return candles;
+interface ChatSession {
+  lastDataPayload: any;
+  history: Array<{ role: "user" | "model"; text: string }>;
 }
 
-function parseWavesFromTable(text: string) {
-    const waves = [];
-    const lines = text.split('\n');
+const chatSessions: Record<number, ChatSession> = {};
 
-    for (const line of lines) {
-        if (!line.includes('|')) continue;
-        
-        const parts = line.split('|').map(p => p.trim()).filter(p => p !== '');
-        if (parts.length >= 3 && !parts[0].includes('---') && !parts[0].toLowerCase().includes('welle')) {
-            const label = parts[0].replace(/[\*\`\[\]]/g, '').trim(); 
-            const rawDate = parts[1].replace(/[\*\`\[\]]/g, '').trim();
-            
-            const priceMatch = parts[2].match(/[-0-9.,]+/);
-            if (!priceMatch) continue;
-            const price = parseFloat(priceMatch[0].replace(',', '.'));
-            
-            if (label.length > 0 && label.length <= 30 && !isNaN(price) && rawDate.length > 0) {
-                // Reicht den String (auch "2024-Q1") unverändert an Python weiter
-                waves.push({ label, date: rawDate, price });
-            }
-        }
-    }
-    return waves;
+function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
+  const waves: Array<{ label: string; date: string }> = [];
+  const regex = /\[(?:Welle\s+)?([12345ABCWXYIV]+):\s*(\d{4}-\d{2}-\d{2})\]/gi;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    waves.push({
+      label: match[1].toUpperCase().trim(),
+      date: match[2].trim()
+    });
+  }
+  return waves;
 }
 
-async function getElliottAnalysis(base64Image: string) {
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: { 
-        "Authorization": `Bearer ${process.env.GROQ_API_KEY}`, 
-        "Content-Type": "application/json" 
-    },
-    body: JSON.stringify({
-      model: "meta-llama/llama-4-scout-17b-16e-instruct",
-      messages: [
-        { 
-          role: "system", 
-          content: "Du bist Analyst. Du MUSST Charts analysieren. Schätze Preise und Daten anhand der Achsen bestmöglich ab. Verweigere nie die Antwort." 
-        },
-        { 
-          role: "user", 
-          content: [
-            { type: "text", text: "1. Schreibe ZWINGEND als erste Zeile exakt dieses Format: 'Ticker: [SYMBOL], Timeframe: [WERT]'.\n2. Finde Makro-Zyklus und Subwellen.\n3. Erstelle diese Tabelle. Nutze für das Datum das Format YYYY-MM-DD. Falls ungenau, nutze YYYY-MM:\n\n[Welle] | [Datum] | [Preis]" },
-            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
-          ]
-        }
-      ]
-    })
-  });
+bot.command("analyse", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const args = ctx.message.text.split(" ");
+  let symbol = args[1];
+  let requestedInterval = args[2] ? args[2].toLowerCase().trim() : "auto";
   
-  const data = await response.json();
-  if (data.error) throw new Error(data.error.message);
-  if (!data.choices || !data.choices[0].message.content) throw new Error("Keine valide KI-Antwort erhalten.");
-  return data.choices[0].message.content;
-}
+  if (!symbol) {
+    return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse TEAM");
+  }
 
-bot.on("photo", async (ctx) => {
-  if (!ctx.message.caption?.toLowerCase().startsWith("/analyse")) return;
-  await ctx.reply("🔍 Analyse läuft...");
+  let cleanSymbol = symbol.trim().toUpperCase();
+  if (cleanSymbol.includes(":")) {
+    cleanSymbol = cleanSymbol.split(":").pop()!;
+  }
+  if (cleanSymbol === "P911") {
+    cleanSymbol = "P911.DE";
+  }
+
+  let yahooInterval = "1wk";
+  let finalIntervalLabel = "1W";
+
+  if (requestedInterval === "1m" || requestedInterval === "mo" || requestedInterval === "m") {
+    yahooInterval = "1mo";
+    finalIntervalLabel = "1M";
+  } else if (requestedInterval === "1d" || requestedInterval === "d") {
+    yahooInterval = "1d";
+    finalIntervalLabel = "1D";
+  }
+
+  await ctx.reply(`⏳ Lade komplette ${finalIntervalLabel}-Historie für ${cleanSymbol} von Yahoo...`);
+
+  let candlesArray: Array<{ date: string; open: string; high: string; low: string; close: string }> = [];
 
   try {
-    const fileLink = await ctx.telegram.getFileLink(ctx.message.photo[ctx.message.photo.length - 1].file_id);
-    const buffer = await (await fetch(fileLink.href)).arrayBuffer();
-    const base64Image = Buffer.from(buffer).toString("base64");
+    const period2 = Math.floor(Date.now() / 1000);
+    const period1 = period2 - (3 * 365 * 24 * 60 * 60); // 3 Jahre Historie
 
-    const analysis = await getElliottAnalysis(base64Image);
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=${yahooInterval}&events=history`;
     
-    const tickerMatch = analysis.match(/Ticker:\s*([A-Z0-9.-]+)/i);
-    const timeframeMatch = analysis.match(/Timeframe:\s*([A-Z0-9]+)/i);
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0'
+      }
+    });
+
+    const resData: any = await response.json();
+    const result = resData?.chart?.result?.[0];
     
-    const symbol = tickerMatch ? tickerMatch[1].toUpperCase() : "TEAM"; 
-    const timeframe = timeframeMatch ? timeframeMatch[1] : "1W";
-
-    const waves = parseWavesFromTable(analysis);
-    const candles = await fetchYahooData(symbol, timeframe);
-
-    if (candles.length === 0 || waves.length < 2) {
-        await ctx.reply(`🚨 CRITICAL DEBUG INFO:\n\n` +
-                        `• Erkanntes Symbol: "${symbol}"\n` +
-                        `• Kerzen von Yahoo erhalten: ${candles.length}\n` +
-                        `• Wellen aus Tabelle geparst: ${waves.length}\n\n` +
-                        `• Geparste Wellen-Daten:\n${JSON.stringify(waves, null, 2)}`);
-        return;
+    if (!result || !result.timestamp) {
+      throw new Error("Symbol an der API nicht verfügbar.");
     }
 
-    await ctx.reply(`🧠 Daten valide. Starte Python-Rendering für ${symbol}...`);
+    const timestamps = result.timestamp;
+    const quote = result.indicators.quote[0];
 
-    const pyProcess = spawn("python3", ["python_service/drawer.py"]);
-    
-    pyProcess.stdin.write(JSON.stringify({ candles, waves }));
-    pyProcess.stdin.end();
-    
-    let imgBuffer = Buffer.alloc(0);
-    let errorData = "";
+    const rawHistorical = timestamps.map((ts: number, i: number) => {
+      const d = new Date(ts * 1000);
+      const o = Number(quote.open[i]);
+      const h = Number(quote.high[i]);
+      const l = Number(quote.low[i]);
+      const c = Number(quote.close[i]);
 
-    pyProcess.stdout.on("data", (chunk) => imgBuffer = Buffer.concat([imgBuffer, chunk]));
-    pyProcess.stderr.on("data", (chunk) => errorData += chunk.toString());
+      return {
+        date: d.toISOString().split('T')[0],
+        open: o.toFixed(2),
+        high: h.toFixed(2),
+        low: l.toFixed(2),
+        close: c.toFixed(2)
+      };
+    }).filter((c: any) => Number(c.open) > 0 && Number(c.high) > 0 && Number(c.low) > 0 && Number(c.close) > 0);
 
-    pyProcess.on("close", async (code) => {
-        if (code !== 0 || imgBuffer.length === 0) {
-            await ctx.reply(`❌ Zeichnen fehlgeschlagen. Python-Fehler:\n${errorData}`);
-        } else {
-            await ctx.replyWithPhoto({ source: imgBuffer }, { caption: `✅ Analyse erfolgreich für ${symbol}.` });
-            await ctx.reply(analysis.substring(0, 4000));
+    // Alle Daten übernehmen, kein Abschneiden mehr!
+    candlesArray = rawHistorical;
+
+  } catch (dataError: any) {
+    return ctx.reply(`❌ ANALYSE ABGEBROCHEN: Datenfehler: ${dataError.message}`);
+  }
+
+  const dataInputJson = JSON.stringify(candlesArray);
+
+  const mainPrompt = `Du bist ein rigoroser Mathematiker und Experte für fraktale Datenreihen. Analysiere das übermittelte JSON-Array mit historischen Kursdaten auf zyklische Elliott-Wellen-Muster.
+  
+Daten-Array:
+${dataInputJson}
+
+DEINE AUFGABE UND ANALYSE-REGELN:
+1. Untersuche den Verlauf auf fraktale Kontraktion und anschließende Expansion. Suche gezielt nach "Third of a Third" Setups (Welle III von 3).
+2. Verfasse eine rein akademische Beschreibung der Wellenstruktur, Fibonacci-Verhältnisse und Kursziele (z. B. 1.618 Extension).
+
+ABSOLUTE GESETZE DER WELLEN-STRUKTUR (Diese dürfen NIEMALS gebrochen werden):
+- Welle 2 darf Welle 1 niemals zu 100% oder mehr korrigieren (sie darf nicht unter den Startpunkt von Welle 1 fallen).
+- Welle 3 darf niemals die kürzeste der drei Antriebswellen (1, 3 und 5) sein.
+- Welle 4 darf niemals in das Preisgebiet von Welle 1 eindringen (kein Overlap, außer in seltenen Diagonal Triangles am Ende eines Trends).
+- Korrekturwellen bestehen niemals aus 5 Sub-Wellen, sondern aus 3 (A-B-C) oder deren Kombinationen (W-X-Y).
+
+MATHEMATISCHE RICHTLINIEN & FIBONACCI:
+- Guideline of Alternation: Wenn Welle 2 eine scharfe, steile Korrektur (Zigzag) ist, erwarte, dass Welle 4 eine flache Seitwärtskorrektur (Flat/Triangle) wird - und umgekehrt.
+- Extensionen: Meistens ist Welle 3 verlängert. Wenn Welle 3 die Extension ist, streben Welle 1 und Welle 5 in Länge und Zeit nach Gleichheit oder einem 0.618-Verhältnis.
+- Fibonacci-Ziele: Das typische Ziel für eine reguläre Welle 3 ist das 1.618-fache der Länge von Welle 1, angelegt an das Ende von Welle 2.
+
+FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
+- Markiere JEDEN wichtigen Wendepunkt (Top/Bottom der Kerze) zwingend exakt in diesem Regex-Format irgendwo im Text: [Welle 3: YYYY-MM-DD].
+- Ersetze "3" durch das jeweilige Label und "YYYY-MM-DD" durch das exakte Datum aus dem JSON.
+- WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH diese Bezeichnungen: 1, 2, 3, 4, 5, A, B, C, W, X, Y, I, II, III, IV, V.
+- Verwende absolut keine kleinen römischen Ziffern, keine Klammern um die Bezeichnungen und erfinde keine eigenen Labels!`;
+
+  let responseText = "";
+  let attempts = 4; 
+  let delay = 2000; 
+  
+  await ctx.reply(`🧠 Scanne Struktur auf ${finalIntervalLabel}-Basis nach Mustern...`);
+
+  while (attempts > 0) {
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: mainPrompt,
+        config: {
+          safetySettings: [
+            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE }
+          ]
         }
+      });
+      
+      responseText = response.text || "";
+      if (responseText) break;
+      else throw new Error("Leere Struktur.");
+    } catch (apiError: any) {
+      attempts--;
+      console.error(`⚠️ API Fehler: ${apiError.message}`);
+      if (attempts === 0) {
+        return ctx.reply(`❌ Systemfehler: Google blockiert die Anfrage.\n\nGrund: ${apiError.message}`);
+      }
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay += 2000;
+    }
+  }
+
+  try {
+    const wavesData = parseWavesFromText(responseText);
+    const analysisText = responseText;
+
+    chatSessions[chatId] = {
+      lastDataPayload: { candles: candlesArray, waves: wavesData },
+      history: [{ role: "user", text: "Kursdaten analysiert." }, { role: "model", text: analysisText }]
+    };
+
+    await ctx.reply("🎨 Generiere Candlestick Makro-Chart...");
+
+    const jsonArg = JSON.stringify({ waves: wavesData, candles: candlesArray });
+    
+    // Startet Python OHNE Kommandozeilenargumente
+    const pythonProcess = spawn("python3", ["python_service/drawer.py"]);
+    
+    // Daten durch den unendlichen stdin-Stream pushen
+    pythonProcess.stdin.write(jsonArg);
+    pythonProcess.stdin.end();
+    
+    const stdoutChunks: Buffer[] = [];
+    pythonProcess.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+
+    pythonProcess.on("close", async (code) => {
+      try {
+        if (code !== 0 || stdoutChunks.length === 0) {
+          await ctx.reply(`❌ Fehler beim Rendern des Vektordiagramms.`);
+        } else {
+          const outputBuffer = Buffer.concat(stdoutChunks);
+          await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${finalIntervalLabel})` });
+        }
+        
+        const fullText = `📝 Struktur-Bericht:\n\n${analysisText}`;
+        const maxLength = 4000;
+        for (let i = 0; i < fullText.length; i += maxLength) {
+          await ctx.reply(fullText.substring(i, i + maxLength));
+        }
+
+      } catch (innerErr: any) {
+        console.error("Fehler beim Versand von Chart/Text:", innerErr);
+        await ctx.reply(`❌ Fehler bei der Telegram-Ausgabe: ${innerErr.message}`);
+      }
     });
 
   } catch (err: any) {
-    await ctx.reply("❌ Laufzeit-Fehler: " + err.message);
+    await ctx.reply(`❌ Verarbeitungsfehler: ${err.message}`);
   }
 });
 
-if (process.env.RENDER_EXTERNAL_URL) {
-    const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
-    bot.telegram.setWebhook(`${process.env.RENDER_EXTERNAL_URL}${webhookPath}`);
-    server.on('request', (req, res) => {
-        if (req.url === webhookPath && req.method === "POST") {
-            let body = "";
-            req.on("data", c => body += c);
-            req.on("end", () => bot.handleUpdate(JSON.parse(body), res));
-        }
+bot.on("text", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const userQuestion = ctx.message.text;
+  const session = chatSessions[chatId];
+
+  if (!session || !session.lastDataPayload) {
+    return ctx.reply("❌ Starte zuerst eine Analyse mit `/analyse`.");
+  }
+
+  await ctx.reply("🤔 Analysiere Rückfrage...");
+
+  try {
+    session.history.push({ role: "user", text: userQuestion });
+    const contents: any[] = [];
+    session.history.forEach(msg => {
+      contents.push(`${msg.role === "user" ? "User" : "Model"}: ${msg.text}`);
     });
+    contents.push(`Beziehe dich auf folgende Rohdaten: ${JSON.stringify(session.lastDataPayload.candles)}. Beantworte die Frage kurz.`);
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: contents,
+      config: {
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE }
+        ]
+      }
+    });
+
+    const answerText = response.text || "Keine Antwort möglich.";
+    session.history.push({ role: "model", text: answerText });
+    await ctx.reply(`💬 Antwort:\n\n${answerText}`);
+  } catch (error: any) {
+    await ctx.reply(`❌ Fehler: ${error.message}`);
+  }
+});
+
+if (RENDER_EXTERNAL_URL) {
+  const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
+  bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
+  
+  const server = http.createServer((req, res) => {
+    if (req.url === webhookPath && req.method === "POST") {
+      let body = "";
+      req.on("data", chunk => body += chunk);
+      req.on("end", () => {
+        try {
+          const update = JSON.parse(body);
+          // Der Telegram Timeout-Killer
+          res.writeHead(200);
+          res.end();
+          bot.handleUpdate(update);
+        } catch (e) {
+          if (!res.headersSent) {
+            res.writeHead(400);
+            res.end("Bad Request");
+          }
+        }
+      });
+    } else if (req.url === "/health" || req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("Bot Server is healthy");
+    } else {
+      res.writeHead(404);
+      res.end("Not Found");
+    }
+  });
+
+  server.listen(PORT, () => {
+    console.log(`🌐 Webhook-Server aktiv auf Port ${PORT}.`);
+  });
 } else {
-    bot.launch();
+  console.log("⚠️ RENDER_EXTERNAL_URL fehlt. Nutze Polling als Fallback...");
+  bot.launch();
 }
+
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
