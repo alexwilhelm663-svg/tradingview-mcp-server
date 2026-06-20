@@ -2,7 +2,7 @@ import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
-import yahooFinance from "yahoo-finance2"; // <-- Das neue Paket umgeht den IP-Block
+import yahooFinance from "yahoo-finance2";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -72,7 +72,7 @@ bot.command("analyse", async (ctx) => {
     const period1 = new Date();
     period1.setFullYear(period2.getFullYear() - 3); // 3 Jahre Historie
 
-    // --- DER NEUE YAHOO AUFRUF ---
+    // --- ROBUSTER YAHOO FINANCE V3 AUFRUF ---
     const result = await yahooFinance.historical(cleanSymbol, {
       period1: period1,
       period2: period2,
@@ -175,11 +175,9 @@ FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
 
     const jsonArg = JSON.stringify({ waves: wavesData, candles: candlesArray });
     
-    // --- DER CROSS-PLATFORM FIX ---
     const pythonCommand = process.platform === "win32" ? "python" : "python3";
     const pythonProcess = spawn(pythonCommand, ["python_service/drawer.py"]);
     
-    // Daten durch den stdin-Stream pushen
     pythonProcess.stdin.write(jsonArg);
     pythonProcess.stdin.end();
     
@@ -261,7 +259,6 @@ if (RENDER_EXTERNAL_URL) {
       let body = "";
       req.on("data", chunk => body += chunk);
       req.on("end", () => {
-        // --- DER TÜRSTEHER ---
         if (!body || body.trim() === "") {
           res.writeHead(200);
           return res.end();
@@ -299,3 +296,4 @@ if (RENDER_EXTERNAL_URL) {
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
+  
