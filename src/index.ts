@@ -2,17 +2,18 @@ import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
-import YahooFinance from "yahoo-finance2";
+import YahooFinance from "yahoo-finance2"; // v3 Import
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const yahooFinance = new YahooFinance(); 
+const yahooFinance = new YahooFinance(); // v3 Instanzierung
 
+// Konfiguration gegen Timeouts bei langen Berechnungen
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
 
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit Fehler-Scanner...");
+console.log("🤖 Bot läuft in der Cloud mit Fehler-Scanner und optimiertem System-Prompt...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -72,6 +73,7 @@ bot.command("analyse", async (ctx) => {
     const period1 = new Date();
     period1.setFullYear(period2.getFullYear() - 3); 
 
+    // v3 Aufruf mit Typ-Zuweisung als Array, um den TS 'never'-Fehler zu eliminieren
     const result = await yahooFinance.historical(cleanSymbol, {
       period1: period1,
       period2: period2,
@@ -100,27 +102,49 @@ bot.command("analyse", async (ctx) => {
 
   const dataInputJson = JSON.stringify(candlesArray);
 
-  const mainPrompt = `Du bist ein rigoroser Mathematiker und Experte für fraktale Datenreihen. Analysiere das übermittelte JSON-Array mit historischen Kursdaten auf zyklische Elliott-Wellen-Muster.
-  
+  const mainPrompt = `Rolle und Ziel:
+Du bist ein rigoroser Mathematiker, Experte für fraktale Datenreihen und ein hochqualifizierter technischer Analyst für das Elliott-Wellen-Prinzip. Deine Aufgabe ist es, die übermittelten historischen Kursdaten im JSON-Format objektiv zu analysieren und hochwahrscheinliche Prognosen zu erstellen, indem du strikt die strukturellen Regeln und analytischen Richtlinien für Motiv- und Korrekturwellen anwendest.
+
 Daten-Array:
 ${dataInputJson}
 
-DEINE AUFGABE UND ANALYSE-REGELN:
-1. Untersuche den Verlauf auf fraktale Kontraktion und anschließende Expansion. Suche gezielt nach "Third of a Third" Setups (Welle III von 3).
-2. Verfasse eine rein akademische Beschreibung der Wellenstruktur, Fibonacci-Verhältnisse und Kursziele (z. B. 1.618 Extension).
+I. Fundamentale Struktur
+Der Markt bewegt sich fraktal in 5 Wellen in Richtung des übergeordneten Trends (Motive Bewegungen) und in 3 Wellen gegen den Trend (Korrektive Bewegungen). Eine initiale 5-Wellen-Bewegung gegen den Trend ist niemals das Ende einer Korrektur, sondern nur ein Teil davon.
 
-ABSOLUTE GESETZE DER WELLEN-STRUKTUR (Diese dürfen NIEMALS gebrochen werden):
-- Welle 2 darf Welle 1 niemals zu 100% oder mehr korrigieren (sie darf nicht unter den Startpunkt von Welle 1 fallen).
-- Welle 3 darf niemals die kürzeste der drei Antriebswellen (1, 3 und 5) sein.
-- Welle 4 darf niemals in das Preisgebiet von Welle 1 eindringen (kein Overlap, außer in seltenen Diagonal Triangles am Ende eines Trends).
-- Korrekturwellen bestehen niemals aus 5 Sub-Wellen, sondern aus 3 (A-B-C) oder deren Kombinationen (W-X-Y).
+II. Absolute Regeln für Motiv-Wellen (Impulse und Diagonale)
+Eine Motiv-Welle unterteilt sich in 5 Wellen und bewegt sich in Richtung des übergeordneten Trends.
 
-MATHEMATISCHE RICHTLINIEN & FIBONACCI:
-- Guideline of Alternation: Wenn Welle 2 eine scharfe, steile Korrektur (Zigzag) ist, erwarte, dass Welle 4 eine flache Seitwärtskorrektur (Flat/Triangle) wird - und umgekehrt.
-- Extensionen: Meistens ist Welle 3 verlängert. Wenn Welle 3 die Extension ist, streben Welle 1 und Welle 5 in Länge und Zeit nach Gleichheit oder einem 0.618-Verhältnis.
-- Fibonacci-Ziele: Das typische Ziel für eine reguläre Welle 3 ist das 1.618-fache der Länge von Welle 1, angelegt an das Ende von Welle 2.
+Reguläre Impulse:
+1. Welle 2 darf niemals mehr als 100 % von Welle 1 korrigieren.
+2. Welle 4 darf niemals mehr als 100 % von Welle 3 korrigieren.
+3. Welle 3 muss immer über das Ende von Welle 1 hinausgehen.
+4. Welle 3 darf niemals die kürzeste der drei Aktionswellen (1, 3 und 5) sein.
+5. Welle 4 darf nicht in den Preisbereich von Welle 1 eindringen (kein "Overlap"), mit extrem seltenen Ausnahmen in Hebelmärkten.
 
-FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
+Diagonale Dreiecke (Diagonal Triangles): Hier dringt Welle 4 fast immer in den Bereich von Welle 1 ein.
+- Ending Diagonal: Tritt primär in Welle 5 (oder C) auf, wenn die Vorbewegung "zu weit, zu schnell" ging. Struktur ist zwingend 3-3-3-3-3.
+- Leading Diagonal: Tritt in Welle 1 (oder A) auf und hat die Struktur 5-3-5-3-5.
+
+III. Klassifikation und Regeln für Korrektive Bewegungen
+Korrekturen richten sich gegen den Trend und bestehen niemals aus 5 Wellen. Sie unterteilen sich in vier Kategorien:
+
+1. Zigzags (Struktur 5-3-5): Scharfe Korrektur gegen den Trend. Die Spitze von Welle B liegt deutlich unter dem Start von Welle A, und Welle C schließt deutlich über dem Ende von Welle A. Es können doppelte oder dreifache Formationen auftreten (W-X-Y bzw. W-X-Y-X-Z).
+2. Flats (Struktur 3-3-5): Seitwärtskorrektur. 
+   - Regular Flat: Welle B endet etwa auf Startniveau von Welle A; Welle C endet leicht über dem Ende von Welle A.
+   - Expanded Flat: Welle B endet über dem Start von Welle A, Welle C endet deutlich über dem Ende von Welle A.
+   - Running Flat: Welle B endet über dem Start von Welle A, aber Welle C erreicht das Ende von Welle A nicht.
+3. Triangles (Struktur 3-3-3-3-3): Seitwärtsbewegung (beschriftet a-b-c-d-e). Gehen immer der letzten Aktionswelle voraus (Treten als Welle 4, B oder X auf).
+4. Combinations: Seitwärts gerichtete Doppel- oder Dreifach-Threes (W-X-Y / W-X-Y-X-Z), die einfache Korrekturen verbinden. Ein Dreieck tritt nur als allerletzte Welle (Y oder Z) auf.
+
+IV. Wichtige Richtlinien (Guidelines) für die Analyse
+- Alternation: In Impulsen: Ist Welle 2 eine scharfe Korrektur, erwarte für Welle 4 eine Seitwärtskorrektur und umgekehrt. In Korrekturen: Beginnt eine große Korrektur mit einem Flat als Welle A, erwarte ein Zickzack für Welle B und umgekehrt.
+- Extension: Die meisten Impulse weisen eine Verlängerung in genau einer der Aktionswellen auf. Ist Welle 3 verlängert, sind die Wellen 1 und 5 oft einfach strukturiert und tendieren zu Gleichheit oder einem 0.618-Verhältnis.
+- Korrekturtiefen: Bärenmärkte beenden ihre Korrektur oft im Preisbereich der vorhergehenden Welle 4 eines geringeren Grades. Ist Welle 5 eine Extension, wird die folgende Korrektur typischerweise scharf ausfallen und am Tief der Unterwelle 2 dieser Extension enden.
+- Truncation: Nach einer außergewöhnlich starken Welle 3 kann Welle 5 das Preisextrem der Welle 3 manchmal nicht übertreffen. Sie muss dennoch aus 5 Unterwellen bestehen.
+- Fibonacci Ratio Analyse: Scharfe Korrekturen laufen oft 61.8% oder 50% der Vorwelle zurück. Seitwärtskorrekturen laufen oft nur 38.2% zurück. Welle 4 teilt den gesamten Impulsbereich oft im Goldenen Schnitt (0.382 oder 0.618). In Zigzags ist Welle C oft gleich lang wie Welle A.
+- Channeling: Parallele Trendkanäle (verbunden durch die Endpunkte der Wellen 1 und 3, projiziert vom Endpunkt der Welle 2) markieren oft präzise die Ziele für Welle 4 und 5.
+
+FORMATIERUNGS-GESETZE FÜR DIE AUSGABE (ZWINGEND EINHALTEN!):
 - Markiere JEDEN wichtigen Wendepunkt (Top/Bottom der Kerze) zwingend exakt in diesem Regex-Format irgendwo im Text: [Welle 3: YYYY-MM-DD].
 - Ersetze "3" durch das jeweilige Label und "YYYY-MM-DD" durch das exakte Datum aus dem JSON.
 - WICHTIG: Nutze für alle Wellen und Unterwellen AUSSCHLIESSLICH diese Bezeichnungen: 1, 2, 3, 4, 5, A, B, C, W, X, Y, I, II, III, IV, V.
@@ -152,7 +176,7 @@ FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
       else throw new Error("Leere Struktur.");
     } catch (apiError: any) {
       attempts--;
-      console.error(`⚠️ API Fehler: ${apiError.message}`);
+      print(`⚠️ API Fehler: ${apiError.message}`);
       if (attempts === 0) {
         return ctx.reply(`❌ Systemfehler: Google blockiert die Anfrage.\n\nGrund: ${apiError.message}`);
       }
@@ -177,7 +201,7 @@ FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
     const pythonCommand = process.platform === "win32" ? "python" : "python3";
     const pythonProcess = spawn(pythonCommand, ["python_service/drawer.py"]);
     
-    // FEHLER-SCANNER: Fängt die Python-Crash-Meldungen ab
+    // Fehler-Scanner fängt Python-Meldungen ab
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     
@@ -190,7 +214,6 @@ FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
     pythonProcess.on("close", async (code) => {
       try {
         if (code !== 0 || stdoutChunks.length === 0) {
-          // Sendet den genauen Fehler an Telegram
           const errorLog = Buffer.concat(stderrChunks).toString().trim();
           await ctx.reply(`❌ Fehler beim Zeichnen des Charts.\n\n🛠 **System-Log:**\n\`${errorLog.substring(0, 1000) || "Unbekannter Absturz (Code " + code + ")"}\``);
         } else {
@@ -292,7 +315,7 @@ if (RENDER_EXTERNAL_URL) {
   });
 
   server.listen(PORT, () => {
-    console.log(`🌐 Webhook-Server aktiv auf Port ${PORT}.`);
+    print(`🌐 Webhook-Server aktiv auf Port ${PORT}.`);
   });
 } else {
   console.log("⚠️ RENDER_EXTERNAL_URL fehlt. Nutze Polling als Fallback...");
