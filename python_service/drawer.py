@@ -1,4 +1,4 @@
-    
+
 import sys
 import json
 import io
@@ -27,12 +27,16 @@ def main():
         df = pd.DataFrame(candles)
         df['date'] = pd.to_datetime(df['date'])
         df.set_index('date', inplace=True)
-        df.sort_index(inplace=True) # FIX: Zwingt die Daten in die richtige Reihenfolge
+        df.sort_index(inplace=True)
 
-        df['Open'] = df['open'].astype(float)
-        df['High'] = df['high'].astype(float)
-        df['Low'] = df['low'].astype(float)
-        df['Close'] = df['close'].astype(float)
+        # FIX: Konvertiere exakt die Original-Spalten in echte Zahlen (Floats)
+        df['open'] = df['open'].astype(float)
+        df['high'] = df['high'].astype(float)
+        df['low'] = df['low'].astype(float)
+        df['close'] = df['close'].astype(float)
+        
+        # FIX: Benenne sie danach um, damit die Bibliothek sie erkennt (und keine Text-Spalten übrig bleiben)
+        df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close'}, inplace=True)
 
         wave_dates = []
         wave_prices = []
@@ -51,7 +55,6 @@ def main():
             
             price = df.loc[target_date, 'High'] if w['label'] in ['2', '4', 'B', 'II', 'IV', 'X'] else df.loc[target_date, 'Low']
             
-            # FIX: Falls es doppelte Tage gibt, nimm nur den ersten Preis
             if isinstance(price, pd.Series):
                 price = price.iloc[0]
                 
@@ -95,10 +98,8 @@ def main():
         sys.stdout.flush()
         
     except Exception as e:
-        # SENDET DEN EXAKTEN FEHLER AN DEN BOT ZURÜCK
         print(f"Python Crash Log:\n{traceback.format_exc()}", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":
     main()
-    
