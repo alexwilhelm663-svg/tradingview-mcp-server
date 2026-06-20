@@ -2,10 +2,10 @@ import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
-import YahooFinance from "yahoo-finance2"; // v3 Import
+import YahooFinance from "yahoo-finance2";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const yahooFinance = new YahooFinance(); // v3 Instanzierung
+const yahooFinance = new YahooFinance();
 
 // Konfiguration gegen Timeouts bei langen Berechnungen
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
@@ -22,7 +22,6 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-// Robuster Parser: Zieht unfehlbar Label und Datum aus der Markdown-Tabelle der KI
 function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
   const waves: Array<{ label: string; date: string }> = [];
   const lines = text.split('\n');
@@ -82,7 +81,6 @@ bot.command("analyse", async (ctx) => {
     const period1 = new Date();
     period1.setFullYear(period2.getFullYear() - 3); 
 
-    // v3 Aufruf mit Typ-Zuweisung als Array, um den TS 'never'-Fehler zu eliminieren
     const result = await yahooFinance.historical(cleanSymbol, {
       period1: period1,
       period2: period2,
@@ -205,7 +203,7 @@ FORMATIERUNGS-GESETZE FÜR DIE AUSGABE (ZWINGEND EINHALTEN!):
 
     await ctx.reply("🎨 Generiere Makro-Chart...");
 
-    // Symbol an Python übergeben für den zweifarbigen Titel
+    // Symbol an Python übergeben für den perfekten Dashboard-Titel
     const jsonArg = JSON.stringify({ symbol: cleanSymbol, waves: wavesData, candles: candlesArray });
     
     const pythonCommand = process.platform === "win32" ? "python" : "python3";
@@ -333,4 +331,4 @@ if (RENDER_EXTERNAL_URL) {
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
-             
+    
