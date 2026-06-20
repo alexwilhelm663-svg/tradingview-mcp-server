@@ -176,7 +176,7 @@ FORMATIERUNGS-GESETZE FÜR DIE AUSGABE (ZWINGEND EINHALTEN!):
       else throw new Error("Leere Struktur.");
     } catch (apiError: any) {
       attempts--;
-      print(`⚠️ API Fehler: ${apiError.message}`);
+      console.error(`⚠️ API Fehler: ${apiError.message}`);
       if (attempts === 0) {
         return ctx.reply(`❌ Systemfehler: Google blockiert die Anfrage.\n\nGrund: ${apiError.message}`);
       }
@@ -315,7 +315,7 @@ if (RENDER_EXTERNAL_URL) {
   });
 
   server.listen(PORT, () => {
-    print(`🌐 Webhook-Server aktiv auf Port ${PORT}.`);
+    console.log(`🌐 Webhook-Server aktiv auf Port ${PORT}.`);
   });
 } else {
   console.log("⚠️ RENDER_EXTERNAL_URL fehlt. Nutze Polling als Fallback...");
