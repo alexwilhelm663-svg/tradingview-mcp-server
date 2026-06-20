@@ -24,11 +24,13 @@ def main():
             print("Error: Keine Kerzendaten zum Zeichnen erhalten.", file=sys.stderr)
             sys.exit(1)
 
+        # DataFrame aufbauen
         df = pd.DataFrame(candles)
         df['date'] = pd.to_datetime(df['date'])
         df.set_index('date', inplace=True)
         df.sort_index(inplace=True)
 
+        # Nur Close wird gebraucht, da es ein reiner Linien-Chart ist
         df['close'] = df['close'].astype(float)
         
         wave_dates = []
@@ -87,15 +89,16 @@ def main():
         # 1. Close-Preis als Cyan-Linie
         ax.plot(df.index, df['close'], color=cyan, linewidth=2, label='Close Price')
         
-        # 2. Elliott-Wellen als Magenta-Vektoren
+        # 2. Elliott-Wellen als Magenta-Vektoren plotten
         if len(wave_dates) > 1:
             ax.plot(wave_dates, wave_prices, color=magenta, linewidth=2, marker='o', markersize=12, label='Welle V-Impuls (Subwellen)')
             
-        # 3. Frei schwebende, dicke Labels
+        # 3. Frei schwebende, dicke Labels setzen (ohne Kasten)
         y_range = df['close'].max() - df['close'].min()
         offset = y_range * 0.035
         
         for i, (date, price, label) in enumerate(zip(wave_dates, wave_prices, wave_labels)):
+            # Intelligente Oben/Unten Anordnung der Labels
             if label in ['1', '3', '5', 'I', 'III', 'V', 'A', 'C']:
                 y_pos = price + offset
                 va = 'bottom'
@@ -108,9 +111,9 @@ def main():
 
             ax.text(date, y_pos, label, color=magenta, fontsize=24, fontweight='bold', ha='center', va=va)
             
-        # 4. Gitter & Umrandung
+        # 4. Gitter & Umrandung im Dashboard-Stil
         ax.grid(True, color=grid_color, linestyle='-', linewidth=0.8)
-        ax.set_axisbelow(True)
+        ax.set_axisbelow(True) # Gitter in den Hintergrund
         
         for spine in ax.spines.values():
             spine.set_color(spine_color)
@@ -118,7 +121,7 @@ def main():
             
         ax.tick_params(axis='both', colors=text_color, labelsize=11, length=5, color=spine_color)
         
-        # 5. Achsenbeschriftung
+        # 5. Achsenbeschriftung exakt wie im Bild (Monate / Jahre)
         locator = mdates.AutoDateLocator(minticks=5, maxticks=10)
         formatter = mdates.ConciseDateFormatter(locator)
         ax.xaxis.set_major_locator(locator)
@@ -126,11 +129,11 @@ def main():
         
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f"{x:.2f}"))
         
-        # 6. Zweifarbiger, zentrierter Titel
+        # 6. Zweifarbiger, perfekt zentrierter Titel
         fig.text(0.5, 0.92, f"{symbol} - ", color=title_white, fontsize=22, ha='right', va='center')
         fig.text(0.5, 0.92, "Elliott-Wellen-Analyse (Makro-Impuls)", color=cyan, fontsize=22, ha='left', va='center')
         
-        # 7. Legende
+        # 7. Legende im Kasten oben links
         handles, labels = ax.get_legend_handles_labels()
         try:
             w_idx = labels.index('Welle V-Impuls (Subwellen)')
@@ -146,7 +149,7 @@ def main():
             
         plt.subplots_adjust(top=0.85, bottom=0.1, left=0.08, right=0.95)
         
-        # Rendern & Output
+        # Rendern & Output an Node.js
         buf = io.BytesIO()
         fig.savefig(buf, format='png', dpi=150, facecolor=fig.get_facecolor(), edgecolor='none')
         buf.seek(0)
