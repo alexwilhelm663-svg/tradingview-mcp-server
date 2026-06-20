@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit yahoo-finance2, stdin-Pipeline und Webhook-Türsteher...");
+console.log("🤖 Bot läuft in der Cloud mit yahoo-finance2 (V3), stdin-Pipeline und Webhook-Türsteher...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -72,12 +72,13 @@ bot.command("analyse", async (ctx) => {
     const period1 = new Date();
     period1.setFullYear(period2.getFullYear() - 3); // 3 Jahre Historie
 
-    // --- ROBUSTER YAHOO FINANCE V3 AUFRUF ---
+    // --- DER FIX FÜR DEN TYPE NEVER FEHLER ---
+    // Wir zwingen TypeScript mit "as any[]", die Daten zu akzeptieren
     const result = await yahooFinance.historical(cleanSymbol, {
       period1: period1,
       period2: period2,
       interval: yahooInterval
-    });
+    }) as any[];
 
     if (!result || result.length === 0) {
       throw new Error("Keine Daten für dieses Symbol gefunden.");
@@ -296,4 +297,3 @@ if (RENDER_EXTERNAL_URL) {
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
-  
