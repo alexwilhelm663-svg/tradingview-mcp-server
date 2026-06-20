@@ -7,7 +7,6 @@ import YahooFinance from "yahoo-finance2";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const yahooFinance = new YahooFinance();
 
-// Konfiguration gegen Timeouts bei langen Berechnungen
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
 
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
@@ -22,8 +21,9 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-function parseWavesFromText(text: string): Array<{ label: string; date: string }> {
-  const waves: Array<{ label: string; date: string }> = [];
+// FIX: Der Parser zieht jetzt zwingend auch den Preis heraus, damit Python die Wellen-Richtung kennt
+function parseWavesFromText(text: string): Array<{ label: string; date: string; price: number }> {
+  const waves: Array<{ label: string; date: string; price: number }> = [];
   const lines = text.split('\n');
 
   for (const line of lines) {
@@ -31,12 +31,16 @@ function parseWavesFromText(text: string): Array<{ label: string; date: string }
     
     const parts = line.split('|').map(p => p.trim()).filter(p => p !== '');
     
-    if (parts.length >= 2 && !parts[0].includes('---') && !parts[0].toLowerCase().includes('welle')) {
+    if (parts.length >= 3 && !parts[0].includes('---') && !parts[0].toLowerCase().includes('welle')) {
         const label = parts[0].replace(/[\*\`\[\]]/g, '').trim(); 
         const rawDate = parts[1].replace(/[\*\`\[\]]/g, '').trim();
         
-        if (label.length > 0 && rawDate.length >= 4) {
-            waves.push({ label, date: rawDate });
+        const priceMatch = parts[2].match(/[-0-9.,]+/);
+        if (!priceMatch) continue;
+        const price = parseFloat(priceMatch[0].replace(',', '.'));
+        
+        if (label.length > 0 && rawDate.length >= 4 && !isNaN(price)) {
+            waves.push({ label, date: rawDate, price });
         }
     }
   }
@@ -203,7 +207,6 @@ FORMATIERUNGS-GESETZE FÜR DIE AUSGABE (ZWINGEND EINHALTEN!):
 
     await ctx.reply("🎨 Generiere Makro-Chart...");
 
-    // Symbol an Python übergeben für den perfekten Dashboard-Titel
     const jsonArg = JSON.stringify({ symbol: cleanSymbol, waves: wavesData, candles: candlesArray });
     
     const pythonCommand = process.platform === "win32" ? "python" : "python3";
@@ -331,4 +334,3 @@ if (RENDER_EXTERNAL_URL) {
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
-    
