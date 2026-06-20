@@ -10,8 +10,6 @@ import matplotlib.dates as mdates
 from datetime import timedelta
 
 def main():
-    telemetry = []
-    
     try:
         json_str = sys.stdin.read()
         if not json_str:
@@ -22,41 +20,46 @@ def main():
         candles = data.get("candles", [])
         symbol = data.get("symbol", "Symbol")
 
+        if not candles or not waves:
+            # Fallback-Fehlerbild, falls wider Erwarten leere Daten ankommen
+            fig, ax = plt.subplots(figsize=(12, 6))
+            fig.patch.set_facecolor('#2B2D33')
+            ax.set_facecolor('#2B2D33')
+            ax.text(0.5, 0.5, "No valid wave data received from TypeScript.", color='#D81B60', fontsize=18, ha='center', va='center')
+            ax.axis('off')
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=150, facecolor='#2B2D33')
+            buf.seek(0)
+            sys.stdout.buffer.write(buf.getvalue())
+            sys.exit(0)
+
         df = pd.DataFrame(candles)
         df['date'] = pd.to_datetime(df['date'])
         df.set_index('date', inplace=True)
         df.sort_index(inplace=True)
         df['close'] = df['close'].astype(float)
         
-        # 1. Orthodoxes Tief der Welle 0 suchen und Chart exakt dort abschneiden
+        # 1. Startpunkt (Welle 0) validieren und Chart exakt am echten Makro-Boden abschneiden
         w0 = waves[0]
         w0_target = pd.to_datetime(w0['date'], errors='coerce')
         
         if pd.isna(w0_target) or df.empty:
             sys.exit(1)
 
-        # Großes Suchfenster für den Zyklus-Start (±40 Tage)
-        start_mask = (df.index >= (w0_target - timedelta(days=40))) & (df.index <= (w0_target + timedelta(days=40)))
+        # Großzügiges Suchfenster für den Makro-Start (±45 Tage)
+        start_mask = (df.index >= (w0_target - timedelta(days=45))) & (df.index <= (w0_target + timedelta(days=45)))
         start_win = df[start_mask]
         
         if not start_win.empty:
             crop_date = start_win['close'].idxmin()
-            snap_type = "snapped_to_40d_window_low"
         else:
             idx = df.index.get_indexer([w0_target], method='nearest')[0]
             crop_date = df.index[idx]
-            snap_type = "fallback_nearest_indexer"
 
-        # CHART ABSCHNEIDEN: Alles vor dem Makro-Boden wird gelöscht
+        # Beschneide den DataFrame hart ab dem Makro-Boden
         df = df.loc[crop_date:]
         
-        telemetry.append({
-            "step": "CHART_CROP (Wave 0 Start)",
-            "ai_target": str(w0['date']),
-            "snapped_start_date": str(crop_date.date()),
-            "method": snap_type,
-            "remaining_candles": len(df)
-        })
+        if df.empty: sys.exit(1)
 
         wave_dates, wave_prices, wave_labels, is_peak_list = [], [], [], []
 
@@ -66,22 +69,19 @@ def main():
 
             if i == 0:
                 actual_date = crop_date
-                is_peak = False # Start ist unten
-                m_used = snap_type
+                is_peak = False # Welle 0 liegt unten
             else:
                 is_peak = w['price'] > waves[i-1]['price']
                 
-                # Suchen im verbleibenden Chart-Fenster
+                # Suchfenster im beschnittenen Chart (±30 Tage)
                 mask = (df.index >= (t_date - timedelta(days=30))) & (df.index <= (t_date + timedelta(days=30)))
                 win = df[mask]
                 
                 if not win.empty:
                     actual_date = win['close'].idxmax() if is_peak else win['close'].idxmin()
-                    m_used = "window_extrema_30d"
                 else:
                     idx = df.index.get_indexer([t_date], method='nearest')[0]
                     actual_date = df.index[idx]
-                    m_used = "nearest_fallback"
 
             price = df.loc[actual_date, 'close']
             if isinstance(price, pd.Series): price = price.iloc[0]
@@ -91,19 +91,7 @@ def main():
             wave_labels.append(w['label'])
             is_peak_list.append(is_peak)
 
-            if i > 0:
-                telemetry.append({
-                    "wave": w['label'],
-                    "ai_date": str(w['date']),
-                    "snapped_date": str(actual_date.date()),
-                    "price": float(price),
-                    "is_peak": is_peak,
-                    "method": m_used
-                })
-
-        print(json.dumps({"telemetry": telemetry}, indent=2), file=sys.stderr)
-
-        # --- PLOT DASHBOARD ---
+        # --- PLOT DASHBOARD (TradingView Dark Theme) ---
         plt.rcParams['font.family'] = 'sans-serif'
         fig, ax = plt.subplots(figsize=(16, 8))
         
@@ -132,9 +120,8 @@ def main():
         for spine in ax.spines.values(): spine.set_color(spine_color)
         ax.tick_params(axis='both', colors=text_color, labelsize=11, color=spine_color)
         
-        if not df.empty:
-            # 8 Tage Puffer am Rand, damit dicke 12px-Punkte nicht am Rahmen kleben
-            ax.set_xlim(df.index.min() - timedelta(days=8), df.index.max() + timedelta(days=8))
+        # Sauberer Puffer links und rechts, damit dicke Zahlen nicht am Rand kleben
+        ax.set_xlim(df.index.min() - timedelta(days=10), df.index.max() + timedelta(days=10))
             
         locator = mdates.AutoDateLocator(minticks=5, maxticks=10)
         ax.xaxis.set_major_locator(locator)
