@@ -11,7 +11,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft im Webhosting-Modus mit erweitertem PDF-Regelwerk und stdin-Pipeline...");
+console.log("🤖 Bot läuft im Webhosting-Modus mit Yahoo-Anti-Bot-Bypass und stdin-Pipeline...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -62,7 +62,7 @@ bot.command("analyse", async (ctx) => {
     finalIntervalLabel = "1D";
   }
 
-  await ctx.reply(`⏳ Lade komplette ${finalIntervalLabel}-Historie für ${cleanSymbol} von Yahoo...`);
+  await ctx.reply(`⏳ Lade komplette ${finalIntervalLabel}-Historie für ${cleanSymbol} von Yahoo (Browser-Tarnung aktiv)...`);
 
   let candlesArray: Array<{ date: string; open: string; high: string; low: string; close: string }> = [];
 
@@ -72,9 +72,15 @@ bot.command("analyse", async (ctx) => {
 
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=${yahooInterval}&events=history`;
     
+    // --- DER YAHOO ANTI-BOT BYPASS ---
+    // Tarnt die Render-Server-Anfrage als normalen Chrome-Browser auf einem Windows-PC
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
       }
     });
 
