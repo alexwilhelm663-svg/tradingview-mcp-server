@@ -11,7 +11,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft im Webhosting-Modus mit Yahoo-Anti-Bot-Bypass und stdin-Pipeline...");
+console.log("🤖 Bot läuft mit Yahoo-Bypass, stdin-Pipeline und Webhook-Türsteher...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -72,8 +72,7 @@ bot.command("analyse", async (ctx) => {
 
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=${yahooInterval}&events=history`;
     
-    // --- DER YAHOO ANTI-BOT BYPASS ---
-    // Tarnt die Render-Server-Anfrage als normalen Chrome-Browser auf einem Windows-PC
+    // --- YAHOO ANTI-BOT BYPASS ---
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -110,7 +109,7 @@ bot.command("analyse", async (ctx) => {
       };
     }).filter((c: any) => Number(c.open) > 0 && Number(c.high) > 0 && Number(c.low) > 0 && Number(c.close) > 0);
 
-    // Alle Daten übernehmen, kein Abschneiden mehr!
+    // Komplette Historie übernehmen (kein .slice mehr)
     candlesArray = rawHistorical;
 
   } catch (dataError: any) {
@@ -130,7 +129,7 @@ DEINE AUFGABE UND ANALYSE-REGELN:
 
 ABSOLUTE GESETZE DER WELLEN-STRUKTUR (Diese dürfen NIEMALS gebrochen werden):
 - Welle 2 darf Welle 1 niemals zu 100% oder mehr korrigieren (sie darf nicht unter den Startpunkt von Welle 1 fallen).
-- Welle 3 darf niemals die kürzeste der drei Antriebswellen (1, 3 und 5) sein.
+- Welle 3 darf niemals die kürzeste der drei Antriebswellen (1, 3 und 5).
 - Welle 4 darf niemals in das Preisgebiet von Welle 1 eindringen (kein Overlap, außer in seltenen Diagonal Triangles am Ende eines Trends).
 - Korrekturwellen bestehen niemals aus 5 Sub-Wellen, sondern aus 3 (A-B-C) oder deren Kombinationen (W-X-Y).
 
@@ -196,7 +195,7 @@ FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
     // Startet Python OHNE Kommandozeilenargumente
     const pythonProcess = spawn("python3", ["python_service/drawer.py"]);
     
-    // Daten durch den unendlichen stdin-Stream pushen
+    // Daten durch den stdin-Stream pushen
     pythonProcess.stdin.write(jsonArg);
     pythonProcess.stdin.end();
     
@@ -278,13 +277,20 @@ if (RENDER_EXTERNAL_URL) {
       let body = "";
       req.on("data", chunk => body += chunk);
       req.on("end", () => {
+        // --- DER TÜRSTEHER ---
+        // Leere Anfragen (wie Scanner-Pings) sofort abwehren, um JSON.parse Abstürze zu verhindern
+        if (!body || body.trim() === "") {
+          res.writeHead(200);
+          return res.end();
+        }
+
         try {
           const update = JSON.parse(body);
-          // Der Telegram Timeout-Killer
           res.writeHead(200);
           res.end();
           bot.handleUpdate(update);
-        } catch (e) {
+        } catch (e: any) {
+          console.error("⚠️ Ungültiges JSON empfangen:", e.message);
           if (!res.headersSent) {
             res.writeHead(400);
             res.end("Bad Request");
