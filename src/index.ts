@@ -2,6 +2,7 @@ import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
+import yahooFinance from "yahoo-finance2"; // <-- Das neue Paket umgeht den IP-Block
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -11,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft mit Yahoo-Bypass, stdin-Pipeline, Webhook-Türsteher und Cross-Platform-Python...");
+console.log("🤖 Bot läuft in der Cloud mit yahoo-finance2, stdin-Pipeline und Webhook-Türsteher...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -51,7 +52,7 @@ bot.command("analyse", async (ctx) => {
     cleanSymbol = "P911.DE";
   }
 
-  let yahooInterval = "1wk";
+  let yahooInterval: "1d" | "1wk" | "1mo" = "1wk";
   let finalIntervalLabel = "1W";
 
   if (requestedInterval === "1m" || requestedInterval === "mo" || requestedInterval === "m") {
@@ -62,54 +63,36 @@ bot.command("analyse", async (ctx) => {
     finalIntervalLabel = "1D";
   }
 
-  await ctx.reply(`⏳ Lade komplette ${finalIntervalLabel}-Historie für ${cleanSymbol} von Yahoo (Browser-Tarnung aktiv)...`);
+  await ctx.reply(`⏳ Lade komplette ${finalIntervalLabel}-Historie für ${cleanSymbol} über sicheren API-Tunnel...`);
 
   let candlesArray: Array<{ date: string; open: string; high: string; low: string; close: string }> = [];
 
   try {
-    const period2 = Math.floor(Date.now() / 1000);
-    const period1 = period2 - (3 * 365 * 24 * 60 * 60); // 3 Jahre Historie
+    const period2 = new Date();
+    const period1 = new Date();
+    period1.setFullYear(period2.getFullYear() - 3); // 3 Jahre Historie
 
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?period1=${period1}&period2=${period2}&interval=${yahooInterval}&events=history`;
-    
-    // --- YAHOO ANTI-BOT BYPASS ---
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
-      }
+    // --- DER NEUE YAHOO AUFRUF ---
+    const result = await yahooFinance.historical(cleanSymbol, {
+      period1: period1,
+      period2: period2,
+      interval: yahooInterval
     });
 
-    const resData: any = await response.json();
-    const result = resData?.chart?.result?.[0];
-    
-    if (!result || !result.timestamp) {
-      throw new Error("Symbol an der API nicht verfügbar.");
+    if (!result || result.length === 0) {
+      throw new Error("Keine Daten für dieses Symbol gefunden.");
     }
 
-    const timestamps = result.timestamp;
-    const quote = result.indicators.quote[0];
-
-    const rawHistorical = timestamps.map((ts: number, i: number) => {
-      const d = new Date(ts * 1000);
-      const o = Number(quote.open[i]);
-      const h = Number(quote.high[i]);
-      const l = Number(quote.low[i]);
-      const c = Number(quote.close[i]);
-
+    const rawHistorical = result.map((c: any) => {
       return {
-        date: d.toISOString().split('T')[0],
-        open: o.toFixed(2),
-        high: h.toFixed(2),
-        low: l.toFixed(2),
-        close: c.toFixed(2)
+        date: c.date.toISOString().split('T')[0],
+        open: Number(c.open).toFixed(2),
+        high: Number(c.high).toFixed(2),
+        low: Number(c.low).toFixed(2),
+        close: Number(c.close).toFixed(2)
       };
     }).filter((c: any) => Number(c.open) > 0 && Number(c.high) > 0 && Number(c.low) > 0 && Number(c.close) > 0);
 
-    // Komplette Historie übernehmen (kein .slice mehr)
     candlesArray = rawHistorical;
 
   } catch (dataError: any) {
@@ -129,7 +112,7 @@ DEINE AUFGABE UND ANALYSE-REGELN:
 
 ABSOLUTE GESETZE DER WELLEN-STRUKTUR (Diese dürfen NIEMALS gebrochen werden):
 - Welle 2 darf Welle 1 niemals zu 100% oder mehr korrigieren (sie darf nicht unter den Startpunkt von Welle 1 fallen).
-- Welle 3 darf niemals die kürzeste der drei Antriebswellen (1, 3 und 5).
+- Welle 3 darf niemals die kürzeste der drei Antriebswellen (1, 3 und 5) sein.
 - Welle 4 darf niemals in das Preisgebiet von Welle 1 eindringen (kein Overlap, außer in seltenen Diagonal Triangles am Ende eines Trends).
 - Korrekturwellen bestehen niemals aus 5 Sub-Wellen, sondern aus 3 (A-B-C) oder deren Kombinationen (W-X-Y).
 
@@ -192,8 +175,7 @@ FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
 
     const jsonArg = JSON.stringify({ waves: wavesData, candles: candlesArray });
     
-    // --- DER CROSS-PLATFORM FIX FÜR WINDOWS (EINVAL) ---
-    // Startet dynamisch "python" unter Windows und "python3" unter Linux/macOS
+    // --- DER CROSS-PLATFORM FIX ---
     const pythonCommand = process.platform === "win32" ? "python" : "python3";
     const pythonProcess = spawn(pythonCommand, ["python_service/drawer.py"]);
     
@@ -280,7 +262,6 @@ if (RENDER_EXTERNAL_URL) {
       req.on("data", chunk => body += chunk);
       req.on("end", () => {
         // --- DER TÜRSTEHER ---
-        // Leere Anfragen (wie Scanner-Pings) sofort abwehren, um JSON.parse Abstürze zu verhindern
         if (!body || body.trim() === "") {
           res.writeHead(200);
           return res.end();
