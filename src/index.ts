@@ -2,18 +2,17 @@ import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
-import YahooFinance from "yahoo-finance2"; // <-- v3 Import (Großgeschrieben)
+import YahooFinance from "yahoo-finance2";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const yahooFinance = new YahooFinance(); // <-- v3 Instanz (Muss jetzt als Erstes erschaffen werden)
+const yahooFinance = new YahooFinance(); 
 
-// Bombenfeste Telegraf-Konfiguration (schaltet das 90s-Timeout ab)
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
 
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit yahoo-finance2 (V3), stdin-Pipeline und Webhook-Türsteher...");
+console.log("🤖 Bot läuft in der Cloud mit Fehler-Scanner...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -71,9 +70,8 @@ bot.command("analyse", async (ctx) => {
   try {
     const period2 = new Date();
     const period1 = new Date();
-    period1.setFullYear(period2.getFullYear() - 3); // 3 Jahre Historie
+    period1.setFullYear(period2.getFullYear() - 3); 
 
-    // --- Aufruf über die neue v3 Instanz ---
     const result = await yahooFinance.historical(cleanSymbol, {
       period1: period1,
       period2: period2,
@@ -179,16 +177,22 @@ FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
     const pythonCommand = process.platform === "win32" ? "python" : "python3";
     const pythonProcess = spawn(pythonCommand, ["python_service/drawer.py"]);
     
+    // FEHLER-SCANNER: Fängt die Python-Crash-Meldungen ab
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    
+    pythonProcess.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    pythonProcess.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
     pythonProcess.stdin.write(jsonArg);
     pythonProcess.stdin.end();
-    
-    const stdoutChunks: Buffer[] = [];
-    pythonProcess.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
 
     pythonProcess.on("close", async (code) => {
       try {
         if (code !== 0 || stdoutChunks.length === 0) {
-          await ctx.reply(`❌ Fehler beim Rendern des Vektordiagramms.`);
+          // Sendet den genauen Fehler an Telegram
+          const errorLog = Buffer.concat(stderrChunks).toString().trim();
+          await ctx.reply(`❌ Fehler beim Zeichnen des Charts.\n\n🛠 **System-Log:**\n\`${errorLog.substring(0, 1000) || "Unbekannter Absturz (Code " + code + ")"}\``);
         } else {
           const outputBuffer = Buffer.concat(stdoutChunks);
           await ctx.replyWithPhoto({ source: outputBuffer }, { caption: `📊 Struktur-Analyse: ${cleanSymbol} (${finalIntervalLabel})` });
