@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit Universal Fibo Extension Engine (v15)...");
+console.log("🤖 Bot läuft in der Cloud mit 100% generischer Master-Engine (v16)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -21,6 +21,7 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
+// Universal-Parser: Akzeptiert sämtliche generischen Sub-Formate (1), [A], 3.1, iii
 function parseWavesFromText(text: string): Array<{ label: string; date: string; price: number }> {
   const waves: Array<{ label: string; date: string; price: number }> = [];
   const lines = text.split('\n');
@@ -80,7 +81,7 @@ bot.command("analyse", async (ctx) => {
     finalIntervalLabel = "1M";
   }
 
-  await ctx.reply(`⏳ Lade 10-Jahres-Historie (${finalIntervalLabel}) für ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Lade Historie (${finalIntervalLabel}) für ${cleanSymbol}... Initialisiere generischen Total-Scan...`);
 
   let candlesArray: any[] = [];
 
@@ -109,6 +110,9 @@ bot.command("analyse", async (ctx) => {
   const streamStartDate = candlesArray[0].date;
   const streamEndDate = candlesArray[candlesArray.length - 1].date;
 
+  // =========================================================================
+  // REINES ORIGINAL-REGELWERK + GENERISCHE 9-WELLEN EXTENSION
+  // =========================================================================
   const mainPrompt = `Rolle und Ziel:
 Du bist ein erstklassiger technischer Analyst und Senior-Experte für das Elliott-Wellen-Prinzip (Senior-EW-Analyst). Analysiere den folgenden komprimierten Marktdaten-Stream. Da Asset-Preise exponentiell wachsen, wird deine Zählung auf einer logarithmischen Y-Achse dargestellt.
 
@@ -141,7 +145,7 @@ Motive Wellen bestehen immer aus fünf Unterwellen und bewegen sich in die gleic
 **Diagonale Dreiecke (Ausnahme von Impulsen):**
 Diagonale Dreiecke sind motive Wellen, die jedoch nicht als echte Impulse gelten, da sie korrektive Eigenschaften aufweisen. Bei ihnen dringt Welle 4 fast immer in das Preisgebiet von Welle 1 ein.
 * **Ending Diagonals:** Treten meist als Welle 5 auf, wenn eine Bewegung "zu weit und zu schnell" gegangen ist. Sie haben eine Keilform mit konvergierenden (sich annähernden) Linien und bestehen ungewöhnlicherweise aus einer 3-3-3-3-3-Struktur.
-* **Leading Diagonals:** Finden sich nur in position der Welle 1 oder A. Sie haben ebenfalls eine Keilform und eine Überschneidung der Welle 4 und 1, behalten aber eine 5-3-5-3-5-Struktur bei. Sie weisen eher auf eine Fortsetzung als auf eine Beendigung hin.
+* **Leading Diagonals:** Finden sich nur in der Position der Welle 1 oder A. Sie haben ebenfalls eine Keilform und eine Überschneidung der Welle 4 und 1, behalten aber eine 5-3-5-3-5-Struktur bei. Sie weisen eher auf eine Fortsetzung als auf eine Beendigung hin.
 
 ---
 
@@ -178,36 +182,32 @@ Korrekturen lassen sich in vier Hauptkategorien unterteilen:
 **Wichtige Richtlinien für Korrekturen:**
 * **Tiefe von Bärenmärkten:** Korrekturen enden typischerweise im Preisgebiet der vorausgegangenen Welle 4 eines niedrigeren Grades.
 * **Verhalten nach einer gedehnten Welle 5:** Wenn die fünfte Welle eines Impulses eine Extension war, wird die darauffolgende Korrektur in der Regel sehr scharf ausfallen und Unterstützung am Tief der Welle 2 dieser Extension finden.
-* **Abwechslung in der Komplexität:** Oft wechselt die Komplexität innerhalb der Korrekturwellen ab. Ist beispielsweise Welle A ein einfaches Zickzack, dehnt sich Welle B oft in eine viel komplexere Form aus und Welle C unter Umständen in eine noch weitreichendere.
 
 ---
 
-### 3. ZWANGS-PARAMETER FÜR DIESEN TOTAL-SCAN
+### 3. GENERISCHE ZWANGS-PARAMETER FÜR DEN TOTAL-SCAN
 
-* **PFLICHTSTART BEIM IPO / CHART-BEGINN:** Die dir übergebenen Kursdaten starten am **${streamStartDate}**. Du bist mathematisch VERPFLICHTET, den Startpunkt deiner Zählung (Welle 0) exakt auf diesen allerersten verfügbaren Tag des Charts zu legen! Der allererste Eintrag deiner Tabelle MUSS so lauten: \`| 0 | ${streamStartDate} | [Preis] |\`. Es ist dir verboten, Welle 0 auf ein späteres Datum zu setzen.
-* **PFLICHT ZUR LÜCKENLOSEN TOTAL-ZÄHLUNG BIS ZUM ENDDATUM:** Die Zeitreihe endet am **${streamEndDate}**. Du bist verpflichtet, sämtliche Wellenzyklen von der Geburtsstunde ${streamStartDate} bis zum Enddatum ${streamEndDate} lückenlos durchzuzählen! Wenn du Welle C erreichst und feststellst, dass im Stream noch Daten für weitere Monate oder Jahre existieren, MUSST du sofort den nächsten Zyklus eröffnen. Der letzte Eintrag deiner Tabelle MUSS das Enddatum **${streamEndDate}** erreichen.
-* **DIE NOMENKLATUR-KASKADE FÜR AUFEINANDERFOLGENDE ZYKLEN:**
-  * 1. Superzyklus (Start ab ${streamStartDate}): Impuls \`1, 2, 3, 4, 5\`, Korrektur \`A, B, C\` (oder W, X, Y)
-  * 2. Superzyklus (Anknüpfend an das Tief von C): Impuls \`(1), (2), (3), (4), (5)\`, Korrektur \`(A), (B), (C)\`
-  * 3. Superzyklus (Falls der Stream noch weiterläuft): Impuls \`I, II, III, IV, V\`
+* **PFLICHTSTART BEIM IPO / CHART-BEGINN:** Die dir übergebenen Kursdaten starten am **${streamStartDate}**. Du bist mathematisch VERPFLICHTET, den Startpunkt deiner Zählung (Welle 0) exakt auf diesen allerersten verfügbaren Tag des Charts zu legen! Der allererste Eintrag deiner Tabelle MUSS so lauten: \`| 0 | ${streamStartDate} | [Preis] |\`.
+* **PFLICHT ZUR LÜCKENLOSEN TOTAL-ZÄHLUNG BIS ZUM ENDDATUM:** Die Zeitreihe endet am **${streamEndDate}**. Du bist verpflichtet, sämtliche Wellenzyklen von der Geburtsstunde ${streamStartDate} bis zum Enddatum ${streamEndDate} lückenlos durchzuzählen! Wenn du Welle C erreichst und feststellst, dass im Stream noch Daten für weitere Monate oder Jahre existieren, eröffnest du nahtlos den nächsten Zyklus. Der letzte Eintrag deiner Tabelle MUSS das Enddatum **${streamEndDate}** erreichen.
+* **DAS PRINZIP DER GENERISCHEN DEHNUNG (EXTENSION):** Gemäß der Richtlinie für Dehnungen neigt in einem Motiv-Impuls fast immer exakt eine Welle zu einer massiven Verlängerung. Eine gedehnte Welle unterteilt sich auf dem untergeordneten Grad selbst wieder in 5 Motiv-Wellen. Wenn der Vektor einer Antriebswelle auf der Log-Skala extrem lang ist, bist du mathematisch aufgefordert, diese Welle generisch zu entpacken. Nutze dafür die offizielle Untergrad-Nomenklatur (z.B. i, ii, iii, iv, v oder (1), (2), (3), (4), (5) oder 3.1 bis 3.5 innerhalb der Hauptwelle). 
+  *Beispiel einer generischen 9-Wellen-Extension in der Tabelle:* \`1, 2, (1), (2), (3), (4), (5), 4, 5\`
 
 ---
 FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
-Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem Muster. 
-Beginne zwingend bei ${streamStartDate} und führe die Wellen durch die Jahre, bis das Enddatum ${streamEndDate} erreicht ist!
+Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem Muster. Beginne bei ${streamStartDate} und führe die Wellen durch die Jahre, bis das Enddatum ${streamEndDate} erreicht ist!
 
 | Welle | Datum | Preis |
 | --- | --- | --- |
 | 0 | ${streamStartDate} | 15.50 |
 | 1 | YYYY-MM-DD | 180.00 |
 
-Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C, W, X, Y, Z, (1), (2), (3), (4), (5), (A), (B), (C), I, II, III, IV, V. Keine Prosa in der Tabelle!`;
+Keine Prosa in der Tabelle!`;
 
   let responseText = "";
   let attempts = 5; 
   let backoffDelay = 2000; 
 
-  await ctx.reply(`🧠 Analysiere Fibo-Fraktale (${streamStartDate} bis ${streamEndDate})...`);
+  await ctx.reply(`🧠 Analysiere generische Fraktale (${streamStartDate} bis ${streamEndDate})...`);
 
   while (attempts > 0) {
     try {
@@ -274,7 +274,7 @@ Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C, W, X, Y, Z, 
     if (code !== 0 || stdoutChunks.length === 0) {
         await ctx.reply(`❌ **Zeichnen fehlgeschlagen!** Log:\n\`\`\`text\n${errLog}\n\`\`\``);
     } else {
-        await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 EW Quant Fibo View: ${cleanSymbol} (${finalIntervalLabel})` });
+        await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 EW Universal Master View: ${cleanSymbol} (${finalIntervalLabel})` });
     }
     
     const fullReport = responseText + statusBadge;
