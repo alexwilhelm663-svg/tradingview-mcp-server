@@ -30,81 +30,101 @@ def main():
         for col in ['open', 'high', 'low', 'close']:
             df[col] = df[col].astype(float)
         
-        # 1. Boden Welle 0 suchen (Startpunkt)
-        w0 = waves[0]
-        w0_target = pd.to_datetime(w0['date'], errors='coerce')
-        if pd.isna(w0_target) or df.empty: sys.exit(1)
-
-        start_mask = (df.index >= (w0_target - timedelta(days=45))) & (df.index <= (w0_target + timedelta(days=45)))
-        start_win = df[start_mask]
+        # Rollen-Katalog (Impuls-Gipfel vs Korrektur-Täler)
+        peak_labels = ['1', '3', '5', 'I', 'III', 'V', 'B', 'TOP', 'WAVE 1', 'WAVE 3', 'WAVE 5', 'WAVE B']
         
-        crop_date = start_win['low'].idxmin() if not start_win.empty else df.index[df.index.get_indexer([w0_target], method='nearest')[0]]
+        snapped_waves = []
+        for w in waves:
+            snapped_waves.append({
+                'label': w['label'],
+                'raw_label': str(w['label']).upper().strip(),
+                'ai_date': pd.to_datetime(w['date'], errors='coerce'),
+                'is_peak': str(w['label']).upper().strip() in peak_labels,
+                'date': None,
+                'price': None
+            })
 
-        # 1 Jahr historischer Kontext-Vorlauf auf der X-Achse
-        context_start = crop_date - timedelta(days=365)
+        # =========================================================================
+        # TOPOLOGICAL TWO-PASS SNAPPING (Master Extrema Relaxation)
+        # =========================================================================
+        # --- PASS 1: ALLE TÄLER FEST VERANKERN (0, 2, 4, A, C) ---
+        last_trough_date = df.index.min()
+        
+        for sw in snapped_waves:
+            if not sw['is_peak']:
+                t_date = sw['ai_date']
+                if pd.isna(t_date): t_date = last_trough_date + timedelta(days=30)
+                
+                # Suchfenster für Täler: ±40 Tage um KI-Datum, aber zwingend nach dem letzten Tal
+                win_start = max(last_trough_date + timedelta(days=7), t_date - timedelta(days=40))
+                win_end = max(win_start + timedelta(days=14), t_date + timedelta(days=40))
+                
+                if win_start > df.index.max(): win_start = df.index.max()
+                
+                mask = (df.index >= win_start) & (df.index <= win_end)
+                win = df[mask]
+                
+                if not win.empty:
+                    actual_date = win['low'].idxmin()
+                else:
+                    actual_date = win_start if win_start in df.index else df.index[df.index.get_indexer([win_start], method='nearest')[0]]
+                
+                sw['date'] = actual_date
+                sw['price'] = float(df.loc[actual_date, 'low'])
+                last_trough_date = actual_date
+
+        # --- PASS 2: ALLE GIPFEL ZWINGEND ZWISCHEN DEN TÄLERN AUFSPANNEN ---
+        for i, sw in enumerate(snapped_waves):
+            if sw['is_peak']:
+                # Finde das direkt vorangegangene Tal
+                prev_trough_date = df.index.min()
+                for j in range(i-1, -1, -1):
+                    if not snapped_waves[j]['is_peak'] and snapped_waves[j]['date'] is not None:
+                        prev_trough_date = snapped_waves[j]['date']
+                        break
+                
+                # Finde das direkt nachfolgende Tal
+                next_trough_date = df.index.max()
+                for j in range(i+1, len(snapped_waves)):
+                    if not snapped_waves[j]['is_peak'] and snapped_waves[j]['date'] is not None:
+                        next_trough_date = snapped_waves[j]['date']
+                        break
+                
+                # Das Suchfenster ist exakt der Raum zwischen den beiden Tälern!
+                win_start = prev_trough_date + timedelta(days=1)
+                win_end = next_trough_date - timedelta(days=1)
+                
+                if win_end <= win_start:
+                    win_end = win_start + timedelta(days=7)
+                
+                if win_start > df.index.max(): win_start = df.index.max()
+                
+                mask = (df.index >= win_start) & (df.index <= win_end)
+                win = df[mask]
+                
+                if not win.empty:
+                    actual_date = win['high'].idxmax()
+                else:
+                    actual_date = win_start if win_start in df.index else df.index[df.index.get_indexer([win_start], method='nearest')[0]]
+                
+                sw['date'] = actual_date
+                sw['price'] = float(df.loc[actual_date, 'high'])
+
+        # 1 Jahr historischer Kontext-Vorlauf vor Welle 0
+        w0_date = snapped_waves[0]['date']
+        context_start = w0_date - timedelta(days=365)
         if context_start < df.index.min(): context_start = df.index.min()
-            
         df = df.loc[context_start:]
         if df.empty: sys.exit(1)
 
-        wave_dates = [crop_date]
-        wave_prices = [df.loc[crop_date, 'low']]
-        wave_labels = [w0['label']]
-        is_peak_list = [False]
+        # Extrahierte Vektor-Listen für Matplotlib
+        wave_dates = [sw['date'] for sw in snapped_waves]
+        wave_prices = [sw['price'] for sw in snapped_waves]
+        wave_labels = [sw['label'] for sw in snapped_waves]
+        is_peak_list = [sw['is_peak'] for sw in snapped_waves]
+        raw_labels = [sw['raw_label'] for sw in snapped_waves]
 
-        raw_labels = [str(w['label']).upper().strip() for w in waves]
-
-        # =========================================================================
-        # 2. CENTERED POCKET SNAPPING: Trifft die echten lokalen Hochs & Tiefs
-        # =========================================================================
-        for i in range(1, len(waves)):
-            w = waves[i]
-            t_date = pd.to_datetime(w['date'], errors='coerce')
-            if pd.isna(t_date): continue
-
-            prev_date = wave_dates[-1]
-            lbl_upper = raw_labels[i]
-
-            # Rollen-Zuweisung: Aktions-Gipfel vs. Korrektur-Täler
-            if lbl_upper in ['1', '3', '5', 'I', 'III', 'V', 'B', 'TOP']:
-                is_peak = True
-            elif lbl_upper in ['0', '2', '4', 'II', 'IV', 'A', 'C', 'START']:
-                is_peak = False
-            else:
-                is_peak = w['price'] > wave_prices[-1]
-
-            # FIX: Symmetrische Tasche (Pocket) exakt um das von der KI anvisierte Zieldatum!
-            pocket_start = t_date - timedelta(days=28)
-            pocket_end = t_date + timedelta(days=28)
-
-            # Harte kausale Klammer: Suchfenster darf niemals in die Vorwelle ragen
-            if pocket_start <= prev_date:
-                pocket_start = prev_date + timedelta(days=1)
-            
-            if pocket_end < pocket_start:
-                pocket_end = pocket_start + timedelta(days=14)
-
-            if pocket_start > df.index.max(): pocket_start = df.index.max()
-
-            mask = (df.index >= pocket_start) & (df.index <= pocket_end)
-            win = df[mask]
-
-            if not win.empty:
-                # Rastet präzise am höchsten Docht ('high') der Zieldatums-Tasche ein
-                actual_date = win['high'].idxmax() if is_peak else win['low'].idxmin()
-                price = win.loc[actual_date, 'high' if is_peak else 'low']
-            else:
-                actual_date = pocket_start if pocket_start in df.index else df.index[df.index.get_indexer([pocket_start], method='nearest')[0]]
-                price = df.loc[actual_date, 'high' if is_peak else 'low']
-
-            if isinstance(price, pd.Series): price = price.iloc[0]
-
-            wave_dates.append(actual_date)
-            wave_prices.append(float(price))
-            wave_labels.append(w['label'])
-            is_peak_list.append(is_peak)
-
-        # 3. QUANT FIBONACCI ENGINE & DEMUTS-SCHRANKE (B-Gate)
+        # --- 3. QUANT FIBONACCI ENGINE & DEMUTS-SCHRANKE (B-Gate) ---
         c_is_confirmed = True
         price_b_gate = None
         date_b_gate = None
@@ -131,14 +151,12 @@ def main():
                 c_is_confirmed = False
                 wave_labels[idx_c] = "C ( ? )"
 
-                # Log-geometrische Fibonacci-Projektion aus Vektor A
                 ratio_a = pa / p5 if p5 > 0 else 0.7
 
                 fib_061_target = pb * (ratio_a ** 0.618)
                 fib_100_target = pb * (ratio_a ** 1.000)
                 fib_161_target = pb * (ratio_a ** 1.618)
 
-                # Punkt C physisch auf das 1.00-Zielkreuz anheften
                 wave_dates[idx_c] = last_date + timedelta(days=14)
                 wave_prices[idx_c] = fib_100_target
 
@@ -150,7 +168,7 @@ def main():
             }
         }), file=sys.stderr)
 
-        # --- PLOT DASHBOARD ---
+        # --- PLOT DASHBOARD (TradingView Dark Theme + LOG SCALE) ---
         plt.rcParams['font.family'] = 'sans-serif'
         fig, ax = plt.subplots(figsize=(16, 8))
         
@@ -174,7 +192,6 @@ def main():
                         ax.plot(wave_dates[idx_5:idx_b+1], wave_prices[idx_5:idx_b+1], color=orange, linewidth=2.5, linestyle='--', marker='o', markersize=11)
                         ax.plot(wave_dates[idx_b:], wave_prices[idx_b:], color='#FFCC80', linewidth=2.0, linestyle=':', marker='o', markersize=10, alpha=0.85)
                         
-                        # Ziel-Cluster (0.618 - 1.618)
                         if fib_161_target and fib_061_target:
                             ax.axhspan(ymin=fib_161_target, ymax=fib_061_target, facecolor='#00BFA5', alpha=0.15, label='🎯 Fib Target Cluster')
                             ax.hlines(y=fib_100_target, xmin=date_b_gate, xmax=last_date + timedelta(days=35), color='#00BFA5', linestyle=':', linewidth=1.8)
@@ -183,10 +200,8 @@ def main():
                                 xy=(last_date, fib_100_target), xytext=(0, 6), textcoords='offset points', color='#00BFA5', fontsize=11, fontweight='bold', ha='right', va='bottom'
                             )
                         
-                        # Horizontale B-Gate Schranke
                         ax.hlines(y=price_b_gate, xmin=date_b_gate, xmax=last_date + timedelta(days=35), color='#E53935', linestyle='-.', linewidth=1.5)
                         
-                        # HUD Checkliste
                         checklist_text = (
                             "🔒 KORREKTUR-ABSCHLUSS CHECKLISTE:\n"
                             " [ ] Stufe 1: Impulsiver 5-Teiler (i-v) nach oben\n"
