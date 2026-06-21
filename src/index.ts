@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit 100% Original-Regelwerk & Genesis Total-Scan (v14)...");
+console.log("🤖 Bot läuft in der Cloud mit Universal Fibo Extension Engine (v15)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -109,9 +109,6 @@ bot.command("analyse", async (ctx) => {
   const streamStartDate = candlesArray[0].date;
   const streamEndDate = candlesArray[candlesArray.length - 1].date;
 
-  // =========================================================================
-  // DEIN ORIGINAL-REGELWERK IST WORT FÜR WORT WIEDERHERGESTELLT
-  // =========================================================================
   const mainPrompt = `Rolle und Ziel:
 Du bist ein erstklassiger technischer Analyst und Senior-Experte für das Elliott-Wellen-Prinzip (Senior-EW-Analyst). Analysiere den folgenden komprimierten Marktdaten-Stream. Da Asset-Preise exponentiell wachsen, wird deine Zählung auf einer logarithmischen Y-Achse dargestellt.
 
@@ -144,7 +141,7 @@ Motive Wellen bestehen immer aus fünf Unterwellen und bewegen sich in die gleic
 **Diagonale Dreiecke (Ausnahme von Impulsen):**
 Diagonale Dreiecke sind motive Wellen, die jedoch nicht als echte Impulse gelten, da sie korrektive Eigenschaften aufweisen. Bei ihnen dringt Welle 4 fast immer in das Preisgebiet von Welle 1 ein.
 * **Ending Diagonals:** Treten meist als Welle 5 auf, wenn eine Bewegung "zu weit und zu schnell" gegangen ist. Sie haben eine Keilform mit konvergierenden (sich annähernden) Linien und bestehen ungewöhnlicherweise aus einer 3-3-3-3-3-Struktur.
-* **Leading Diagonals:** Finden sich nur in der Position der Welle 1 oder A. Sie haben ebenfalls eine Keilform und eine Überschneidung der Welle 4 und 1, behalten aber eine 5-3-5-3-5-Struktur bei. Sie weisen eher auf eine Fortsetzung als auf eine Beendigung hin.
+* **Leading Diagonals:** Finden sich nur in position der Welle 1 oder A. Sie haben ebenfalls eine Keilform und eine Überschneidung der Welle 4 und 1, behalten aber eine 5-3-5-3-5-Struktur bei. Sie weisen eher auf eine Fortsetzung als auf eine Beendigung hin.
 
 ---
 
@@ -185,7 +182,7 @@ Korrekturen lassen sich in vier Hauptkategorien unterteilen:
 
 ---
 
-### 3. ZWANGS-PARAMETER FÜR DIESEN SPEZIELLEN TOTAL-SCAN
+### 3. ZWANGS-PARAMETER FÜR DIESEN TOTAL-SCAN
 
 * **PFLICHTSTART BEIM IPO / CHART-BEGINN:** Die dir übergebenen Kursdaten starten am **${streamStartDate}**. Du bist mathematisch VERPFLICHTET, den Startpunkt deiner Zählung (Welle 0) exakt auf diesen allerersten verfügbaren Tag des Charts zu legen! Der allererste Eintrag deiner Tabelle MUSS so lauten: \`| 0 | ${streamStartDate} | [Preis] |\`. Es ist dir verboten, Welle 0 auf ein späteres Datum zu setzen.
 * **PFLICHT ZUR LÜCKENLOSEN TOTAL-ZÄHLUNG BIS ZUM ENDDATUM:** Die Zeitreihe endet am **${streamEndDate}**. Du bist verpflichtet, sämtliche Wellenzyklen von der Geburtsstunde ${streamStartDate} bis zum Enddatum ${streamEndDate} lückenlos durchzuzählen! Wenn du Welle C erreichst und feststellst, dass im Stream noch Daten für weitere Monate oder Jahre existieren, MUSST du sofort den nächsten Zyklus eröffnen. Der letzte Eintrag deiner Tabelle MUSS das Enddatum **${streamEndDate}** erreichen.
@@ -203,7 +200,6 @@ Beginne zwingend bei ${streamStartDate} und führe die Wellen durch die Jahre, b
 | --- | --- | --- |
 | 0 | ${streamStartDate} | 15.50 |
 | 1 | YYYY-MM-DD | 180.00 |
-| 2 | YYYY-MM-DD | 100.00 |
 
 Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C, W, X, Y, Z, (1), (2), (3), (4), (5), (A), (B), (C), I, II, III, IV, V. Keine Prosa in der Tabelle!`;
 
@@ -211,7 +207,7 @@ Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C, W, X, Y, Z, 
   let attempts = 5; 
   let backoffDelay = 2000; 
 
-  await ctx.reply(`🧠 Analysiere True Genesis Total-Scan (${streamStartDate} bis ${streamEndDate})...`);
+  await ctx.reply(`🧠 Analysiere Fibo-Fraktale (${streamStartDate} bis ${streamEndDate})...`);
 
   while (attempts > 0) {
     try {
@@ -264,9 +260,9 @@ Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C, W, X, Y, Z, 
         if (pyReport.correction_gate) {
             const cg = pyReport.correction_gate;
             if (cg.is_confirmed) {
-                statusBadge = `\n\n🟢 **STATUS:** Laufende Korrektur bestätigt beendet! (Schlusskurs ${cg.current_close.toFixed(2)} USD liegt über dem Gate von ${cg.b_gate_price.toFixed(2)} USD).`;
+                statusBadge = `\n\n🟢 **STATUS:** Laufende Korrektur bestätigt beendet! (Schlusskurs ${cg.current_close.toFixed(2)} USD liegt über der Schranke von ${cg.b_gate_price.toFixed(2)} USD).`;
             } else {
-                statusBadge = `\n\n⚠️ **STATUS:** Letzte Korrekturwelle weiterhin AKTIV! (Schlusskurs ${cg.current_close.toFixed(2)} USD notiert unter dem B-Gate von ${cg.b_gate_price.toFixed(2)} USD).`;
+                statusBadge = `\n\n⚠️ **STATUS:** Letzte Abwärtswelle weiterhin AKTIV! (Schlusskurs ${cg.current_close.toFixed(2)} USD notiert unter dem Bestätigungs-Gate von ${cg.b_gate_price.toFixed(2)} USD).\n🎯 **BERECHNETE FIBO-ZIELZONE:** ${cg.fib_lower.toFixed(2)} USD bis ${cg.fib_upper.toFixed(2)} USD (Sweetspot: ${cg.fib_sweetspot.toFixed(2)} USD).`;
             }
         }
     } catch(e) {}
@@ -278,7 +274,7 @@ Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C, W, X, Y, Z, 
     if (code !== 0 || stdoutChunks.length === 0) {
         await ctx.reply(`❌ **Zeichnen fehlgeschlagen!** Log:\n\`\`\`text\n${errLog}\n\`\`\``);
     } else {
-        await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 EW Genesis Total-Scan: ${cleanSymbol} (${finalIntervalLabel})` });
+        await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 EW Quant Fibo View: ${cleanSymbol} (${finalIntervalLabel})` });
     }
     
     const fullReport = responseText + statusBadge;
