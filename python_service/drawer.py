@@ -9,6 +9,26 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import timedelta
 
+# =========================================================================
+# UNIVERSAL ALPHANUMERIC STEM CLASSIFIER (Nukleus-Filter)
+# =========================================================================
+def resolve_wave_role(raw_label):
+    # 1. Säuberung von allen Klammer-Arten
+    clean = raw_label.replace('(', '').replace(')', '').replace('[', '').replace(']', '').replace('{', '').replace('}', '').strip().upper()
+    
+    # 2. Nukleus-Extraktion bei Komposita (z.B. '3.4' -> '4' oder 'W-A' -> 'A')
+    for separator in ['.', '-', ' ']:
+        if separator in clean:
+            clean = clean.split(separator)[-1]
+            
+    # 3. Binäre Zuordnung am reinen Nukleus
+    peaks = ['1', '3', '5', 'B', 'I', 'III', 'V', 'X']
+    troughs = ['0', '2', '4', 'A', 'C', 'II', 'IV', 'W', 'Y', 'Z']
+    
+    if clean in peaks: return True
+    elif clean in troughs: return False
+    else: return True # Fallback Gipfel
+
 def main():
     try:
         json_str = sys.stdin.read()
@@ -30,15 +50,10 @@ def main():
         for col in ['open', 'high', 'low', 'close']:
             df[col] = df[col].astype(float)
         
-        # Umfassendes Rollen-Register für Extrema-Relaxation
-        peak_roles = ['1', '3', '5', 'B', '(1)', '(3)', '(5)', '(B)', 'I', 'III', 'V', 'X']
-        trough_roles = ['0', '2', '4', 'A', 'C', '(2)', '(4)', '(A)', '(C)', 'II', 'IV', 'W', 'Y', 'Z']
-        
         snapped_waves = []
         for w in waves:
             raw_upper = str(w['label']).upper().strip()
-            # Falls Label nicht in Trough-Liste, default zu Peak
-            is_pk = True if raw_upper in peak_roles else (False if raw_upper in trough_roles else True)
+            is_pk = resolve_wave_role(raw_upper)
             
             snapped_waves.append({
                 'label': w['label'],
@@ -49,80 +64,141 @@ def main():
                 'price': None
             })
 
-        # =========================================================================
-        # TOPOLOGICAL TWO-PASS SNAPPING (Löst N-Wellen lückenlos)
-        # =========================================================================
-        # --- PASS 1: ALLE TÄLER VERANKERN ---
-        last_trough_date = df.index.min()
-        for sw in snapped_waves:
-            if not sw['is_peak']:
-                t_date = sw['ai_date']
-                if pd.isna(t_date): t_date = last_trough_date + timedelta(days=30)
-                
-                win_start = max(last_trough_date + timedelta(days=7), t_date - timedelta(days=40))
-                win_end = max(win_start + timedelta(days=14), t_date + timedelta(days=40))
-                if win_start > df.index.max(): win_start = df.index.max()
-                
-                mask = (df.index >= win_start) & (df.index <= win_end)
-                win = df[mask]
-                actual_date = win['low'].idxmin() if not win.empty else (win_start if win_start in df.index else df.index[df.index.get_indexer([win_start], method='nearest')[0]])
-                
-                sw['date'] = actual_date
-                sw['price'] = float(df.loc[actual_date, 'low'])
-                last_trough_date = actual_date
+        # --- 1. TRUE GENESIS BASE LOCK ---
+        w0 = snapped_waves[0]
+        genesis_pocket = df.iloc[:35]
+        actual_w0_date = genesis_pocket['low'].idxmin() if not genesis_pocket.empty else df.index.min()
+        w0['date'] = actual_w0_date
+        w0['price'] = float(df.loc[actual_w0_date, 'low'])
 
-        # --- PASS 2: ALLE GIPFEL ZWISCHEN DEN TÄLERN EINSPANNEN ---
-        for i, sw in enumerate(snapped_waves):
-            if sw['is_peak']:
-                prev_trough_date = df.index.min()
-                for j in range(i-1, -1, -1):
-                    if not snapped_waves[j]['is_peak'] and snapped_waves[j]['date'] is not None:
-                        prev_trough_date = snapped_waves[j]['date']
-                        break
-                
-                next_trough_date = df.index.max()
-                for j in range(i+1, len(snapped_waves)):
-                    if not snapped_waves[j]['is_peak'] and snapped_waves[j]['date'] is not None:
-                        next_trough_date = snapped_waves[j]['date']
-                        break
-                
-                win_start = prev_trough_date + timedelta(days=1)
-                win_end = next_trough_date - timedelta(days=1)
-                if win_end <= win_start: win_end = win_start + timedelta(days=7)
-                if win_start > df.index.max(): win_start = df.index.max()
-                
-                mask = (df.index >= win_start) & (df.index <= win_end)
-                win = df[mask]
-                actual_date = win['high'].idxmax() if not win.empty else (win_start if win_start in df.index else df.index[df.index.get_indexer([win_start], method='nearest')[0]])
-                
-                sw['date'] = actual_date
-                sw['price'] = float(df.loc[actual_date, 'high'])
+        # --- 2. STRICT CAUSAL FORWARD CANYON ---
+        for i in range(1, len(snapped_waves)):
+            sw = snapped_waves[i]
+            prev_locked_date = snapped_waves[i-1]['date']
+            t_target = sw['ai_date']
 
-        # Vorlauf X-Achse
-        w0_date = snapped_waves[0]['date']
-        context_start = w0_date - timedelta(days=365)
+            win_start = prev_locked_date + timedelta(days=1)
+
+            if i < len(snapped_waves) - 1:
+                t_next = snapped_waves[i+1]['ai_date']
+                if not pd.isna(t_next) and t_next > win_start:
+                    win_end = t_next + timedelta(days=15)
+                else:
+                    win_end = win_start + timedelta(days=90)
+            else:
+                win_end = df.index.max()
+
+            if pd.isna(t_target) or t_target < win_start:
+                t_target = win_start + timedelta(days=30)
+
+            if win_start > df.index.max(): win_start = df.index.max()
+            if win_end > df.index.max(): win_end = df.index.max()
+            if win_end <= win_start: win_end = win_start + timedelta(days=25)
+
+            mask = (df.index >= win_start) & (df.index <= win_end)
+            win = df[mask]
+
+            if not win.empty:
+                actual_date = win['high'].idxmax() if sw['is_peak'] else win['low'].idxmin()
+                price = win.loc[actual_date, 'high' if sw['is_peak'] else 'low']
+            else:
+                actual_date = win_start if win_start in df.index else df.index[df.index.get_indexer([win_start], method='nearest')[0]]
+                price = df.loc[actual_date, 'high' if sw['is_peak'] else 'low']
+
+            if isinstance(price, pd.Series): price = price.iloc[0]
+
+            sw['date'] = actual_date
+            sw['price'] = float(price)
+
+        context_start = w0['date'] - timedelta(days=365)
         if context_start < df.index.min(): context_start = df.index.min()
         df = df.loc[context_start:]
         if df.empty: sys.exit(1)
 
-        # --- B-GATE PRÜFUNG FÜR DAS ALLERLETZTE KORREKTUR-TAL ---
+        # --- 3. UNIVERSAL QUANT FIBONACCI ENGINE ---
         c_is_confirmed = True
         price_b_gate = None
         last_close = df['close'].iloc[-1]
+        last_date = df.index.max()
 
-        # Sucht das letzte 'B' oder '(B)' im Stream
-        b_candidates = [sw for sw in snapped_waves if sw['raw_label'] in ['B', '(B)']]
-        if b_candidates:
-            last_b = b_candidates[-1]
-            price_b_gate = last_b['price']
-            if last_close < price_b_gate:
-                c_is_confirmed = False
+        fib_upper, fib_lower, fib_sweetspot = None, None, None
+        fib_zone_label = "🎯 Fib Target Zone"
+
+        if len(snapped_waves) > 1:
+            last_sw = snapped_waves[-1]
+            if not last_sw['is_peak']:
+                for j in range(len(snapped_waves)-2, -1, -1):
+                    if snapped_waves[j]['is_peak']:
+                        price_b_gate = snapped_waves[j]['price']
+                        break
+                
+                if price_b_gate is not None and last_close < price_b_gate:
+                    c_is_confirmed = False
+                    last_sw['label'] += " ( ? )"
+                    
+                    # Extrahiere reinen Nukleus für Fibo-Weiche
+                    nukleus = last_sw['raw_label'].replace('(', '').replace(')', '').replace('[', '').replace(']', '').strip()
+                    if '.' in nukleus: nukleus = nukleus.split('.')[-1]
+                    elif '-' in nukleus: nukleus = nukleus.split('-')[-1]
+
+                    # Retracement (Nukleus 2 oder 4)
+                    if nukleus in ['2', 'II']:
+                        p1, p0 = None, None
+                        for sw in snapped_waves[:-1]:
+                            if sw['is_peak']: p1 = sw['price']
+                            else: p0 = sw['price']
+                        if p1 and p0 and p1 > p0:
+                            ratio = p0 / p1
+                            fib_upper = p1 * (ratio ** 0.500)
+                            fib_lower = p1 * (ratio ** 0.618)
+                            fib_sweetspot = fib_lower
+                            fib_zone_label = "🎯 Fib Zone (50% - 61.8% Retracement)"
+
+                    elif nukleus in ['4', 'IV']:
+                        p3, p2 = None, None
+                        for sw in snapped_waves[:-1]:
+                            if sw['is_peak']: p3 = sw['price']
+                            else: p2 = sw['price']
+                        if p3 and p2 and p3 > p2:
+                            ratio = p2 / p3
+                            fib_upper = p3 * (ratio ** 0.382)
+                            fib_lower = p3 * (ratio ** 0.500)
+                            fib_sweetspot = fib_upper
+                            fib_zone_label = "🎯 Fib Zone (38.2% - 50% Retracement)"
+
+                    elif nukleus in ['C', 'Y', 'Z']:
+                        pb, pa_low, pa_high = None, None, None
+                        for idx in range(len(snapped_waves)-2, -1, -1):
+                            sw = snapped_waves[idx]
+                            if sw['is_peak'] and pb is None: pb = sw['price']
+                            elif not sw['is_peak']:
+                                pa_low = sw['price']
+                                if idx > 0: pa_high = snapped_waves[idx-1]['price']
+                                break
+                        if pb and pa_low and pa_high and pa_high > pa_low:
+                            vec_ratio = pa_low / pa_high
+                            fib_upper = pb * (vec_ratio ** 0.618)
+                            fib_lower = pb * (vec_ratio ** 1.618)
+                            fib_sweetspot = pb * (vec_ratio ** 1.000) 
+                            fib_zone_label = "🎯 Fib Extension Zone (0.618 - 1.618 A=C)"
+
+                    if fib_upper is None and price_b_gate:
+                        fib_upper = price_b_gate * 0.65
+                        fib_lower = price_b_gate * 0.40
+                        fib_sweetspot = price_b_gate * 0.50
+
+                    if fib_sweetspot:
+                        last_sw['date'] = last_date + timedelta(days=15)
+                        last_sw['price'] = fib_sweetspot
 
         print(json.dumps({
             "correction_gate": {
                 "b_gate_price": price_b_gate if price_b_gate else 0,
                 "current_close": float(last_close),
-                "is_confirmed": c_is_confirmed
+                "is_confirmed": c_is_confirmed,
+                "fib_upper": float(fib_upper) if fib_upper else 0,
+                "fib_lower": float(fib_lower) if fib_lower else 0,
+                "fib_sweetspot": float(fib_sweetspot) if fib_sweetspot else 0
             }
         }), file=sys.stderr)
 
@@ -137,55 +213,63 @@ def main():
         ax.set_facecolor(bg_color)
         ax.set_yscale('log')
         
-        # Wick Channel
         ax.plot(df.index, df['high'], color='#787B86', linewidth=0.8, linestyle=':', alpha=0.35)
         ax.plot(df.index, df['low'], color='#787B86', linewidth=0.8, linestyle=':', alpha=0.35)
         ax.plot(df.index, df['close'], color=cyan_base, linewidth=2.0, label='Close Price')
 
         # =========================================================================
-        # MULTI-CYCLE FARBMASCHINE: Zeichnet Segmente dynamisch nach Superzyklus
+        # GENERISCHER TIEFEN-RENDERER (Erkennt Sub-Grade an Form & Zeichen)
         # =========================================================================
-        curr_color = '#D81B60' # Magenta (Zyklus 1)
-        curr_style = '-'
-        
         for k in range(1, len(snapped_waves)):
             p1 = snapped_waves[k-1]
             p2 = snapped_waves[k]
-            lbl2 = p2['raw_label']
+            lbl_raw = p2['raw_label']
             
-            # Farb-Weichen je nach Nomenklatur-Grad
-            if lbl2 in ['A', 'B', 'C', 'W', 'X', 'Y', 'Z']:
-                curr_color = orange_base
-                curr_style = '--'
-            elif lbl2 in ['(1)', '(2)', '(3)', '(4)', '(5)']:
-                curr_color = '#00E5FF' # Leuchtend Cyan (Zyklus 2 Impuls)
-                curr_style = '-'
-            elif lbl2 in ['(A)', '(B)', '(C)']:
-                curr_color = '#FFD54F' # Gelb gestrichelt (Zyklus 2 Korrektur)
-                curr_style = '--'
-            elif lbl2 in ['I', 'II', 'III', 'IV', 'V']:
-                curr_color = '#B388FF' # Flieder/Lila (Zyklus 3 Impuls)
-                curr_style = '-'
+            # Prüft generisch auf Sub-Grad Indikatoren (Punkt, Kleinbuchstaben oder Doppelklammer)
+            is_sub_degree = ('.' in lbl_raw) or any(c.islower() for c in p2['label']) or ('((' in lbl_raw)
+            
+            if is_sub_degree:
+                curr_color = '#FF4081' # Electric Pink für Sub-Wellen
+                curr_style = '-' if p2['is_peak'] else ':'
+                line_w, marker_s = 1.6, 6
+            else:
+                line_w, marker_s = 2.5, 9
+                if not p2['is_peak']: curr_color = orange_base; curr_style = '--'
+                elif '(' in lbl_raw: curr_color = '#00E5FF'; curr_style = '-'
+                elif ['I', 'V', 'X'].any(): curr_color = '#B388FF'; curr_style = '-'
+                else: curr_color = '#D81B60'; curr_style = '-'
                 
-            ax.plot([p1['date'], p2['date']], [p1['price'], p2['price']], 
-                    color=curr_color, linewidth=2.5, linestyle=curr_style, marker='o', markersize=9)
+            ax.plot([p1['date'], p2['date']], [p1['price'], p2['price']], color=curr_color, linewidth=line_w, linestyle=curr_style, marker='o', markersize=marker_s)
 
-        # Labels formatieren
-        for sw in snapped_waves:
-            xytext = (0, 16) if sw['is_peak'] else (0, -22)
+        if not c_is_confirmed and fib_upper and fib_lower:
+            y_b = min(fib_lower, fib_upper)
+            y_t = max(fib_lower, fib_upper)
+            ax.axhspan(ymin=y_b, ymax=y_t, facecolor='#00BFA5', alpha=0.15, label=fib_zone_label)
+            ax.hlines(y=fib_sweetspot, xmin=df.index.min(), xmax=last_date + timedelta(days=30), color='#00BFA5', linestyle=':', linewidth=1.8)
+            ax.annotate(f"🎯 SWEETSPOT ({fib_sweetspot:,.2f} USD)", xy=(last_date, fib_sweetspot), xytext=(0, 6), textcoords='offset points', color='#00BFA5', fontsize=11, fontweight='bold', ha='right', va='bottom')
+
+        for sw_idx, sw in enumerate(snapped_waves):
+            offset_y = 16 if sw['is_peak'] else -22
+            if sw_idx > 1 and sw['is_peak'] == snapped_waves[sw_idx-2]['is_peak']:
+                offset_y = 38 if sw['is_peak'] else -44
+
             va = 'bottom' if sw['is_peak'] else 'top'
-            lbl = sw['raw_label']
+            lbl_raw = sw['raw_label']
+            is_sub = ('.' in lbl_raw) or any(c.islower() for c in sw['label']) or ('((' in lbl_raw)
             
-            if lbl in ['A', 'B', 'C', 'W', 'X', 'Y', 'Z']: t_col = orange_base
-            elif lbl in ['(1)', '(2)', '(3)', '(4)', '(5)']: t_col = '#00E5FF'
-            elif lbl in ['(A)', '(B)', '(C)']: t_col = '#FFD54F'
-            elif lbl in ['I', 'II', 'III', 'IV', 'V']: t_col = '#B388FF'
+            f_size = 14 if is_sub else 20
+            if "( ? )" in sw['label']: t_col = '#FFD54F'
+            elif is_sub: t_col = '#FF4081'
+            elif not sw['is_peak']: t_col = orange_base
+            elif '(' in lbl_raw: t_col = '#00E5FF'
+            elif ['I', 'V', 'X'].any(): t_col = '#B388FF'
             else: t_col = '#D81B60'
             
-            ax.annotate(sw['label'], xy=(sw['date'], sw['price']), xytext=xytext, textcoords='offset points', color=t_col, fontsize=20, fontweight='heavy', ha='center', va=va)
+            ax.annotate(sw['label'], xy=(sw['date'], sw['price']), xytext=(0, offset_y), textcoords='offset points', color=t_col, fontsize=f_size, fontweight='heavy', ha='center', va=va)
 
         if price_b_gate and not c_is_confirmed:
-            ax.hlines(y=price_b_gate, xmin=df.index.min(), xmax=df.index.max() + timedelta(days=25), color='#E53935', linestyle='-.', linewidth=1.5)
+            ax.hlines(y=price_b_gate, xmin=df.index.min(), xmax=last_date + timedelta(days=30), color='#E53935', linestyle='-.', linewidth=1.5)
+            ax.annotate(f"🔒 GATE ({price_b_gate:,.2f} USD)", xy=(last_date, price_b_gate), xytext=(0, 6), textcoords='offset points', color='#E53935', fontsize=11, fontweight='bold', ha='right', va='bottom')
 
         ax.grid(True, which='both', color=grid_color, linestyle='--', linewidth=0.6)
         ax.set_axisbelow(True)
@@ -195,14 +279,14 @@ def main():
         
         ax.tick_params(axis='both', which='both', colors=text_color, labelsize=11, color=spine_color)
         ax.yaxis.tick_right()
-        ax.set_xlim(df.index.min() - timedelta(days=15), df.index.max() + timedelta(days=25))
+        ax.set_xlim(df.index.min() - timedelta(days=15), df.index.max() + timedelta(days=30))
             
         locator = mdates.AutoDateLocator(minticks=5, maxticks=10)
         ax.xaxis.set_major_locator(locator)
         ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f"{x:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')))
         
-        fig.text(0.05, 0.92, f"{symbol} - Total-Scan", color='white', fontsize=24, ha='left', va='center', fontweight='bold')
+        fig.text(0.05, 0.92, f"{symbol} - Universal EW Master", color='white', fontsize=24, ha='left', va='center', fontweight='bold')
         plt.subplots_adjust(top=0.85, bottom=0.1, left=0.05, right=0.88)
         
         buf = io.BytesIO()
@@ -217,4 +301,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+            
