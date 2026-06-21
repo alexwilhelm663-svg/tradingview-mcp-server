@@ -251,7 +251,6 @@ def main():
                 l_w, m_s = 2.2, 9
                 if not p2['is_peak']: c_line, c_style = correction_orange, '--'
                 elif '(' in lbl_raw: c_line, c_style = '#00BFA5', '-' 
-                # FIX: Saubere Generator-Abfrage statt kaputter .any() Listen-Methode!
                 elif any(c in lbl_raw for c in ['I', 'V', 'X']): c_line, c_style = '#7B1FA2', '-' 
                 else: c_line, c_style = impulse_blue, '-'
                 
@@ -278,7 +277,9 @@ def main():
             elif is_sub: t_col = '#FF4081'
             elif not sw['is_peak']: t_col = '#E65100' 
             elif '(' in lbl_raw: t_col = '#00796B' 
-            # FIX: Saubere Generator-Abfrage auch bei den Text-Labels!
+            # =========================================================================
+            # DER ECHTE, BEREINIGTE FIX IN DER TEXT-LABEL SCHLEIFE:
+            # =========================================================================
             elif any(c in lbl_raw for c in ['I', 'V', 'X']): t_col = '#4A148C'
             else: t_col = impulse_blue
             
