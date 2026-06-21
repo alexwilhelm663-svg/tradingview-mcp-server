@@ -30,7 +30,7 @@ def main():
         for col in ['open', 'high', 'low', 'close']:
             df[col] = df[col].astype(float)
         
-        # 1. Boden Welle 0 suchen
+        # 1. Boden Welle 0 suchen (Startpunkt)
         w0 = waves[0]
         w0_target = pd.to_datetime(w0['date'], errors='coerce')
         if pd.isna(w0_target) or df.empty: sys.exit(1)
@@ -40,7 +40,7 @@ def main():
         
         crop_date = start_win['low'].idxmin() if not start_win.empty else df.index[df.index.get_indexer([w0_target], method='nearest')[0]]
 
-        # 1 Jahr Vorlauf zum Begutachten des Absprungs
+        # 1 Jahr historischer Kontext-Vorlauf auf der X-Achse
         context_start = crop_date - timedelta(days=365)
         if context_start < df.index.min(): context_start = df.index.min()
             
@@ -54,7 +54,9 @@ def main():
 
         raw_labels = [str(w['label']).upper().strip() for w in waves]
 
-        # 2. Kausales Snapping aller Folgewellen
+        # =========================================================================
+        # 2. CENTERED POCKET SNAPPING: Trifft die echten lokalen Hochs & Tiefs
+        # =========================================================================
         for i in range(1, len(waves)):
             w = waves[i]
             t_date = pd.to_datetime(w['date'], errors='coerce')
@@ -63,6 +65,7 @@ def main():
             prev_date = wave_dates[-1]
             lbl_upper = raw_labels[i]
 
+            # Rollen-Zuweisung: Aktions-Gipfel vs. Korrektur-Täler
             if lbl_upper in ['1', '3', '5', 'I', 'III', 'V', 'B', 'TOP']:
                 is_peak = True
             elif lbl_upper in ['0', '2', '4', 'II', 'IV', 'A', 'C', 'START']:
@@ -70,19 +73,28 @@ def main():
             else:
                 is_peak = w['price'] > wave_prices[-1]
 
-            search_start = prev_date + timedelta(days=1)
-            search_end = max(t_date + timedelta(days=20), search_start + timedelta(days=45))
+            # FIX: Symmetrische Tasche (Pocket) exakt um das von der KI anvisierte Zieldatum!
+            pocket_start = t_date - timedelta(days=28)
+            pocket_end = t_date + timedelta(days=28)
 
-            if search_start > df.index.max(): search_start = df.index.max()
+            # Harte kausale Klammer: Suchfenster darf niemals in die Vorwelle ragen
+            if pocket_start <= prev_date:
+                pocket_start = prev_date + timedelta(days=1)
+            
+            if pocket_end < pocket_start:
+                pocket_end = pocket_start + timedelta(days=14)
 
-            mask = (df.index >= search_start) & (df.index <= search_end)
+            if pocket_start > df.index.max(): pocket_start = df.index.max()
+
+            mask = (df.index >= pocket_start) & (df.index <= pocket_end)
             win = df[mask]
 
             if not win.empty:
+                # Rastet präzise am höchsten Docht ('high') der Zieldatums-Tasche ein
                 actual_date = win['high'].idxmax() if is_peak else win['low'].idxmin()
                 price = win.loc[actual_date, 'high' if is_peak else 'low']
             else:
-                actual_date = search_start if search_start in df.index else df.index[df.index.get_indexer([search_start], method='nearest')[0]]
+                actual_date = pocket_start if pocket_start in df.index else df.index[df.index.get_indexer([pocket_start], method='nearest')[0]]
                 price = df.loc[actual_date, 'high' if is_peak else 'low']
 
             if isinstance(price, pd.Series): price = price.iloc[0]
@@ -92,9 +104,7 @@ def main():
             wave_labels.append(w['label'])
             is_peak_list.append(is_peak)
 
-        # =========================================================================
-        # 3. QUANT FIBONACCI PROJECTION ENGINE & B-GATE SCHRANKE
-        # =========================================================================
+        # 3. QUANT FIBONACCI ENGINE & DEMUTS-SCHRANKE (B-Gate)
         c_is_confirmed = True
         price_b_gate = None
         date_b_gate = None
@@ -121,25 +131,22 @@ def main():
                 c_is_confirmed = False
                 wave_labels[idx_c] = "C ( ? )"
 
-                # LOG-GEOMETRISCHE FIBONACCI-MATHEMATIK (Exaktes Vektor-Verhältnis Welle A)
+                # Log-geometrische Fibonacci-Projektion aus Vektor A
                 ratio_a = pa / p5 if p5 > 0 else 0.7
 
                 fib_061_target = pb * (ratio_a ** 0.618)
                 fib_100_target = pb * (ratio_a ** 1.000)
                 fib_161_target = pb * (ratio_a ** 1.618)
 
-                # ANKER-KORREKTUR: Wir zwingen den geschätzten Zukunftspunkt C mathematisch 
-                # exakt auf die Koordinate des 1.00-Standardziels!
-                target_c_date = last_date + timedelta(days=14)
-                wave_dates[idx_c] = target_c_date
+                # Punkt C physisch auf das 1.00-Zielkreuz anheften
+                wave_dates[idx_c] = last_date + timedelta(days=14)
                 wave_prices[idx_c] = fib_100_target
 
         print(json.dumps({
             "correction_gate": {
                 "b_gate_price": price_b_gate if price_b_gate else 0,
                 "current_close": float(last_close),
-                "is_confirmed": c_is_confirmed,
-                "fib_target_100": fib_100_target if fib_100_target else 0
+                "is_confirmed": c_is_confirmed
             }
         }), file=sys.stderr)
 
@@ -152,7 +159,6 @@ def main():
         
         fig.patch.set_facecolor(bg_color)
         ax.set_facecolor(bg_color)
-        
         ax.set_yscale('log')
         
         ax.plot(df.index, df['close'], color=cyan, linewidth=2, label='Close Price')
@@ -165,50 +171,36 @@ def main():
                 if len(wave_dates) > idx_5:
                     if 'B' in raw_labels and not c_is_confirmed:
                         idx_b = raw_labels.index('B')
+                        ax.plot(wave_dates[idx_5:idx_b+1], wave_prices[idx_5:idx_b+1], color=orange, linewidth=2.5, linestyle='--', marker='o', markersize=11)
+                        ax.plot(wave_dates[idx_b:], wave_prices[idx_b:], color='#FFCC80', linewidth=2.0, linestyle=':', marker='o', markersize=10, alpha=0.85)
                         
-                        # 1. Bestätigte Korrektur 5 -> A -> B
-                        ax.plot(wave_dates[idx_5:idx_b+1], wave_prices[idx_5:idx_b+1], color=orange, linewidth=2.5, linestyle='--', marker='o', markersize=11, label='Corrective Waves (A-B)')
+                        # Ziel-Cluster (0.618 - 1.618)
+                        if fib_161_target and fib_061_target:
+                            ax.axhspan(ymin=fib_161_target, ymax=fib_061_target, facecolor='#00BFA5', alpha=0.15, label='🎯 Fib Target Cluster')
+                            ax.hlines(y=fib_100_target, xmin=date_b_gate, xmax=last_date + timedelta(days=35), color='#00BFA5', linestyle=':', linewidth=1.8)
+                            ax.annotate(
+                                f"🎯 FIB TARGET 1.00 ({fib_100_target:,.2f} USD)",
+                                xy=(last_date, fib_100_target), xytext=(0, 6), textcoords='offset points', color='#00BFA5', fontsize=11, fontweight='bold', ha='right', va='bottom'
+                            )
                         
-                        # 2. Projektionsstrich B -> C (Laserstrahl ins Fib-Ziel)
-                        ax.plot(wave_dates[idx_b:], wave_prices[idx_b:], color='#FFCC80', linewidth=2.0, linestyle=':', marker='o', markersize=10, alpha=0.85, label='Proj. Low C (Fib 1.00)')
+                        # Horizontale B-Gate Schranke
+                        ax.hlines(y=price_b_gate, xmin=date_b_gate, xmax=last_date + timedelta(days=35), color='#E53935', linestyle='-.', linewidth=1.5)
                         
-                        # =========================================================================
-                        # 3. ZIEL-CLUSTER EINBLENDEN (Halbtransparente Teal-Zone)
-                        # =========================================================================
-                        ax.axhspan(ymin=fib_161_target, ymax=fib_061_target, facecolor='#00BFA5', alpha=0.15, label='🎯 Fib Target Cluster (0.618 - 1.618)')
-                        
-                        # Haupt-Ziellinie (1.00 Sweetspot)
-                        ax.hlines(y=fib_100_target, xmin=date_b_gate, xmax=last_date + timedelta(days=25), color='#00BFA5', linestyle=':', linewidth=1.8)
-                        
-                        ax.annotate(
-                            f"🎯 FIB TARGET 1.00A ({fib_100_target:,.2f} USD)",
-                            xy=(last_date, fib_100_target),
-                            xytext=(0, 6),
-                            textcoords='offset points',
-                            color='#00BFA5',
-                            fontsize=11,
-                            fontweight='bold',
-                            ha='right',
-                            va='bottom'
+                        # HUD Checkliste
+                        checklist_text = (
+                            "🔒 KORREKTUR-ABSCHLUSS CHECKLISTE:\n"
+                            " [ ] Stufe 1: Impulsiver 5-Teiler (i-v) nach oben\n"
+                            " [ ] Stufe 2: Dreiteiliger Pullback (a-b-c) bildet höheres Tief\n"
+                            f" [{'x' if c_is_confirmed else ' '}] Stufe 3: Schlusskurs bricht B-Gate ({price_b_gate:,.2f} USD)"
                         )
-                        
-                        # Horizontale Warnschranke (B-Gate)
-                        ax.hlines(y=price_b_gate, xmin=date_b_gate, xmax=last_date + timedelta(days=25), color='#E53935', linestyle='-.', linewidth=1.5, alpha=0.85)
-                        ax.annotate(
-                            f"🔒 CONFIRMATION GATE ({price_b_gate:,.2f} USD)",
-                            xy=(last_date, price_b_gate),
-                            xytext=(0, 6),
-                            textcoords='offset points',
-                            color='#E53935',
-                            fontsize=11,
-                            fontweight='bold',
-                            ha='right',
-                            va='bottom'
+                        ax.text(
+                            0.96, 0.06, checklist_text, transform=ax.transAxes, facecolor='#1E1F22', edgecolor=orange if not c_is_confirmed else cyan,
+                            color='white', fontsize=11, fontweight='bold', ha='right', va='bottom', bbox=dict(boxstyle='round,pad=0.6', facecolor='#1E1F22', edgecolor=orange if not c_is_confirmed else cyan, alpha=0.9)
                         )
                     else:
-                        ax.plot(wave_dates[idx_5:], wave_prices[idx_5:], color=orange, linewidth=2.5, linestyle='--', marker='o', markersize=11, label='Corrective Waves (A-B-C)')
+                        ax.plot(wave_dates[idx_5:], wave_prices[idx_5:], color=orange, linewidth=2.5, linestyle='--', marker='o', markersize=11)
             except ValueError:
-                ax.plot(wave_dates, wave_prices, color=magenta, linewidth=2.5, linestyle='-', marker='o', markersize=11, label='Elliott Wave Count')
+                ax.plot(wave_dates, wave_prices, color=magenta, linewidth=2.5, linestyle='-', marker='o', markersize=11)
 
         for date, price, label, is_p in zip(wave_dates, wave_prices, wave_labels, is_peak_list):
             xytext = (0, 18) if is_p else (0, -18)
@@ -218,17 +210,7 @@ def main():
             elif label.upper() in ['A', 'B', 'C', 'W', 'X', 'Y']: lbl_color = orange
             else: lbl_color = magenta
             
-            ax.annotate(
-                label,
-                xy=(date, price),
-                xytext=xytext,
-                textcoords='offset points',
-                color=lbl_color,
-                fontsize=24,
-                fontweight='bold',
-                ha='center',
-                va=va
-            )
+            ax.annotate(label, xy=(date, price), xytext=xytext, textcoords='offset points', color=lbl_color, fontsize=24, fontweight='bold', ha='center', va=va)
             
         ax.grid(True, which='both', color=grid_color, linestyle='-', linewidth=0.8)
         ax.set_axisbelow(True)
@@ -236,7 +218,7 @@ def main():
         for spine in ax.spines.values(): spine.set_color(spine_color)
         ax.tick_params(axis='both', which='both', colors=text_color, labelsize=11, color=spine_color)
         
-        ax.set_xlim(df.index.min() - timedelta(days=15), df.index.max() + timedelta(days=25))
+        ax.set_xlim(df.index.min() - timedelta(days=15), df.index.max() + timedelta(days=35))
             
         locator = mdates.AutoDateLocator(minticks=5, maxticks=10)
         ax.xaxis.set_major_locator(locator)
@@ -249,9 +231,6 @@ def main():
         else:
             fig.text(0.5, 0.92, "Elliott-Wellen Superzyklus", color=cyan, fontsize=22, ha='left', va='center')
         
-        legend = ax.legend(loc='upper left', facecolor=bg_color, edgecolor=grid_color, fontsize=11)
-        for t in legend.get_texts(): t.set_color('white')
-            
         plt.subplots_adjust(top=0.85, bottom=0.1, left=0.08, right=0.95)
         
         buf = io.BytesIO()
@@ -266,4 +245,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-                
+    
