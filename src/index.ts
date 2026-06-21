@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit All-Time Max Genesis & Tabellen-Semantik-Schutz (v18)...");
+console.log("🤖 Bot läuft in der Cloud mit All-Time Max Genesis & Tabellen-Semantik-Schutz (v19)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -86,7 +86,6 @@ bot.command("analyse", async (ctx) => {
 
   try {
     const period2 = new Date();
-    // Zwingt Yahoo zum maximal historischen Download ab der allerersten Sekunde der Börsennotierung
     const period1 = new Date("1970-01-01");
 
     const result = await yahooFinance.historical(cleanSymbol, { period1, period2, interval: yahooInterval }) as any[];
@@ -109,9 +108,6 @@ bot.command("analyse", async (ctx) => {
   const streamStartDate = candlesArray[0].date;
   const streamEndDate = candlesArray[candlesArray.length - 1].date;
 
-  // =========================================================================
-  // DAS KOMPLETTE ORIGINAL-REGELWERK + DIE EISERNEN TABELLEN-VAKZINE
-  // =========================================================================
   const mainPrompt = `Rolle und Ziel:
 Du bist ein erstklassiger technischer Analyst und Senior-Experte für das Elliott-Wellen-Prinzip (Senior-EW-Analyst). Analysiere den folgenden komprimierten Marktdaten-Stream. Da Asset-Preise exponentiell wachsen, wird deine Zählung auf einer logarithmischen Y-Achse dargestellt.
 
@@ -192,16 +188,13 @@ Korrekturen lassen sich in vier Hauptkategorien unterteilen:
 
 ---
 
-### 4. EISERNE TABELLEN-SEMANTIK & FEHLER-PRÄVENTION (MANDATORY GUARDRAILS)
-Um mathematische Kollisionen im nachfolgenden Python-Renderer zu verhindern, hältst du dich beim Ausfüllen der Markdown-Tabelle unter Androhung des Abbruchs an folgende 4 unumstößliche Gesetze:
+### 4. EISERNE TABELLEN-SEMANTIK & FEHLER-PRÄVENTION
+Um mathematische Kollisionen im nachfolgenden Python-Renderer zu verhindern, hältst du dich beim Ausfüllen der Markdown-Tabelle an folgende Gesetze:
 
-1. **Das Endpunkt-Gesetz für Eltern-Zeilen:** Zeilen eines übergeordneten Grades (z.B. [I], [II], [III], (3), W, Y) deklarieren in der Spalte "Preis" und "Datum" IMMER das exakte ZIEL bzw. das ENDE dieser Bewegung, NIEMALS den Startpunkt! 
-   * Der Preis und das Datum von Welle \`[I]\` MUSS exakt identisch sein mit dem Preis und Datum ihrer Sub-Welle \`(5)\`.
-   * Der Preis und das Datum von Welle \`(3)\` MUSS exakt identisch sein mit dem Preis und Datum ihrer Sub-Welle \`3.5\`.
-   * Notierst du in der Hauptzeile den Startpreis, ist die Tabelle korrupt.
-2. **Verbot von Amputationen:** Du darfst einen Primärgrad erst dann mit einer Endzeile abschließen, wenn ALLE seine Untergrade in der Tabelle stehen! Wenn du eine gedehnte Welle \`(3)\` in \`3.1\` bis \`3.5\` aufschlüsselst, folgen danach zwingend die Zeilen für Welle \`(4)\` und Welle \`(5)\`, bevor der übergeordnete Impuls \`[III]\` als beendet deklariert werden darf.
-3. **Absolutes Klon-Verbot:** Es ist dir mathematisch verboten, exakt denselben Fließkommapreis für zwei unterschiedliche historische Hochs oder Tiefs zu recyceln (z.B. \`W.B = 183.16\` und \`Y.B = 183.16\` ist illegal). Jedes Extremum im Markt ist einzigartig. Finde das echte Zwischenhoch!
-4. **Echte Regular Flats:** Ein Regular Flat (A-B-C) verlangt, dass Welle C auf das nahezu exakt gleiche Preisniveau wie Welle A fällt. Liegt Welle C deutlich über dem Tief von A, nennst du es "Truncated Flat", aber niemals "Regular Flat".
+1. **Das Endpunkt-Gesetz für Eltern-Zeilen:** Zeilen eines übergeordneten Grades (z.B. [I], [II], [III], (3), W, Y) deklarieren in der Spalte "Preis" und "Datum" IMMER das exakte ZIEL bzw. das ENDE dieser Bewegung, NIEMALS den Startpunkt! Der Preis von [I] muss exakt identisch mit dem Endpreis seiner Unterwelle (5) sein.
+2. **Verbot von Amputationen:** Du darfst einen Primärgrad erst dann abschließen, wenn alle seine Untergrade in der Tabelle stehen! Nach Welle 3.5 folgt zwingend Welle (4) und (5), bevor der Hauptimpuls beendet ist.
+3. **Absolutes Klon-Verbot:** Es ist dir verboten, exakt denselben Fließkommapreis für zwei unterschiedliche historische Extreme zu recyceln.
+4. **Echte Regular Flats:** Ein Regular Flat verlangt, dass Welle C auf das nahezu exakt gleiche Preisniveau wie Welle A fällt.
 
 ---
 FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
@@ -218,7 +211,7 @@ Keine Prosa in der Tabelle!`;
   let attempts = 5; 
   let backoffDelay = 2000; 
 
-  await ctx.reply(`🧠 Analysiere maximale Yahoo-Historie ab dem ersten Börsentag (${streamStartDate} bis ${streamEndDate})...`);
+  await ctx.reply(`🧠 Analysiere maximale Yahoo-Historie ab IPO (${streamStartDate} bis ${streamEndDate})...`);
 
   while (attempts > 0) {
     try {
@@ -288,7 +281,6 @@ Keine Prosa in der Tabelle!`;
         await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 EW All-Time Genesis Master View: ${cleanSymbol} (${finalIntervalLabel})` });
     }
     
-    // Chunk-Splitter fängt überlange Antworten ab
     const fullReport = responseText + statusBadge;
     const chunkSize = 4000;
     
@@ -341,4 +333,5 @@ if (RENDER_EXTERNAL_URL) {
         try { if (body.trim()) bot.handleUpdate(JSON.parse(body)); } catch (e) {}
       });
     } else res.end("Bot Server is healthy");
-  }
+  }).listen(PORT);
+} else bot.launch();
