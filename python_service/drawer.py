@@ -10,23 +10,18 @@ import matplotlib.dates as mdates
 from datetime import timedelta
 
 def main():
-    telemetry = []
-    
     try:
         json_str = sys.stdin.read()
-        if not json_str:
-            sys.exit(1)
+        if not json_str: sys.exit(1)
             
         data = json.loads(json_str)
         waves = data.get("waves", [])
         candles = data.get("candles", [])
         symbol = data.get("symbol", "Symbol")
 
-        if not candles or not waves:
-            sys.exit(1)
+        if not candles or not waves: sys.exit(1)
 
         df = pd.DataFrame(candles)
-        # Spaltennamen robust in Kleinbuchstaben umwandeln
         df.columns = [c.lower() for c in df.columns]
         df['date'] = pd.to_datetime(df['date'])
         df.set_index('date', inplace=True)
@@ -35,53 +30,40 @@ def main():
         for col in ['open', 'high', 'low', 'close']:
             df[col] = df[col].astype(float)
         
-        # 1. Startpunkt (Welle 0) ermitteln und Chart exakt am orthodoxen Boden abschneiden
+        # 1. Boden Welle 0 suchen
         w0 = waves[0]
         w0_target = pd.to_datetime(w0['date'], errors='coerce')
         if pd.isna(w0_target) or df.empty: sys.exit(1)
 
-        lbl0_upper = str(w0['label']).upper().strip()
-        is_peak_start = True if lbl0_upper in ['1', '3', '5', 'I', 'III', 'V', 'B', 'TOP'] else False
-
-        # Suchfenster für den Makro-Boden (±45 Tage)
         start_mask = (df.index >= (w0_target - timedelta(days=45))) & (df.index <= (w0_target + timedelta(days=45)))
         start_win = df[start_mask]
         
-        if not start_win.empty:
-            crop_date = start_win['high'].idxmax() if is_peak_start else start_win['low'].idxmin()
-            snap_type = f"orthodox_macro_{'high' if is_peak_start else 'low'}_45d"
-        else:
-            idx = df.index.get_indexer([w0_target], method='nearest')[0]
-            crop_date = df.index[idx]
-            snap_type = "fallback_nearest_indexer"
+        crop_date = start_win['low'].idxmin() if not start_win.empty else df.index[df.index.get_indexer([w0_target], method='nearest')[0]]
 
-        df = df.loc[crop_date:]
+        # 1 Jahr Vorlauf zum Begutachten des Absprungs
+        context_start = crop_date - timedelta(days=365)
+        if context_start < df.index.min(): context_start = df.index.min()
+            
+        df = df.loc[context_start:]
         if df.empty: sys.exit(1)
 
         wave_dates = [crop_date]
-        wave_prices = [df.loc[crop_date, 'high' if is_peak_start else 'low']]
+        wave_prices = [df.loc[crop_date, 'low']]
         wave_labels = [w0['label']]
-        is_peak_list = [is_peak_start]
+        is_peak_list = [False]
 
-        telemetry.append({
-            "step": "CHART_CROP (Wave 0)",
-            "ai_date": str(w0['date']),
-            "snapped_date": str(crop_date.date()),
-            "price": float(wave_prices[0]),
-            "method": snap_type
-        })
+        # Sauberes, unveränderliches Lookup-Array der Roh-Labels
+        raw_labels = [str(w['label']).upper().strip() for w in waves]
 
-        # =================================================================
-        # 2. KAUSALES MONOTONIE-GESETZ (Streng vorwärtsgerichtetes Snapping)
-        # =================================================================
+        # 2. Kausales Snapping aller Folgewellen
         for i in range(1, len(waves)):
             w = waves[i]
             t_date = pd.to_datetime(w['date'], errors='coerce')
             if pd.isna(t_date): continue
 
             prev_date = wave_dates[-1]
+            lbl_upper = raw_labels[i]
 
-            lbl_upper = str(w['label']).upper().strip()
             if lbl_upper in ['1', '3', '5', 'I', 'III', 'V', 'B', 'TOP']:
                 is_peak = True
             elif lbl_upper in ['0', '2', '4', 'II', 'IV', 'A', 'C', 'START']:
@@ -89,29 +71,20 @@ def main():
             else:
                 is_peak = w['price'] > wave_prices[-1]
 
-            # KAUSALES GESETZ: Suchfenster startet zwingend erst am Tag NACH der Vorwelle!
             search_start = prev_date + timedelta(days=1)
             search_end = max(t_date + timedelta(days=20), search_start + timedelta(days=45))
 
-            if search_start > df.index.max():
-                search_start = df.index.max()
+            if search_start > df.index.max(): search_start = df.index.max()
 
             mask = (df.index >= search_start) & (df.index <= search_end)
             win = df[mask]
 
             if not win.empty:
-                # Peaks snappen orthodox an den höchsten Docht ('high'), Böden an den tiefsten Docht ('low')
                 actual_date = win['high'].idxmax() if is_peak else win['low'].idxmin()
                 price = win.loc[actual_date, 'high' if is_peak else 'low']
-                m_used = "causal_forward_window_extrema"
             else:
-                if search_start in df.index:
-                    actual_date = search_start
-                else:
-                    idx = df.index.get_indexer([search_start], method='nearest')[0]
-                    actual_date = df.index[idx]
+                actual_date = search_start if search_start in df.index else df.index[df.index.get_indexer([search_start], method='nearest')[0]]
                 price = df.loc[actual_date, 'high' if is_peak else 'low']
-                m_used = "causal_nearest_fallback"
 
             if isinstance(price, pd.Series): price = price.iloc[0]
 
@@ -120,46 +93,101 @@ def main():
             wave_labels.append(w['label'])
             is_peak_list.append(is_peak)
 
-            telemetry.append({
-                "wave": w['label'],
-                "ai_date": str(w['date']),
-                "snapped_date": str(actual_date.date()),
-                "price": float(price),
-                "is_peak": is_peak,
-                "search_window": f"{search_start.date()} to {search_end.date()}",
-                "method": m_used
-            })
+        # =========================================================================
+        # 3. DIE DEMUTS-SCHRANKE (B-Gate Statusprüfung für Welle C)
+        # =========================================================================
+        c_is_confirmed = True
+        price_b_gate = None
+        date_b_gate = None
+        last_close_price = df['close'].iloc[-1]
 
-        print(json.dumps({"telemetry_v2": telemetry}, indent=2), file=sys.stderr)
+        if 'C' in raw_labels and 'B' in raw_labels:
+            idx_b = raw_labels.index('B')
+            idx_c = raw_labels.index('C')
+            price_b_gate = wave_prices[idx_b]
+            date_b_gate = wave_dates[idx_b]
+
+            # Notiert der aktuelle Schlusskurs noch unter der B-Spitze, ist C unbestätigt!
+            if last_close_price < price_b_gate:
+                c_is_confirmed = False
+                wave_labels[idx_c] = "C ( ? )" # Warn-Präfix ins Bild setzen
+
+        # Sende Status-Telemetrie an Node.js für die Telegram-Textausgabe
+        print(json.dumps({
+            "correction_gate": {
+                "b_gate_price": price_b_gate if price_b_gate else 0,
+                "current_close": float(last_close_price),
+                "is_confirmed": c_is_confirmed
+            }
+        }), file=sys.stderr)
 
         # --- PLOT DASHBOARD (TradingView Dark Theme + LOG SCALE) ---
         plt.rcParams['font.family'] = 'sans-serif'
         fig, ax = plt.subplots(figsize=(16, 8))
         
         bg_color, grid_color, spine_color = '#2B2D33', '#3B3E46', '#60646D'
-        cyan, magenta, text_color = '#00BFA5', '#D81B60', '#B2B5BE'
+        cyan, magenta, orange, text_color = '#00BFA5', '#D81B60', '#FF9800', '#B2B5BE'
         
         fig.patch.set_facecolor(bg_color)
         ax.set_facecolor(bg_color)
         
         ax.set_yscale('log')
         
-        # Plot Close-Linie
         ax.plot(df.index, df['close'], color=cyan, linewidth=2, label='Close Price')
         
-        # Plot Vektor-Verbindungen der echten Docht-Extrema
         if len(wave_dates) > 1:
-            ax.plot(wave_dates, wave_prices, color=magenta, linewidth=2, linestyle='-', marker='o', markersize=12, label='Elliott Wave Impuls')
-            
+            try:
+                idx_5 = raw_labels.index('5')
+                # Impuls-Linie (0 bis 5)
+                ax.plot(wave_dates[:idx_5+1], wave_prices[:idx_5+1], color=magenta, linewidth=2.5, linestyle='-', marker='o', markersize=11, label='Motive Waves (1-5)')
+                
+                # Korrektur-Linie (5 bis C)
+                if len(wave_dates) > idx_5:
+                    if 'B' in raw_labels and not c_is_confirmed:
+                        idx_b = raw_labels.index('B')
+                        # 5 -> A -> B normal gestrichelt
+                        ax.plot(wave_dates[idx_5:idx_b+1], wave_prices[idx_5:idx_b+1], color=orange, linewidth=2.5, linestyle='--', marker='o', markersize=11, label='Corrective Waves (A-B)')
+                        # B -> C gepunktet als schwebende Projektion
+                        ax.plot(wave_dates[idx_b:], wave_prices[idx_b:], color='#FFCC80', linewidth=2.0, linestyle=':', marker='o', markersize=10, alpha=0.8, label='Proj. Low C (unconfirmed)')
+                        
+                        # HORIZONTALE WARNLINIE (B-Gate) EINZEICHNEN
+                        ax.hlines(y=price_b_gate, xmin=date_b_gate, xmax=df.index.max() + timedelta(days=15), color='#E53935', linestyle='-.', linewidth=1.5, alpha=0.85)
+                        
+                        # Auf einer Log-Skala entspricht Multiplikation mit 1.05 einem konstanten vertikalen Pixel-Abstand!
+                        ax.annotate(
+                            f"🔒 CONFIRMATION GATE (B-Top: {price_b_gate:,.2f} USD)",
+                            xy=(df.index.max(), price_b_gate),
+                            xytext=(0, 6),
+                            textcoords='offset points',
+                            color='#E53935',
+                            fontsize=11,
+                            fontweight='bold',
+                            ha='right',
+                            va='bottom'
+                        )
+                    else:
+                        ax.plot(wave_dates[idx_5:], wave_prices[idx_5:], color=orange, linewidth=2.5, linestyle='--', marker='o', markersize=11, label='Corrective Waves (A-B-C)')
+            except ValueError:
+                ax.plot(wave_dates, wave_prices, color=magenta, linewidth=2.5, linestyle='-', marker='o', markersize=11, label='Elliott Wave Count')
+
         for date, price, label, is_p in zip(wave_dates, wave_prices, wave_labels, is_peak_list):
             xytext = (0, 18) if is_p else (0, -18)
             va = 'bottom' if is_p else 'top'
+            
+            # Farb-Register der Labels
+            if "( ? )" in label:
+                lbl_color = '#FFD54F' # Warngelb für unbestätigtes C
+            elif label.upper() in ['A', 'B', 'C', 'W', 'X', 'Y']:
+                lbl_color = orange
+            else:
+                lbl_color = magenta
+            
             ax.annotate(
                 label,
                 xy=(date, price),
                 xytext=xytext,
                 textcoords='offset points',
-                color=magenta,
+                color=lbl_color,
                 fontsize=24,
                 fontweight='bold',
                 ha='center',
@@ -172,16 +200,20 @@ def main():
         for spine in ax.spines.values(): spine.set_color(spine_color)
         ax.tick_params(axis='both', which='both', colors=text_color, labelsize=11, color=spine_color)
         
-        ax.set_xlim(df.index.min() - timedelta(days=10), df.index.max() + timedelta(days=10))
+        ax.set_xlim(df.index.min() - timedelta(days=15), df.index.max() + timedelta(days=15))
             
         locator = mdates.AutoDateLocator(minticks=5, maxticks=10)
         ax.xaxis.set_major_locator(locator)
         ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
-        
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f"{x:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')))
         
+        # DYNAMISCHER TITEL (Warnung, falls unbestätigt)
         fig.text(0.5, 0.92, f"{symbol} - ", color='white', fontsize=22, ha='right', va='center')
-        fig.text(0.5, 0.92, "Elliott-Wellen-Analyse (Log-Scale)", color=cyan, fontsize=22, ha='left', va='center')
+        
+        if not c_is_confirmed and price_b_gate:
+            fig.text(0.5, 0.92, "Korrektur Aktiv [Boden C unbestätigt]", color='#FF9800', fontsize=22, ha='left', va='center', fontweight='bold')
+        else:
+            fig.text(0.5, 0.92, "Elliott-Wellen Superzyklus", color=cyan, fontsize=22, ha='left', va='center')
         
         legend = ax.legend(loc='upper left', facecolor=bg_color, edgecolor=grid_color, fontsize=11)
         for t in legend.get_texts(): t.set_color('white')
@@ -200,4 +232,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-            
+        
