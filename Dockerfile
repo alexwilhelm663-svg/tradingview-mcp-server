@@ -1,30 +1,54 @@
-# Schlankes Basis-Image (spart extrem viel RAM im Vergleich zu Playwright)
-FROM node:18-bullseye-slim
+# =========================================================================
+# 1. BASE IMAGE (Topmodernes Debian 12 Bookworm + Node 22 Slim)
+# =========================================================================
+FROM node:22-bookworm-slim
 
-# 1. System-Abhängigkeiten für Python und Matplotlib installieren
-RUN apt-get update && apt-get install -y \
+# Verhindert interaktive Debian-Rückfragen während des CI-Builds
+ENV DEBIAN_FRONTEND=noninteractive
+
+# =========================================================================
+# 2. SYSTEM-FUNDAMENT & PYTHON 3.11 INSTALLATION
+# =========================================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-dev \
+    build-essential \
+    pkg-config \
+    libfreetype6-dev \
+    libpng-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Arbeitsverzeichnis im Container erstellen
 WORKDIR /app
 
-# 3. Node.js Abhängigkeiten kopieren und installieren
-COPY package*.json ./
-RUN npm install
+# =========================================================================
+# 3. NODE.JS ABHÄNGIGKEITEN (Pfeilschneller Cache-Layer)
+# =========================================================================
+COPY package*.json tsconfig.json ./
+RUN npm ci
 
-# 4. Python-Abhängigkeiten kopieren und über pip installieren
-# (Ohne das Flag, da bullseye-slim eine ältere pip-Version nutzt, die es nicht benötigt)
-COPY python_service/requirements.txt ./python_service/
-RUN pip3 install --no-cache-dir -r python_service/requirements.txt
+# =========================================================================
+# 4. PYTHON QUANT ENGINE INSTALLATION (Mit legalem PEP 668 Override)
+# =========================================================================
+# Falls du eine requirements.txt hast, nutzt er sie – ansonsten Fallback auf Direkt-Pip
+COPY requirements.txt* ./
+RUN if [ -f requirements.txt ]; then \
+        pip3 install --no-cache-dir --break-system-packages -r requirements.txt; \
+    else \
+        pip3 install --no-cache-dir --break-system-packages pandas matplotlib yahoo-finance2; \
+    fi
 
-# 5. Den restlichen Quellcode in den Container kopieren
+# =========================================================================
+# 5. SOURCE CODE BUILD & START
+# =========================================================================
 COPY . .
 
-# 6. TypeScript-Code zu JavaScript kompilieren
+# Kompiliert den TypeScript-Code zu JavaScript (dist/)
 RUN npm run build
 
-# 7. Startbefehl für den Bot
+# Port-Freigabe für die Render-Cloud oder lokale Aufrufe
+ENV PORT=10000
+EXPOSE 10000
+
+# Startet den MCP-Server / Telegram-Bot
 CMD ["npm", "start"]
