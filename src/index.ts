@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit unzerstörbarem Tabellen-Parser (v2)...");
+console.log("🤖 Bot läuft in der Cloud mit 10-Jahres-Pipeline & Webhook-Schutzschirm...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -21,7 +21,7 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-// FIX: Kugelsicherer Parser prüft Spalte 1 auf Ziffern. Völlig immun gegen das Wort "Welle".
+// Kugelsicherer Parser: Scannt Spalte 1 auf Ziffern. Völlig immun gegen Wörter wie "Welle".
 function parseWavesFromText(text: string): Array<{ label: string; date: string; price: number }> {
   const waves: Array<{ label: string; date: string; price: number }> = [];
   const lines = text.split('\n');
@@ -33,8 +33,8 @@ function parseWavesFromText(text: string): Array<{ label: string; date: string; 
     // Gültige Zeile: Mindestens 2 Spalten UND die Datums-Spalte (Index 1) enthält Ziffern
     if (parts.length >= 2 && /\d/.test(parts[1])) {
         let label = parts[0].replace(/[\*\`\[\]]/g, '').trim();
-        // Schneidet Präfixe wie "Welle " oder "Wave " weg, damit saubere Zahlen (0, I, 2) bleiben
-        label = label.replace(/^(?:Welle|Wave)\s+/i, '').trim();
+        // Schneidet Präfixe wie "Welle ", "Wave " oder "Top " weg, damit saubere Ziffern (0, I, 2) bleiben
+        label = label.replace(/^(?:Welle|Wave|Top|Bottom|Punkt)\s+/i, '').trim();
         
         const rawDate = parts[1].replace(/[\*\`\[\]]/g, '').trim();
         
@@ -59,7 +59,12 @@ bot.command("analyse", async (ctx) => {
   const args = rawText.split(" ");
   
   const symbol = args[1];
-  let requestedInterval = args[2] ? args[2].toLowerCase().trim() : "auto";
+  const isDebug = rawText.toLowerCase().includes("debug");
+  
+  let requestedInterval = "auto";
+  if (args[2] && args[2].toLowerCase() !== "debug") {
+      requestedInterval = args[2].toLowerCase().trim();
+  }
 
   if (!symbol) return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse MSTR");
 
@@ -67,6 +72,7 @@ bot.command("analyse", async (ctx) => {
   if (cleanSymbol.includes(":")) cleanSymbol = cleanSymbol.split(":").pop()!;
   if (cleanSymbol === "P911") cleanSymbol = "P911.DE";
 
+  // Standardauflösung: Maximale Präzision auf Tagesbasis (1D)
   let yahooInterval: "1d" | "1wk" | "1mo" = "1d";
   let finalIntervalLabel = "1D";
 
@@ -85,7 +91,7 @@ bot.command("analyse", async (ctx) => {
   try {
     const period2 = new Date();
     const period1 = new Date();
-    // FIX: 10 Jahre Lookback garantiert, dass Makro-Böden (wie MSTR Jan 2023) geladen werden
+    // 10 Jahre Lookback garantiert, dass Makro-Böden physisch im JSON-Array landen
     period1.setFullYear(period2.getFullYear() - 10); 
 
     const result = await yahooFinance.historical(cleanSymbol, { period1, period2, interval: yahooInterval }) as any[];
@@ -146,9 +152,8 @@ Nutze als Bezeichnungen NUR: 0, 1, 2, 3, 4, 5, A, B, C, I, II, III, IV, V.`;
 
   const wavesData = parseWavesFromText(responseText);
 
-  // Falls die KI gar keine Tabelle erzeugt hat
   if (wavesData.length === 0) {
-      return ctx.reply(`🚨 **FEHLER:** Die KI hat keine auslesbare Tabelle geliefert.\n\nRoher Output:\n\`\`\`text\n${responseText.substring(0, 3800)}\n\`\`\``);
+      return ctx.reply(`🚨 **PARSER-FEHLER:** Die KI hat keine auslesbare Tabelle geliefert.\n\nRoher Output:\n\`\`\`text\n${responseText.substring(0, 3800)}\n\`\`\``);
   }
 
   chatSessions[chatId] = {
@@ -180,14 +185,81 @@ Nutze als Bezeichnungen NUR: 0, 1, 2, 3, 4, 5, A, B, C, I, II, III, IV, V.`;
   });
 });
 
+bot.on("text", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const userQuestion = ctx.message.text;
+  const session = chatSessions[chatId];
+
+  if (!session || !session.lastDataPayload) {
+    return ctx.reply("❌ Starte zuerst eine Analyse mit `/analyse`.");
+  }
+
+  await ctx.reply("🤔 Analysiere Rückfrage...");
+
+  try {
+    session.history.push({ role: "user", text: userQuestion });
+    const contents: any[] = [];
+    session.history.forEach(msg => {
+      contents.push(`${msg.role === "user" ? "User" : "Model"}: ${msg.text}`);
+    });
+    contents.push(`Beziehe dich auf folgende Rohdaten: ${JSON.stringify(session.lastDataPayload.candles)}. Beantworte die Frage kurz.`);
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: contents,
+      config: {
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
+        ]
+      }
+    });
+
+    const answerText = response.text || "Keine Antwort möglich.";
+    session.history.push({ role: "model", text: answerText });
+    await ctx.reply(`💬 Antwort:\n\n${answerText}`);
+  } catch (error: any) {
+    await ctx.reply(`❌ Fehler: ${error.message}`);
+  }
+});
+
 if (RENDER_EXTERNAL_URL) {
   const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
   bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
-  http.createServer((req, res) => {
+  
+  const server = http.createServer((req, res) => {
     if (req.url === webhookPath && req.method === "POST") {
       let body = "";
-      req.on("data", c => body += c);
-      req.on("end", () => bot.handleUpdate(JSON.parse(body)));
-    } else res.end("OK");
-  }).listen(PORT);
-} else bot.launch();
+      req.on("data", chunk => body += chunk);
+      req.on("end", () => {
+        // FIX: SOFORTIGES ACKNOWLEDGE AN TELEGRAM! (Stoppuhr anhält, 0 Retries)
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok" }));
+
+        // Die KI-Analyse läuft danach entkoppelt im Hintergrund weiter
+        try {
+          if (body.trim()) {
+            const update = JSON.parse(body);
+            bot.handleUpdate(update);
+          }
+        } catch (e: any) {
+          console.error("⚠️ Webhook JSON Fehler:", e.message);
+        }
+      });
+    } else if (req.url === "/health" || req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("Bot Server is healthy");
+    } else {
+      res.writeHead(404);
+      res.end("Not Found");
+    }
+  });
+
+  server.listen(PORT, () => {
+    console.log(`🌐 Webhook-Server aktiv auf Port ${PORT}.`);
+  });
+} else {
+  bot.launch();
+}
+
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
