@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit 100% generischer Master-Engine (v16)...");
+console.log("🤖 Bot läuft in der Cloud mit Yahoo All-Time Max Genesis Engine (v17)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -21,7 +21,6 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-// Universal-Parser: Akzeptiert sämtliche generischen Sub-Formate (1), [A], 3.1, iii
 function parseWavesFromText(text: string): Array<{ label: string; date: string; price: number }> {
   const waves: Array<{ label: string; date: string; price: number }> = [];
   const lines = text.split('\n');
@@ -64,7 +63,7 @@ bot.command("analyse", async (ctx) => {
       requestedInterval = args[2].toLowerCase().trim();
   }
 
-  if (!symbol) return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse MSTR");
+  if (!symbol) return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse BTC-USD");
 
   let cleanSymbol = symbol.trim().toUpperCase();
   if (cleanSymbol.includes(":")) cleanSymbol = cleanSymbol.split(":").pop()!;
@@ -81,14 +80,14 @@ bot.command("analyse", async (ctx) => {
     finalIntervalLabel = "1M";
   }
 
-  await ctx.reply(`⏳ Lade Historie (${finalIntervalLabel}) für ${cleanSymbol}... Initialisiere generischen Total-Scan...`);
+  await ctx.reply(`⏳ Scanne Yahoo-Server nach maximal historischer All-Time-Datenreihe für ${cleanSymbol}...`);
 
   let candlesArray: any[] = [];
 
   try {
     const period2 = new Date();
-    const period1 = new Date();
-    period1.setFullYear(period2.getFullYear() - 10); 
+    // FIX: Setzt das Startdatum hart auf 1970, um das absolute IPO / Genesis-Datum von Yahoo zu erzwingen
+    const period1 = new Date("1970-01-01");
 
     const result = await yahooFinance.historical(cleanSymbol, { period1, period2, interval: yahooInterval }) as any[];
     if (!result || result.length === 0) throw new Error("Yahoo lieferte ein leeres Array.");
@@ -105,13 +104,15 @@ bot.command("analyse", async (ctx) => {
     return ctx.reply(`❌ Yahoo Datenfehler: ${dataError.message}`);
   }
 
+  // Daten-Kompression auf die Kerzen-Extrema
   const minifiedMarketStream = candlesArray.map(c => `${c.date},${c.high},${c.low}`).join("|");
 
+  // Die echten, maximalen Grenzen des Datensatzes ermitteln
   const streamStartDate = candlesArray[0].date;
   const streamEndDate = candlesArray[candlesArray.length - 1].date;
 
   // =========================================================================
-  // REINES ORIGINAL-REGELWERK + GENERISCHE 9-WELLEN EXTENSION
+  // UNVERÄNDERTES ORIGINAL-REGELWERK + ANKER AUF DIE ALL-TIME GENESIS
   // =========================================================================
   const mainPrompt = `Rolle und Ziel:
 Du bist ein erstklassiger technischer Analyst und Senior-Experte für das Elliott-Wellen-Prinzip (Senior-EW-Analyst). Analysiere den folgenden komprimierten Marktdaten-Stream. Da Asset-Preise exponentiell wachsen, wird deine Zählung auf einer logarithmischen Y-Achse dargestellt.
@@ -125,7 +126,7 @@ SYSTEM-REGELWERK (ELLIOTT-WELLEN-PRINZIP):
 Gemäß dem Elliott-Wellen-Prinzip werden alle Marktbewegungen in zwei grundlegende Kategorien unterteilt: **Motive Wellen** (die den übergeordneten Trend vorantreiben) und **Korrektive Wellen** (die sich gegen den übergeordneten Trend richten). Im Folgenden sind die detaillierten Regeln und Richtlinien für beide Wellenarten zusammengefasst.
 
 ### 1. Motive Wellen
-Motive Wellen bestehen immer aus fünf Unterwellen und bewegen sich in die gleiche Richtung wie der Trend des nächstgrößeren Grades. Sie haben die Aufgabe, den Markt kraftvoll voranzutreiben.
+Motive Wellen bestehen immer aus pfünf Unterwellen und bewegen sich in die gleiche Richtung wie der Trend des nächstgrößeren Grades. Sie haben die Aufgabe, den Markt kraftvoll voranzutreiben.
 
 **Harte Regeln für Motive Wellen (Impulse):**
 * **Welle 2** darf Welle 1 niemals zu mehr als 100 % korrigieren (sie darf nicht über den Startpunkt von Welle 1 hinausgehen).
@@ -135,12 +136,12 @@ Motive Wellen bestehen immer aus fünf Unterwellen und bewegen sich in die gleic
 * Die Antriebswellen 1, 3 und 5 sind selbst motive Wellen, und Unterwelle 3 ist immer zwingend ein Impuls.
 
 **Richtlinien für Motive Wellen:**
-* **Extensionen (Dehnungen):** Die allermeisten Impulse weisen in exakt einer der drei Antriebswellen (1, 3 oder 5) eine deutlich verlängerte Dehnung auf. Eine solche Sequenz sieht dann oft wie neun Wellen ähnlicher Größe aus statt wie fünf. Im Aktienmarkt ist meistens die Welle 3 die gestreckte Welle.
-* **Trunkierung (Verkürzung):** Gelegentlich schafft es Welle 5 nicht, über das Ende der Welle 3 hinauszugehen. Dies folgt oft auf eine extrem starke Welle 3 und signalisiert eine bevorstehende dramatische Umkehr.
+* **Extensionen (Dehnungen):** Die allermeisten Impulse weisen in exakt einer der drei Antriebswellen (1, 3 oder 5) eine deutlich verlängerte Dehnung auf. Eine solche Sequenz sieht dann oft wie neun Wellen ähnlicher Größe aus statt wie fünst. Im Aktienmarkt ist meistens die Welle 3 die gestreckte Welle.
+* **Trunkierung (Verkürzung):** Gelegentlich schafft es Welle 5 nicht, über das Ende della Welle 3 hinauszugehen. Dies folgt oft auf eine extrem starke Welle 3 und signalisiert eine bevorstehende dramatische Umkehr.
 * **Alternation (Abwechslung):** Innerhalb eines Impulses unterscheiden sich Welle 2 und Welle 4 fast immer in ihrer Form. Wenn Welle 2 eine scharfe Korrektur (Zickzack) ist, wird Welle 4 normalerweise eine Seitwärtskorrektur (Flat oder Dreieck) sein und umgekehrt.
 * **Gleichheit:** Zwei der Antriebswellen (meistens Welle 1 und 5, wenn Welle 3 eine Extension ist) streben nach Gleichheit in Dauer und Ausmaß. Ist keine perfekte Gleichheit gegeben, liegt oft ein Fibonacci-Verhältnis von 0,618 vor.
 * **Kanalisierung:** Parallele Trendkanäle markieren typischerweise die oberen und unteren Grenzen von Impulsen.
-* **Throw-over:** Nähert sich die fünfte Welle bei sinkendem Volumen der oberen Trendkanallinie, wird sie diese oft nur genau treffen oder verfehlen. Bei hohem Volumen ist jedoch ein "Throw-over" (ein kurzes Durchbrechen der Kanallinie nach oben) wahrscheinlich, bevor der Trend umkehrt.
+* **Throw-over:** Nähert sich die fünst Welle bei sinkendem Volumen der oberen Trendkanallinie, wird sie diese oft nur genau treffen oder verfehlen. Bei hohem Volumen ist jedoch ein "Throw-over" (ein kurzes Durchbrechen der Kanallinie nach oben) wahrscheinlich, bevor der Trend umkehrt.
 
 **Diagonale Dreiecke (Ausnahme von Impulsen):**
 Diagonale Dreiecke sind motive Wellen, die jedoch nicht als echte Impulse gelten, da sie korrektive Eigenschaften aufweisen. Bei ihnen dringt Welle 4 fast immer in das Preisgebiet von Welle 1 ein.
@@ -152,7 +153,7 @@ Diagonale Dreiecke sind motive Wellen, die jedoch nicht als echte Impulse gelten
 ### 2. Korrektive Wellen
 Korrektive Wellen bewegen sich immer gegen den übergeordneten Trend. Sie stellen in der Regel einen "Kampf" gegen den dominierenden Trend dar und sind daher schwerer zu identifizieren als motive Wellen.
 
-**Wichtigste Regel:** Eine Korrektur besteht niemals aus fünf Wellen. Eine erste 5-Wellen-Bewegung gegen den Trend ist daher nie das Ende einer Korrektur, sondern nur ein Teil davon.
+**Wichtigste Regel:** Eine Korrektur besteht niemals aus fünst Wellen. Eine erste 5-Wellen-Bewegung gegen den Trend ist daher nie das Ende einer Korrektur, sondern nur ein Teil davon.
 
 Korrekturen lassen sich in vier Hauptkategorien unterteilen:
 
@@ -171,7 +172,7 @@ Korrekturen lassen sich in vier Hauptkategorien unterteilen:
 
 **C. Dreiecke / Triangles (3-3-3-3-3):**
 * Spiegeln ein Gleichgewicht der Kräfte wider, was zu einer Seitwärtsbewegung mit meist sinkendem Volumen und nachlassender Volatilität führt.
-* Bestehen aus fünf überlappenden Wellen (a-b-c-d-e) und werden durch Verbindungslinien von a-c und b-d begrenzt.
+* Bestehen aus fünst überlappenden Wellen (a-b-c-d-e) und werden durch Verbindungslinien von a-c und b-d begrenzt.
 * **Position:** Dreiecke treten immer vor der letzten aktiven Welle im übergeordneten Muster auf, d.h. als Welle 4, Welle B oder als letzte Welle X in einer Kombination. Auf sie folgt fast immer ein starker, aber kurzer Schub ("Thrust") in Richtung des Haupttrends.
 
 **D. Kombinierte Strukturen (Double/Triple Threes):**
@@ -180,21 +181,21 @@ Korrekturen lassen sich in vier Hauptkategorien unterteilen:
 * In solchen Kombinationen taucht niemals mehr als ein Zickzack oder ein einziges Dreieck (stets am Ende) auf.
 
 **Wichtige Richtlinien für Korrekturen:**
-* **Tiefe von Bärenmärkten:** Korrekturen enden typischerweise im Preisgebiet der vorausgegangenen Welle 4 eines niedrigeren Grades.
-* **Verhalten nach einer gedehnten Welle 5:** Wenn die fünfte Welle eines Impulses eine Extension war, wird die darauffolgende Korrektur in der Regel sehr scharf ausfallen und Unterstützung am Tief der Welle 2 dieser Extension finden.
+* **Tiefe von Bärenmärkten:** Korrekturen enden typischerweise im Preisgebiet della vorausgegangenen Welle 4 eines niedrigeren Grades.
+* **Verhalten nach einer gedehnten Welle 5:** Wenn die fünst Welle eines Impulses eine Extension war, wird die darauffolgende Korrektur in der Regel sehr scharf ausfallen und Unterstützung am Tief della Welle 2 dieser Extension finden.
 
 ---
 
-### 3. GENERISCHE ZWANGS-PARAMETER FÜR DEN TOTAL-SCAN
+### 3. ZWANGS-PARAMETER FÜR DIESEN ALL-TIME MAX TOTAL-SCAN
 
-* **PFLICHTSTART BEIM IPO / CHART-BEGINN:** Die dir übergebenen Kursdaten starten am **${streamStartDate}**. Du bist mathematisch VERPFLICHTET, den Startpunkt deiner Zählung (Welle 0) exakt auf diesen allerersten verfügbaren Tag des Charts zu legen! Der allererste Eintrag deiner Tabelle MUSS so lauten: \`| 0 | ${streamStartDate} | [Preis] |\`.
-* **PFLICHT ZUR LÜCKENLOSEN TOTAL-ZÄHLUNG BIS ZUM ENDDATUM:** Die Zeitreihe endet am **${streamEndDate}**. Du bist verpflichtet, sämtliche Wellenzyklen von der Geburtsstunde ${streamStartDate} bis zum Enddatum ${streamEndDate} lückenlos durchzuzählen! Wenn du Welle C erreichst und feststellst, dass im Stream noch Daten für weitere Monate oder Jahre existieren, eröffnest du nahtlos den nächsten Zyklus. Der letzte Eintrag deiner Tabelle MUSS das Enddatum **${streamEndDate}** erreichen.
+* **PFLICHTSTART BEIM ALLERERSTEN YAHOO-DATENPUNKT (IPO):** Die dir übergebenen Kursdaten starten am **${streamStartDate}**. Du bist mathematisch VERPFLICHTET, den Startpunkt deiner Zählung (Welle 0) exakt auf dieses absolute historische Startdatum zu legen! Der allererste Eintrag deiner Markdown-Tabelle MUSS zwingend lauten: \`| 0 | ${streamStartDate} | [Preis] |\`. Es ist dir verboten, die Zählung an einem späteren Zeitpunkt zu beginnen.
+* **PFLICHT ZUR LÜCKENLOSEN TOTAL-ZÄHLUNG BIS ZUM ENDDATUM:** Die Zeitreihe endet am **${streamEndDate}**. Du bist verpflichtet, sämtliche Wellenzyklen von der Geburtsstunde ${streamStartDate} bis zum Enddatum ${streamEndDate} lückenlos durchzuzählen! Wenn du Welle C erreichst und feststellst, dass im Stream noch Daten existieren, eröffnest du nahtlos den nächsten Zyklus. Der letzte Eintrag deiner Tabelle MUSS das Enddatum **${streamEndDate}** erreichen.
 * **DAS PRINZIP DER GENERISCHEN DEHNUNG (EXTENSION):** Gemäß der Richtlinie für Dehnungen neigt in einem Motiv-Impuls fast immer exakt eine Welle zu einer massiven Verlängerung. Eine gedehnte Welle unterteilt sich auf dem untergeordneten Grad selbst wieder in 5 Motiv-Wellen. Wenn der Vektor einer Antriebswelle auf der Log-Skala extrem lang ist, bist du mathematisch aufgefordert, diese Welle generisch zu entpacken. Nutze dafür die offizielle Untergrad-Nomenklatur (z.B. i, ii, iii, iv, v oder (1), (2), (3), (4), (5) oder 3.1 bis 3.5 innerhalb der Hauptwelle). 
   *Beispiel einer generischen 9-Wellen-Extension in der Tabelle:* \`1, 2, (1), (2), (3), (4), (5), 4, 5\`
 
 ---
 FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
-Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem Muster. Beginne bei ${streamStartDate} und führe die Wellen durch die Jahre, bis das Enddatum ${streamEndDate} erreicht ist!
+Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem Muster. Beginne zwingend bei ${streamStartDate} und führe die Wellen durch die Jahre, bis das Enddatum ${streamEndDate} erreicht ist!
 
 | Welle | Datum | Preis |
 | --- | --- | --- |
@@ -207,7 +208,7 @@ Keine Prosa in der Tabelle!`;
   let attempts = 5; 
   let backoffDelay = 2000; 
 
-  await ctx.reply(`🧠 Analysiere generische Fraktale (${streamStartDate} bis ${streamEndDate})...`);
+  await ctx.reply(`🧠 Analysiere maximale Yahoo-Historie ab dem ersten Börsentag (${streamStartDate} bis ${streamEndDate})...`);
 
   while (attempts > 0) {
     try {
@@ -274,7 +275,7 @@ Keine Prosa in der Tabelle!`;
     if (code !== 0 || stdoutChunks.length === 0) {
         await ctx.reply(`❌ **Zeichnen fehlgeschlagen!** Log:\n\`\`\`text\n${errLog}\n\`\`\``);
     } else {
-        await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 EW Universal Master View: ${cleanSymbol} (${finalIntervalLabel})` });
+        await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 EW All-Time Genesis Master View: ${cleanSymbol} (${finalIntervalLabel})` });
     }
     
     const fullReport = responseText + statusBadge;
