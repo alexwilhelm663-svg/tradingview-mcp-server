@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit vollständigem Frost & Prechter EW-Kanon (v7)...");
+console.log("🤖 Bot läuft in der Cloud mit 100% Frost & Prechter Master-Kanon (v10)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -21,7 +21,6 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-// Kugelsicherer Parser: Prüft Spalte 1 auf Datums-Ziffern. Völlig immun gegen Text-Präfixe.
 function parseWavesFromText(text: string): Array<{ label: string; date: string; price: number }> {
   const waves: Array<{ label: string; date: string; price: number }> = [];
   const lines = text.split('\n');
@@ -30,7 +29,6 @@ function parseWavesFromText(text: string): Array<{ label: string; date: string; 
     if (!line.includes('|')) continue;
     const parts = line.split('|').map(p => p.trim()).filter(p => p !== '');
     
-    // Gültige Zeile: Mindestens 2 Spalten UND die Datums-Spalte (Index 1) enthält Ziffern
     if (parts.length >= 2 && /\d/.test(parts[1])) {
         let label = parts[0].replace(/[\*\`\[\]]/g, '').trim();
         label = label.replace(/^(?:Welle|Wave|Top|Bottom|Punkt|Pivot)\s+/i, '').trim();
@@ -106,11 +104,10 @@ bot.command("analyse", async (ctx) => {
     return ctx.reply(`❌ Yahoo Datenfehler: ${dataError.message}`);
   }
 
-  // Daten-Kompression: Nur 12 Kilobyte Payload für die KI
   const minifiedMarketStream = candlesArray.map(c => `${c.date},${c.high},${c.low}`).join("|");
 
   // =========================================================================
-  // DAS VOLLSTÄNDIGE MASTER-REGELWERK IST ZURÜCK IM SYSTEM-PROMPT
+  // DAS VOLLSTÄNDIGE, UNGEKÜRZTE FROST & PRECHTER REGELWERK (1:1 eingefroren)
   // =========================================================================
   const mainPrompt = `Rolle und Ziel:
 Du bist ein erstklassiger technischer Analyst und Senior-Experte für das Elliott-Wellen-Prinzip (Senior-EW-Analyst). Analysiere den folgenden komprimierten Marktdaten-Stream. Da Asset-Preise exponentiell wachsen, wird deine Zählung auf einer logarithmischen Y-Achse dargestellt.
@@ -121,14 +118,14 @@ ${minifiedMarketStream}
 ---
 SYSTEM-REGELWERK (ELLIOTT-WELLEN-PRINZIP):
 
-Gemäß dem Elliott-Wellen-Prinzip werden alle Marktbewegungen in zwei grundlegende Kategorien unterteilt: **Motive Wellen** (die den übergeordneten Trend vorantreiben) und **Korrektive Wellen** (die sich gegen den übergeordneten Trend richten). Ein vollständiger Superzyklus besteht aus einem 5-Wellen-Impuls (1-2-3-4-5) gefolgt von einer dreiteiligen Korrektur (A-B-C).
+Gemäß dem Elliott-Wellen-Prinzip werden alle Marktbewegungen in zwei grundlegende Kategorien unterteilt: **Motive Wellen** (die den übergeordneten Trend vorantreiben) und **Korrektive Wellen** (die sich gegen den übergeordneten Trend richten). Im Folgenden sind die detaillierten Regeln und Richtlinien für beide Wellenarten zusammengefasst.
 
 ### 1. Motive Wellen
 Motive Wellen bestehen immer aus fünf Unterwellen und bewegen sich in die gleiche Richtung wie der Trend des nächstgrößeren Grades. Sie haben die Aufgabe, den Markt kraftvoll voranzutreiben.
 
 **Harte Regeln für Motive Wellen (Impulse):**
-* **Welle 2** darf Welle 1 niemals zu mehr als 100 % korrigieren (orthodoxes Tief Welle 2 >= Start Welle 0).
-* **Welle 4** darf Welle 3 niemals zu 100 % korrigieren und darf nicht in das Preisgebiet von Welle 1 eindringen (Überschneidungsverbot / Kein Overlap!). Das Tief von Welle 4 muss zwingend strikt ÜBER dem Hoch von Welle 1 liegen. Ausnahmen bilden hierbei nur diagonale Dreiecke.
+* **Welle 2** darf Welle 1 niemals zu mehr als 100 % korrigieren (sie darf nicht über den Startpunkt von Welle 1 hinausgehen).
+* **Welle 4** darf Welle 3 niemals zu 100 % korrigieren und darf nicht in das Preisgebiet von Welle 1 eindringen (Überschneidungsverbot). Ausnahmen bilden hierbei nur diagonale Dreiecke.
 * **Welle 3** wandert immer über das Ende von Welle 1 hinaus.
 * **Welle 3 ist nie die kürzeste** unter den drei Antriebswellen (1, 3 und 5).
 * Die Antriebswellen 1, 3 und 5 sind selbst motive Wellen, und Unterwelle 3 ist immer zwingend ein Impuls.
@@ -183,14 +180,19 @@ Korrekturen lassen sich in vier Hauptkategorien unterteilen:
 * **Verhalten nach einer gedehnten Welle 5:** Wenn die fünfte Welle eines Impulses eine Extension war, wird die darauffolgende Korrektur in der Regel sehr scharf ausfallen und Unterstützung am Tief der Welle 2 dieser Extension finden.
 * **Abwechslung in der Komplexität:** Oft wechselt die Komplexität innerhalb der Korrekturwellen ab. Ist beispielsweise Welle A ein einfaches Zickzack, dehnt sich Welle B oft in eine viel komplexere Form aus und Welle C unter Umständen in eine noch weitreichendere.
 
-**DAS B-GATE GESETZ FÜR WELLE C:**
-Eine Korrektur ist mathematisch erst dann sicher beendet, wenn der Markt das Top der Welle B impulsiv überschritten hat! Liegt der aktuelle Kurs noch unterhalb des Hochs von Welle B, befindet sich der Markt noch IN der Korrektur. Welle C ist in diesem Fall eine unbestätigte, laufende Projektion.
+---
+
+### 3. ZUSATZ-KRITERIEN FÜR DEN ABSCHLUSS EINER KORREKTUR (WELLE C)
+
+Das Phänomen "C über A": In starken Bullenmärkten kann Welle C über dem Tief von Welle A enden (Running Flat, Trunkierung oder Dreiecks-Boden). Eine Korrektur (Tief C) darf von dir aber erst dann als objektiv "abgeschlossen" deklariert werden, wenn der Markt folgende drei Beweise geliefert hat:
+1. **Beweis 1 (Nachfolgender 5-Teiler):** Vom potenziellen Boden C muss sich eine neue, saubere 5-Wellen-Impulsbewegung (i-ii-iii-iv-v) nach oben abstoßen, die den Korrekturtrend bricht.
+2. **Beweis 2 (Dreiteiliger Rücksetzer):** Auf diesen Impuls muss ein dreiteiliger Rücksetzer (a-b-c) nach unten folgen. Dieser Rücksetzer MUSS zwingend ein höheres Tief ausbilden und darf das Tief von Welle C niemals berühren oder durchbrechen!
+3. **Beweis 3 (Das B-Gate):** Der Kurs muss das Hoch der Welle B per Schlusskurs überwinden. Notiert der Markt noch unter der Welle B, befindet er sich IN der Korrektur. Welle C ist dann unbestätigt.
 
 ---
 FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
 Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem vollständigen Muster. 
 Du MUSST alle 8 Wellen des Zyklus angeben: Boden (0) -> 5 Impulswellen (1,2,3,4,5) -> 3 Korrekturwellen (A,B,C).
-Die zeitliche Abfolge MUSS streng kausal vorwärtsgerichtet sein: Datum(0) < Datum(1) < Datum(2) < Datum(3) < Datum(4) < Datum(5) < Datum(A) < Datum(B) < Datum(C).
 
 | Welle | Datum | Preis |
 | --- | --- | --- |
@@ -210,7 +212,7 @@ Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C. Keine Prosa 
   let attempts = 5; 
   let backoffDelay = 2000; 
 
-  await ctx.reply("🧠 Analysiere 8-Wellen Superzyklus mit Frost & Prechter Master-Kanon...");
+  await ctx.reply("🧠 Analysiere Makro-Struktur mit vollständigem Frost & Prechter Kanon...");
 
   while (attempts > 0) {
     try {
@@ -224,7 +226,7 @@ Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C. Keine Prosa 
     } catch (e: any) {
       attempts--;
       if (attempts === 0) {
-          return ctx.reply(`❌ **KI-Analyse abgebrochen:** Google Gemini API Timeout.\nGrund: ${e.message}`);
+          return ctx.reply(`❌ **KI-Analyse abgebrochen:** Google Gemini API Timeout nach 5 Versuchen.\nGrund: ${e.message}`);
       }
       await new Promise(r => setTimeout(r, backoffDelay));
       backoffDelay *= 2;
@@ -265,7 +267,7 @@ Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C. Keine Prosa 
             if (cg.is_confirmed) {
                 statusBadge = `\n\n🟢 **STATUS:** Zyklus-Korrektur bestätigt beendet! (Schlusskurs ${cg.current_close.toFixed(2)} USD hat das B-Gate bei ${cg.b_gate_price.toFixed(2)} USD erfolgreich nach oben durchbrochen).`;
             } else {
-                statusBadge = `\n\n⚠️ **STATUS:** Korrektur weiterhin AKTIV! (Schlusskurs ${cg.current_close.toFixed(2)} USD notiert unter dem B-Gate von ${cg.b_gate_price.toFixed(2)} USD. Welle C ist eine unbestätigte Projektion).`;
+                statusBadge = `\n\n⚠️ **STATUS:** Korrektur weiterhin AKTIV! (Schlusskurs ${cg.current_close.toFixed(2)} USD notiert unter dem B-Gate von ${cg.b_gate_price.toFixed(2)} USD. Welle C ist unbestätigt).`;
             }
         }
     } catch(e) {}
@@ -280,7 +282,13 @@ Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C. Keine Prosa 
         await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 EW Supercycle (Log-Scale): ${cleanSymbol} (${finalIntervalLabel})` });
     }
     
-    await ctx.reply((responseText + statusBadge).substring(0, 4000));
+    // Chunk-Splitter schützt vor Telegrams 4096-Zeichen-Schnitt
+    const fullReport = responseText + statusBadge;
+    const chunkSize = 4000;
+    
+    for (let i = 0; i < fullReport.length; i += chunkSize) {
+        await ctx.reply(fullReport.substring(i, i + chunkSize));
+    }
   });
 });
 
@@ -326,7 +334,6 @@ if (RENDER_EXTERNAL_URL) {
       let body = "";
       req.on("data", chunk => body += chunk);
       req.on("end", () => {
-        // Sofortiges Acknowledge an Telegram (0 Retries)
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok" }));
 
@@ -348,11 +355,10 @@ if (RENDER_EXTERNAL_URL) {
     }
   });
 
-  server.listen(PORT, () => console.log(`🌐 Webhook aktiv auf Port ${PORT}.`));
+  server.listen(PORT, () => console.log(`🌐 Webhook-Server aktiv auf Port ${PORT}.`));
 } else {
   bot.launch();
 }
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
-    
