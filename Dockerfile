@@ -22,15 +22,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # =========================================================================
-# 3. NODE.JS ABHÄNGIGKEITEN (Pfeilschneller Cache-Layer)
+# 3. NODE.JS ABHÄNGIGKEITEN (Dynamische Lockfile-Erzeugung via install)
 # =========================================================================
 COPY package*.json tsconfig.json ./
-RUN npm ci
+RUN npm install
 
 # =========================================================================
 # 4. PYTHON QUANT ENGINE INSTALLATION (Mit legalem PEP 668 Override)
 # =========================================================================
-# Falls du eine requirements.txt hast, nutzt er sie – ansonsten Fallback auf Direkt-Pip
 COPY requirements.txt* ./
 RUN if [ -f requirements.txt ]; then \
         pip3 install --no-cache-dir --break-system-packages -r requirements.txt; \
