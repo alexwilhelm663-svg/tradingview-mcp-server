@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit kausaler EW-Führung & Log-Scale Pipeline...");
+console.log("🤖 Bot läuft in der Cloud mit Frost & Prechter EW-Kanon (v3)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -21,7 +21,6 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-// Kugelsicherer Parser: Prüft Spalte 1 auf Datums-Ziffern. Völlig immun gegen Text-Präfixe.
 function parseWavesFromText(text: string): Array<{ label: string; date: string; price: number }> {
   const waves: Array<{ label: string; date: string; price: number }> = [];
   const lines = text.split('\n');
@@ -33,7 +32,6 @@ function parseWavesFromText(text: string): Array<{ label: string; date: string; 
     // Gültige Zeile: Mindestens 2 Spalten UND die Datums-Spalte (Index 1) enthält Ziffern
     if (parts.length >= 2 && /\d/.test(parts[1])) {
         let label = parts[0].replace(/[\*\`\[\]]/g, '').trim();
-        // Schneidet Präfixe weg, damit saubere Bezeichnungen (0, 1, III, A) bleiben
         label = label.replace(/^(?:Welle|Wave|Top|Bottom|Punkt|Pivot)\s+/i, '').trim();
         
         const rawDate = parts[1].replace(/[\*\`\[\]]/g, '').trim();
@@ -72,7 +70,6 @@ bot.command("analyse", async (ctx) => {
   if (cleanSymbol.includes(":")) cleanSymbol = cleanSymbol.split(":").pop()!;
   if (cleanSymbol === "P911") cleanSymbol = "P911.DE";
 
-  // FIX: Standardmäßig nutzen wir Wochenkerzen (1W), um das tägliche Rauschen für Makro-Zählungen zu eliminieren!
   let yahooInterval: "1d" | "1wk" | "1mo" = "1wk";
   let finalIntervalLabel = "1W";
 
@@ -84,7 +81,7 @@ bot.command("analyse", async (ctx) => {
     finalIntervalLabel = "1M";
   }
 
-  await ctx.reply(`⏳ Lade 10-Jahres-Historie (${finalIntervalLabel}) für ${cleanSymbol} (Kausale Pipeline)...`);
+  await ctx.reply(`⏳ Lade 10-Jahres-Historie (${finalIntervalLabel}) für ${cleanSymbol}...`);
 
   let candlesArray: any[] = [];
 
@@ -116,29 +113,84 @@ Du bist ein erstklassiger technischer Analyst und Senior-Experte für das Elliot
 Daten-Array (${finalIntervalLabel}-Kerzen):
 ${dataInputJson}
 
-I. Absolute mathematische Gesetze für Motiv-Wellen (Impulse 1-2-3-4-5):
-1. Welle 2 korrigiert Welle 1 niemals um mehr als 100% (orthodoxes Tief Welle 2 >= Start Welle 0).
-2. Welle 3 ist meist die längste und stärkste Impulswelle und übertrifft das Hoch von Welle 1 deutlich.
-3. Welle 3 darf niemals die kürzeste Aktionswelle (1, 3, 5) sein.
-4. EISERNE REGEL (Kein Overlap): Das orthodoxe Tief von Welle 4 darf NIEMALS in den Preisbereich von Welle 1 eindringen! Das Tief von Welle 4 muss zwingend strikt ÜBER dem Hoch von Welle 1 liegen.
-5. Welle 5 übertrifft das Hoch von Welle 3.
+---
+SYSTEM-REGELWERK (ELLIOTT-WELLEN-PRINZIP):
 
-II. Kausale Abfolge in der Zeit:
-Die Wellen müssen sich kausal vorwärts bewegen: Datum(Welle 0) < Datum(Welle 1) < Datum(Welle 2) < Datum(Welle 3) < Datum(Welle 4) < Datum(Welle 5).
+Gemäß dem Elliott-Wellen-Prinzip werden alle Marktbewegungen in zwei grundlegende Kategorien unterteilt: **Motive Wellen** (die den übergeordneten Trend vorantreiben) und **Korrektive Wellen** (die sich gegen den übergeordneten Trend richten). Im Folgenden sind die detaillierten Regeln und Richtlinien für beide Wellenarten zusammengefasst.
 
+### 1. Motive Wellen
+Motive Wellen bestehen immer aus fünf Unterwellen und bewegen sich in die gleiche Richtung wie der Trend des nächstgrößeren Grades. Sie haben die Aufgabe, den Markt kraftvoll voranzutreiben.
+
+**Harte Regeln für Motive Wellen (Impulse):**
+* **Welle 2** darf Welle 1 niemals zu mehr als 100 % korrigieren (sie darf nicht über den Startpunkt von Welle 1 hinausgehen).
+* **Welle 4** darf Welle 3 niemals zu 100 % korrigieren und darf nicht in das Preisgebiet von Welle 1 eindringen (Überschneidungsverbot). Ausnahmen bilden hierbei nur diagonale Dreiecke.
+* **Welle 3** wandert immer über das Ende von Welle 1 hinaus.
+* **Welle 3 ist nie die kürzeste** unter den drei Antriebswellen (1, 3 und 5).
+* Die Antriebswellen 1, 3 und 5 sind selbst motive Wellen, und Unterwelle 3 ist immer zwingend ein Impuls.
+
+**Richtlinien für Motive Wellen:**
+* **Extensionen (Dehnungen):** Die allermeisten Impulse weisen in exakt einer der drei Antriebswellen (1, 3 oder 5) eine deutlich verlängerte Dehnung auf. Eine solche Sequenz sieht dann oft wie neun Wellen ähnlicher Größe aus statt wie fünf. Im Aktienmarkt ist meistens die Welle 3 die gestreckte Welle.
+* **Trunkierung (Verkürzung):** Gelegentlich schafft es Welle 5 nicht, über das Ende der Welle 3 hinauszugehen. Dies folgt oft auf eine extrem starke Welle 3 und signalisiert eine bevorstehende dramatische Umkehr.
+* **Alternation (Abwechslung):** Innerhalb eines Impulses unterscheiden sich Welle 2 und Welle 4 fast immer in ihrer Form. Wenn Welle 2 eine scharfe Korrektur (Zickzack) ist, wird Welle 4 normalerweise eine Seitwärtskorrektur (Flat oder Dreieck) sein und umgekehrt.
+* **Gleichheit:** Zwei der Antriebswellen (meistens Welle 1 und 5, wenn Welle 3 eine Extension ist) streben nach Gleichheit in Dauer und Ausmaß. Ist keine perfekte Gleichheit gegeben, liegt oft ein Fibonacci-Verhältnis von 0,618 vor.
+* **Kanalisierung:** Parallele Trendkanäle markieren typischerweise die oberen und unteren Grenzen von Impulsen.
+* **Throw-over:** Nähert sich die fünfte Welle bei sinkendem Volumen der oberen Trendkanallinie, wird sie diese oft nur genau treffen oder verfehlen. Bei hohem Volumen ist jedoch ein "Throw-over" (ein kurzes Durchbrechen der Kanallinie nach oben) wahrscheinlich, bevor der Trend umkehrt.
+
+**Diagonale Dreiecke (Ausnahme von Impulsen):**
+Diagonale Dreiecke sind motive Wellen, die jedoch nicht als echte Impulse gelten, da sie korrektive Eigenschaften aufweisen. Bei ihnen dringt Welle 4 fast immer in das Preisgebiet von Welle 1 ein.
+* **Ending Diagonals:** Treten meist als Welle 5 auf, wenn eine Bewegung "zu weit und zu schnell" gegangen ist. Sie haben eine Keilform mit konvergierenden (sich annähernden) Linien und bestehen ungewöhnlicherweise aus einer 3-3-3-3-3-Struktur.
+* **Leading Diagonals:** Finden sich nur in der Position der Welle 1 oder A. Sie haben ebenfalls eine Keilform und eine Überschneidung der Welle 4 und 1, behalten aber eine 5-3-5-3-5-Struktur bei. Sie weisen eher auf eine Fortsetzung als auf eine Beendigung hin.
+
+---
+
+### 2. Korrektive Wellen
+Korrektive Wellen bewegen sich immer gegen den übergeordneten Trend. Sie stellen in der Regel einen "Kampf" gegen den dominierenden Trend dar und sind daher schwerer zu identifizieren als motive Wellen.
+
+**Wichtigste Regel:** Eine Korrektur besteht niemals aus fünf Wellen. Eine erste 5-Wellen-Bewegung gegen den Trend ist daher nie das Ende einer Korrektur, sondern nur ein Teil davon.
+
+Korrekturen lassen sich in vier Hauptkategorien unterteilen:
+
+**A. Zickzacks / Zigzags (5-3-5):**
+* Dies sind scharfe Korrekturen, die steil gegen den Trend verlaufen.
+* Sie werden als A-B-C markiert, wobei die Unterwellenstruktur 5-3-5 aufweist.
+* Die Spitze der Welle B liegt dabei merklich tiefer als der Start der Welle A.
+* Manchmal können sie doppelt oder dreifach hintereinander auftreten (getrennt durch eine X-Welle), um ein angemessenes Preisziel zu erreichen (Doppel-Zickzack, Triple-Zickzack).
+
+**B. Flache Korrekturen / Flats (3-3-5):**
+* Dies sind Seitwärtskorrekturen, bei denen der Preis per Saldo retraced wird, die aber insgesamt flach verlaufen.
+* Ihre Unterwellenstruktur ist 3-3-5. Sie korrigieren oft schwächer und treten bei starken übergeordneten Trends auf.
+* **Reguläres Flat:** Welle B endet nahe dem Beginn von Welle A, Welle C reicht leicht über das Ende von Welle A hinaus.
+* **Expanded Flat (Erweitert):** Die mit Abstand häufigste Form. Hier zieht Welle B in neues Preisterrain über den Start von Welle A hinaus, und Welle C endet substanziell unter dem Ende von Welle A.
+* **Running Flat (Laufend):** Welle B schießt wie beim Expanded Flat über das Ziel hinaus, aber Welle C ist zu schwach und erreicht nicht das Ende von Welle A. Diese Form ist sehr selten.
+
+**C. Dreiecke / Triangles (3-3-3-3-3):**
+* Spiegeln ein Gleichgewicht der Kräfte wider, was zu einer Seitwärtsbewegung mit meist sinkendem Volumen und nachlassender Volatilität führt.
+* Bestehen aus fünf überlappenden Wellen (a-b-c-d-e) und werden durch Verbindungslinien von a-c und b-d begrenzt.
+* **Position:** Dreiecke treten immer vor der letzten aktiven Welle im übergeordneten Muster auf, d.h. als Welle 4, Welle B oder als letzte Welle X in einer Kombination. Auf sie folgt fast immer ein starker, aber kurzer Schub ("Thrust") in Richtung des Haupttrends.
+
+**D. Kombinierte Strukturen (Double/Triple Threes):**
+* Hier reihen sich einfache Korrekturen (wie Flat, Zickzack, Dreieck) waagerecht aneinander, verbunden durch eine reaktive Welle X.
+* Sie entstehen meistens, um eine Korrektur zeitlich in die Länge zu ziehen, wenn die Preisziele bereits erfüllt sind.
+* In solchen Kombinationen taucht niemals mehr als ein Zickzack oder ein einziges Dreieck (stets am Ende) auf.
+
+**Wichtige Richtlinien für Korrekturen:**
+* **Tiefe von Bärenmärkten:** Korrekturen enden typischerweise im Preisgebiet der vorausgegangenen Welle 4 eines niedrigeren Grades.
+* **Verhalten nach einer gedehnten Welle 5:** Wenn die fünfte Welle eines Impulses eine Extension war, wird die darauffolgende Korrektur in der Regel sehr scharf ausfallen und Unterstützung am Tief der Welle 2 dieser Extension finden.
+* **Abwechslung in der Komplexität:** Oft wechselt die Komplexität innerhalb der Korrekturwellen ab. Ist beispielsweise Welle A ein einfaches Zickzack, dehnt sich Welle B oft in eine viel komplexere Form aus und Welle C unter Umständen in eine noch weitreichendere.
+
+---
 FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
-Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem vollständigen Muster. Der allererste Punkt MUSS der absolute Startboden sein (Label: 0):
+Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem vollständigen Muster. 
+Der allererste Punkt MUSS der Zyklus-Startboden sein (Label: 0).
+Die zeitliche Abfolge MUSS streng kausal vorwärtsgerichtet sein: Datum(0) < Datum(1) < Datum(2) < Datum(3) < Datum(4) < Datum(5).
 
 | Welle | Datum | Preis |
 | --- | --- | --- |
 | 0 | YYYY-MM-DD | 15.50 |
 | 1 | YYYY-MM-DD | 180.00 |
 | 2 | YYYY-MM-DD | 100.00 |
-| 3 | YYYY-MM-DD | 1500.00 |
-| 4 | YYYY-MM-DD | 1100.00 |
-| 5 | YYYY-MM-DD | 1900.00 |
 
-Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C. Keine Prosa in der Tabelle!`;
+Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C, W, X, Y. (Keine Prosa in der Spalte 'Welle'!).`;
 
   let responseText = "";
   let attempts = 3; 
@@ -176,24 +228,23 @@ Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C. Keine Prosa 
   const pythonProcess = spawn(pythonCommand, ["python_service/drawer.py"]);
   
   const stdoutChunks: Buffer[] = [];
-  let telemetryLog = "";
+  let errLog = "";
 
   pythonProcess.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-  pythonProcess.stderr.on("data", (chunk: Buffer) => telemetryLog += chunk.toString());
+  pythonProcess.stderr.on("data", (chunk: Buffer) => errLog += chunk.toString());
 
   pythonProcess.stdin.write(jsonArg);
   pythonProcess.stdin.end();
 
   pythonProcess.on("close", async (code) => {
-    // X-Ray Telemetrie nur ausgeben, wenn "debug" verlangt wurde oder der Prozess crasht
-    if ((isDebug || code !== 0) && telemetryLog) {
-        await ctx.reply(`🩻 **PYTHON KAUSAL-TELEMETRIE:**\n\`\`\`json\n${telemetryLog.substring(0, 3800)}\n\`\`\``);
+    if (isDebug && errLog) {
+        await ctx.reply(`🩻 **PYTHON TELEMETRIE:**\n\`\`\`json\n${errLog.substring(0, 3800)}\n\`\`\``);
     }
 
     if (code !== 0 || stdoutChunks.length === 0) {
-        await ctx.reply(`❌ **Zeichnen fehlgeschlagen!** Exit-Code: ${code}`);
+        await ctx.reply(`❌ **Zeichnen fehlgeschlagen!** Log:\n\`\`\`text\n${errLog}\n\`\`\``);
     } else {
-        await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 TradingView Macro (Log-Scale): ${cleanSymbol} (${finalIntervalLabel})` });
+        await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 EW Macro View (Log-Scale): ${cleanSymbol} (${finalIntervalLabel})` });
     }
     await ctx.reply(responseText.substring(0, 4000));
   });
@@ -250,7 +301,7 @@ if (RENDER_EXTERNAL_URL) {
             bot.handleUpdate(JSON.parse(body));
           }
         } catch (e: any) {
-          console.error("⚠️ Webhook Fehler:", e.message);
+          console.error("⚠️ Webhook JSON Fehler:", e.message);
         }
       });
     } else if (req.url === "/health" || req.url === "/") {
@@ -262,7 +313,7 @@ if (RENDER_EXTERNAL_URL) {
     }
   });
 
-  server.listen(PORT, () => console.log(`🌐 Webhook aktiv auf Port ${PORT}.`));
+  server.listen(PORT, () => console.log(`🌐 Webhook-Server aktiv auf Port ${PORT}.`));
 } else {
   bot.launch();
 }
