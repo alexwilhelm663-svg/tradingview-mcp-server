@@ -54,7 +54,7 @@ def main():
         raw_labels = [str(w['label']).upper().strip() for w in waves]
 
         # =========================================================================
-        # 2. MIDPOINT-FORWARD HORIZON (Die absolute Extrema-Falle)
+        # 2. MIDPOINT-FORWARD HORIZON (Die Extrema-Relaxation)
         # =========================================================================
         for i in range(1, len(waves)):
             w = waves[i]
@@ -72,17 +72,15 @@ def main():
             else:
                 is_peak = w['price'] > wave_prices[-1]
 
-            # DIE LINKE WAND: Exakt 1 Tag nach dem echten Vorgänger-Boden/Gipfel!
+            # Linke Wand: Zwingend 1 Tag nach Vorgänger-Punkt
             win_start = prev_locked_date + timedelta(days=1)
 
-            # DIE RECHTE WAND: Berechnung des "Midpoint Horizons"
+            # Rechte Wand: Midpoint Horizon Berechnung
             if i < len(waves) - 2:
-                # Wir haben eine Gegenwelle (i+1) und die nächste Welle derselben Richtung (i+2)
                 t_next_opp = pd.to_datetime(waves[i+1]['date'], errors='coerce')
                 t_next_same = pd.to_datetime(waves[i+2]['date'], errors='coerce')
                 
                 if not pd.isna(t_next_opp) and not pd.isna(t_next_same) and t_next_same > t_next_opp:
-                    # Goldene Mitte zwischen Trough 4 und Peak 5!
                     half_delta = (t_next_same - t_next_opp) / 2
                     win_end = t_next_opp + half_delta
                 elif not pd.isna(t_next_opp):
@@ -103,7 +101,6 @@ def main():
             win = df[mask]
 
             if not win.empty:
-                # Sucht das absolute Docht-Extrem im mathematisch abgeriegelten Canyon
                 actual_date = win['high'].idxmax() if is_peak else win['low'].idxmin()
                 price = win.loc[actual_date, 'high' if is_peak else 'low']
             else:
@@ -144,7 +141,6 @@ def main():
                 c_is_confirmed = False
                 wave_labels[idx_c] = "C ( ? )"
 
-                # Log-geometrische Projektion
                 ratio_a = pa / p5 if p5 > 0 else 0.7
                 fib_061_target = pb * (ratio_a ** 0.618)
                 fib_100_target = pb * (ratio_a ** 1.000)
@@ -165,7 +161,6 @@ def main():
         plt.rcParams['font.family'] = 'sans-serif'
         fig, ax = plt.subplots(figsize=(16, 8))
         
-        # Echte TradingView Farb-Palette
         bg_color, grid_color, spine_color = '#131722', '#2A2E39', '#363C4E'
         cyan, magenta, orange, text_color = '#00BFA5', '#D81B60', '#FF9800', '#B2B5BE'
         
@@ -173,9 +168,7 @@ def main():
         ax.set_facecolor(bg_color)
         ax.set_yscale('log')
         
-        # =========================================================================
-        # DER WICK-CHANNEL: Zeigt die Dochte hinter dem Schlusskurs-Strich
-        # =========================================================================
+        # Wick Channel
         ax.plot(df.index, df['high'], color='#787B86', linewidth=0.8, linestyle=':', alpha=0.35, label='High / Low Wicks')
         ax.plot(df.index, df['low'], color='#787B86', linewidth=0.8, linestyle=':', alpha=0.35)
         ax.plot(df.index, df['close'], color=cyan, linewidth=2.2, label='Close Price')
@@ -183,7 +176,6 @@ def main():
         if len(wave_dates) > 1:
             try:
                 idx_5 = raw_labels.index('5')
-                # Impuls mit Leucht-Ring um die Eckpunkte
                 ax.plot(wave_dates[:idx_5+1], wave_prices[:idx_5+1], color=magenta, linewidth=2.5, linestyle='-', marker='o', markersize=10, label='Motive Waves (1-5)')
                 ax.plot(wave_dates[:idx_5+1], wave_prices[:idx_5+1], color=magenta, linewidth=0, marker='o', markersize=18, alpha=0.25)
                 
@@ -200,19 +192,30 @@ def main():
                         
                         ax.hlines(y=price_b_gate, xmin=date_b_gate, xmax=last_date + timedelta(days=35), color='#E53935', linestyle='-.', linewidth=1.5)
                         
+                        # =========================================================================
+                        # SYNTAX FIX: facecolor/edgecolor exakt NUR im bbox-Dictionary!
+                        # =========================================================================
                         checklist = (
                             "🔒 KORREKTUR-ABSCHLUSS CHECKLISTE:\n"
                             " [ ] Stufe 1: Impulsiver 5-Teiler (i-v) nach oben\n"
                             " [ ] Stufe 2: Dreiteiliger Pullback (a-b-c) bildet höheres Tief\n"
                             f" [{'x' if c_is_confirmed else ' '}] Stufe 3: Schlusskurs bricht B-Gate ({price_b_gate:,.2f} USD)"
                         )
-                        ax.text(0.96, 0.06, checklist, transform=ax.transAxes, facecolor='#1E222D', edgecolor=orange if not c_is_confirmed else cyan, color='white', fontsize=11, fontweight='bold', ha='right', va='bottom', bbox=dict(boxstyle='round,pad=0.6', facecolor='#1E222D', edgecolor=orange if not c_is_confirmed else cyan, alpha=0.95))
+                        ax.text(
+                            0.96, 0.06, checklist, 
+                            transform=ax.transAxes, 
+                            color='white', 
+                            fontsize=11, 
+                            fontweight='bold', 
+                            ha='right', 
+                            va='bottom', 
+                            bbox=dict(boxstyle='round,pad=0.6', facecolor='#1E222D', edgecolor=orange if not c_is_confirmed else cyan, alpha=0.95)
+                        )
                     else:
                         ax.plot(wave_dates[idx_5:], wave_prices[idx_5:], color=orange, linewidth=2.5, linestyle='--', marker='o', markersize=10, label='Corrective Waves (A-B-C)')
             except ValueError:
                 ax.plot(wave_dates, wave_prices, color=magenta, linewidth=2.5, linestyle='-', marker='o', markersize=10)
 
-        # Smarte, kollisionsfreie Text-Positionierung
         for date, price, label, is_p in zip(wave_dates, wave_prices, wave_labels, is_peak_list):
             xytext = (0, 16) if is_p else (0, -22)
             va = 'bottom' if is_p else 'top'
@@ -226,12 +229,11 @@ def main():
         ax.grid(True, which='both', color=grid_color, linestyle='--', linewidth=0.6)
         ax.set_axisbelow(True)
         
-        # Rahmen ausblenden bis auf X-Boden
         for side in ['top', 'left']: ax.spines[side].set_visible(False)
         for side in ['bottom', 'right']: ax.spines[side].set_color(spine_color)
         
         ax.tick_params(axis='both', which='both', colors=text_color, labelsize=11, color=spine_color)
-        ax.yaxis.tick_right() # Profi-Look: Preisachse nach rechts
+        ax.yaxis.tick_right()
         
         ax.set_xlim(df.index.min() - timedelta(days=15), df.index.max() + timedelta(days=35))
             
