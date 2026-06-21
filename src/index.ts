@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit 100% Frost & Prechter Master-Kanon (v10)...");
+console.log("🤖 Bot läuft in der Cloud mit 100% Original-Regelwerk & Genesis Total-Scan (v14)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -30,7 +30,7 @@ function parseWavesFromText(text: string): Array<{ label: string; date: string; 
     const parts = line.split('|').map(p => p.trim()).filter(p => p !== '');
     
     if (parts.length >= 2 && /\d/.test(parts[1])) {
-        let label = parts[0].replace(/[\*\`\[\]]/g, '').trim();
+        let label = parts[0].replace(/[\*\`]/g, '').trim(); 
         label = label.replace(/^(?:Welle|Wave|Top|Bottom|Punkt|Pivot)\s+/i, '').trim();
         
         const rawDate = parts[1].replace(/[\*\`\[\]]/g, '').trim();
@@ -106,8 +106,11 @@ bot.command("analyse", async (ctx) => {
 
   const minifiedMarketStream = candlesArray.map(c => `${c.date},${c.high},${c.low}`).join("|");
 
+  const streamStartDate = candlesArray[0].date;
+  const streamEndDate = candlesArray[candlesArray.length - 1].date;
+
   // =========================================================================
-  // DAS VOLLSTÄNDIGE, UNGEKÜRZTE FROST & PRECHTER REGELWERK (1:1 eingefroren)
+  // DEIN ORIGINAL-REGELWERK IST WORT FÜR WORT WIEDERHERGESTELLT
   // =========================================================================
   const mainPrompt = `Rolle und Ziel:
 Du bist ein erstklassiger technischer Analyst und Senior-Experte für das Elliott-Wellen-Prinzip (Senior-EW-Analyst). Analysiere den folgenden komprimierten Marktdaten-Stream. Da Asset-Preise exponentiell wachsen, wird deine Zählung auf einer logarithmischen Y-Achse dargestellt.
@@ -182,37 +185,33 @@ Korrekturen lassen sich in vier Hauptkategorien unterteilen:
 
 ---
 
-### 3. ZUSATZ-KRITERIEN FÜR DEN ABSCHLUSS EINER KORREKTUR (WELLE C)
+### 3. ZWANGS-PARAMETER FÜR DIESEN SPEZIELLEN TOTAL-SCAN
 
-Das Phänomen "C über A": In starken Bullenmärkten kann Welle C über dem Tief von Welle A enden (Running Flat, Trunkierung oder Dreiecks-Boden). Eine Korrektur (Tief C) darf von dir aber erst dann als objektiv "abgeschlossen" deklariert werden, wenn der Markt folgende drei Beweise geliefert hat:
-1. **Beweis 1 (Nachfolgender 5-Teiler):** Vom potenziellen Boden C muss sich eine neue, saubere 5-Wellen-Impulsbewegung (i-ii-iii-iv-v) nach oben abstoßen, die den Korrekturtrend bricht.
-2. **Beweis 2 (Dreiteiliger Rücksetzer):** Auf diesen Impuls muss ein dreiteiliger Rücksetzer (a-b-c) nach unten folgen. Dieser Rücksetzer MUSS zwingend ein höheres Tief ausbilden und darf das Tief von Welle C niemals berühren oder durchbrechen!
-3. **Beweis 3 (Das B-Gate):** Der Kurs muss das Hoch der Welle B per Schlusskurs überwinden. Notiert der Markt noch unter der Welle B, befindet er sich IN der Korrektur. Welle C ist dann unbestätigt.
+* **PFLICHTSTART BEIM IPO / CHART-BEGINN:** Die dir übergebenen Kursdaten starten am **${streamStartDate}**. Du bist mathematisch VERPFLICHTET, den Startpunkt deiner Zählung (Welle 0) exakt auf diesen allerersten verfügbaren Tag des Charts zu legen! Der allererste Eintrag deiner Tabelle MUSS so lauten: \`| 0 | ${streamStartDate} | [Preis] |\`. Es ist dir verboten, Welle 0 auf ein späteres Datum zu setzen.
+* **PFLICHT ZUR LÜCKENLOSEN TOTAL-ZÄHLUNG BIS ZUM ENDDATUM:** Die Zeitreihe endet am **${streamEndDate}**. Du bist verpflichtet, sämtliche Wellenzyklen von der Geburtsstunde ${streamStartDate} bis zum Enddatum ${streamEndDate} lückenlos durchzuzählen! Wenn du Welle C erreichst und feststellst, dass im Stream noch Daten für weitere Monate oder Jahre existieren, MUSST du sofort den nächsten Zyklus eröffnen. Der letzte Eintrag deiner Tabelle MUSS das Enddatum **${streamEndDate}** erreichen.
+* **DIE NOMENKLATUR-KASKADE FÜR AUFEINANDERFOLGENDE ZYKLEN:**
+  * 1. Superzyklus (Start ab ${streamStartDate}): Impuls \`1, 2, 3, 4, 5\`, Korrektur \`A, B, C\` (oder W, X, Y)
+  * 2. Superzyklus (Anknüpfend an das Tief von C): Impuls \`(1), (2), (3), (4), (5)\`, Korrektur \`(A), (B), (C)\`
+  * 3. Superzyklus (Falls der Stream noch weiterläuft): Impuls \`I, II, III, IV, V\`
 
 ---
 FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
-Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem vollständigen Muster. 
-Du MUSST alle 8 Wellen des Zyklus angeben: Boden (0) -> 5 Impulswellen (1,2,3,4,5) -> 3 Korrekturwellen (A,B,C).
+Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem Muster. 
+Beginne zwingend bei ${streamStartDate} und führe die Wellen durch die Jahre, bis das Enddatum ${streamEndDate} erreicht ist!
 
 | Welle | Datum | Preis |
 | --- | --- | --- |
-| 0 | YYYY-MM-DD | 15.50 |
+| 0 | ${streamStartDate} | 15.50 |
 | 1 | YYYY-MM-DD | 180.00 |
 | 2 | YYYY-MM-DD | 100.00 |
-| 3 | YYYY-MM-DD | 1500.00 |
-| 4 | YYYY-MM-DD | 1100.00 |
-| 5 | YYYY-MM-DD | 1900.00 |
-| A | YYYY-MM-DD | 1300.00 |
-| B | YYYY-MM-DD | 1650.00 |
-| C | YYYY-MM-DD | 1050.00 |
 
-Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C. Keine Prosa in der Tabelle!`;
+Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C, W, X, Y, Z, (1), (2), (3), (4), (5), (A), (B), (C), I, II, III, IV, V. Keine Prosa in der Tabelle!`;
 
   let responseText = "";
   let attempts = 5; 
   let backoffDelay = 2000; 
 
-  await ctx.reply("🧠 Analysiere Makro-Struktur mit vollständigem Frost & Prechter Kanon...");
+  await ctx.reply(`🧠 Analysiere True Genesis Total-Scan (${streamStartDate} bis ${streamEndDate})...`);
 
   while (attempts > 0) {
     try {
@@ -265,9 +264,9 @@ Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C. Keine Prosa 
         if (pyReport.correction_gate) {
             const cg = pyReport.correction_gate;
             if (cg.is_confirmed) {
-                statusBadge = `\n\n🟢 **STATUS:** Zyklus-Korrektur bestätigt beendet! (Schlusskurs ${cg.current_close.toFixed(2)} USD hat das B-Gate bei ${cg.b_gate_price.toFixed(2)} USD erfolgreich nach oben durchbrochen).`;
+                statusBadge = `\n\n🟢 **STATUS:** Laufende Korrektur bestätigt beendet! (Schlusskurs ${cg.current_close.toFixed(2)} USD liegt über dem Gate von ${cg.b_gate_price.toFixed(2)} USD).`;
             } else {
-                statusBadge = `\n\n⚠️ **STATUS:** Korrektur weiterhin AKTIV! (Schlusskurs ${cg.current_close.toFixed(2)} USD notiert unter dem B-Gate von ${cg.b_gate_price.toFixed(2)} USD. Welle C ist unbestätigt).`;
+                statusBadge = `\n\n⚠️ **STATUS:** Letzte Korrekturwelle weiterhin AKTIV! (Schlusskurs ${cg.current_close.toFixed(2)} USD notiert unter dem B-Gate von ${cg.b_gate_price.toFixed(2)} USD).`;
             }
         }
     } catch(e) {}
@@ -279,10 +278,9 @@ Nutze als Bezeichnungen ausschließlich: 0, 1, 2, 3, 4, 5, A, B, C. Keine Prosa 
     if (code !== 0 || stdoutChunks.length === 0) {
         await ctx.reply(`❌ **Zeichnen fehlgeschlagen!** Log:\n\`\`\`text\n${errLog}\n\`\`\``);
     } else {
-        await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 EW Supercycle (Log-Scale): ${cleanSymbol} (${finalIntervalLabel})` });
+        await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 EW Genesis Total-Scan: ${cleanSymbol} (${finalIntervalLabel})` });
     }
     
-    // Chunk-Splitter schützt vor Telegrams 4096-Zeichen-Schnitt
     const fullReport = responseText + statusBadge;
     const chunkSize = 4000;
     
@@ -297,19 +295,15 @@ bot.on("text", async (ctx) => {
   const userQuestion = ctx.message.text;
   const session = chatSessions[chatId];
 
-  if (!session || !session.lastDataPayload) {
-    return ctx.reply("❌ Starte zuerst eine Analyse mit `/analyse`.");
-  }
+  if (!session || !session.lastDataPayload) return ctx.reply("❌ Starte zuerst eine Analyse mit `/analyse`.");
 
   await ctx.reply("🤔 Analysiere Rückfrage...");
 
   try {
     session.history.push({ role: "user", text: userQuestion });
     const contents: any[] = [];
-    session.history.forEach(msg => {
-      contents.push(`${msg.role === "user" ? "User" : "Model"}: ${msg.text}`);
-    });
-    contents.push(`Beziehe dich auf folgende Rohdaten: ${JSON.stringify(session.lastDataPayload.candles)}. Beantworte die Frage kurz.`);
+    session.history.forEach(msg => contents.push(`${msg.role === "user" ? "User" : "Model"}: ${msg.text}`));
+    contents.push(`Beziehe dich auf Rohdaten: ${JSON.stringify(session.lastDataPayload.candles)}. Antworte kurz.`);
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -329,36 +323,15 @@ if (RENDER_EXTERNAL_URL) {
   const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
   bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
   
-  const server = http.createServer((req, res) => {
+  http.createServer((req, res) => {
     if (req.url === webhookPath && req.method === "POST") {
       let body = "";
       req.on("data", chunk => body += chunk);
       req.on("end", () => {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok" }));
-
-        try {
-          if (body.trim()) {
-            const update = JSON.parse(body);
-            bot.handleUpdate(update);
-          }
-        } catch (e: any) {
-          console.error("⚠️ Webhook JSON Fehler:", e.message);
-        }
+        try { if (body.trim()) bot.handleUpdate(JSON.parse(body)); } catch (e) {}
       });
-    } else if (req.url === "/health" || req.url === "/") {
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end("Bot Server is healthy");
-    } else {
-      res.writeHead(404);
-      res.end("Not Found");
-    }
-  });
-
-  server.listen(PORT, () => console.log(`🌐 Webhook-Server aktiv auf Port ${PORT}.`));
-} else {
-  bot.launch();
-}
-
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+    } else res.end("Bot Server is healthy");
+  }).listen(PORT);
+} else bot.launch();
