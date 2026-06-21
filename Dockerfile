@@ -1,13 +1,12 @@
 # =========================================================================
-# 1. BASE IMAGE (Topmodernes Debian 12 Bookworm + Node 22 Slim)
+# 1. BASE IMAGE
 # =========================================================================
 FROM node:22-bookworm-slim
 
-# Verhindert interaktive Debian-Rückfragen während des CI-Builds
 ENV DEBIAN_FRONTEND=noninteractive
 
 # =========================================================================
-# 2. SYSTEM-FUNDAMENT & PYTHON 3.11 INSTALLATION
+# 2. SYSTEM-FUNDAMENT
 # =========================================================================
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
@@ -22,32 +21,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # =========================================================================
-# 3. NODE.JS ABHÄNGIGKEITEN (Dynamische Lockfile-Erzeugung via install)
+# 3. NODE.JS ABHÄNGIGKEITEN
 # =========================================================================
 COPY package*.json tsconfig.json ./
 RUN npm install
 
 # =========================================================================
-# 4. PYTHON QUANT ENGINE INSTALLATION (Mit legalem PEP 668 Override)
+# 4. PYTHON QUANT ENGINE (Reine Python-Pakete!)
 # =========================================================================
 COPY requirements.txt* ./
 RUN if [ -f requirements.txt ]; then \
         pip3 install --no-cache-dir --break-system-packages -r requirements.txt; \
     else \
-        pip3 install --no-cache-dir --break-system-packages pandas matplotlib yahoo-finance2; \
+        pip3 install --no-cache-dir --break-system-packages pandas matplotlib; \
     fi
 
 # =========================================================================
-# 5. SOURCE CODE BUILD & START
+# 5. BUILD & START
 # =========================================================================
 COPY . .
 
-# Kompiliert den TypeScript-Code zu JavaScript (dist/)
 RUN npm run build
 
-# Port-Freigabe für die Render-Cloud oder lokale Aufrufe
 ENV PORT=10000
 EXPOSE 10000
 
-# Startet den MCP-Server / Telegram-Bot
 CMD ["npm", "start"]
