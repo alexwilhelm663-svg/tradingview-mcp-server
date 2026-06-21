@@ -10,24 +10,20 @@ import matplotlib.dates as mdates
 from datetime import timedelta
 
 # =========================================================================
-# UNIVERSAL ALPHANUMERIC STEM CLASSIFIER (Nukleus-Filter)
+# UNIVERSAL ALPHANUMERIC STEM CLASSIFIER
 # =========================================================================
 def resolve_wave_role(raw_label):
-    # 1. Säuberung von allen Klammer-Arten
     clean = raw_label.replace('(', '').replace(')', '').replace('[', '').replace(']', '').replace('{', '').replace('}', '').strip().upper()
-    
-    # 2. Nukleus-Extraktion bei Komposita (z.B. '3.4' -> '4' oder 'W-A' -> 'A')
     for separator in ['.', '-', ' ']:
         if separator in clean:
             clean = clean.split(separator)[-1]
             
-    # 3. Binäre Zuordnung am reinen Nukleus
     peaks = ['1', '3', '5', 'B', 'I', 'III', 'V', 'X']
     troughs = ['0', '2', '4', 'A', 'C', 'II', 'IV', 'W', 'Y', 'Z']
     
     if clean in peaks: return True
     elif clean in troughs: return False
-    else: return True # Fallback Gipfel
+    else: return True 
 
 def main():
     try:
@@ -136,12 +132,10 @@ def main():
                     c_is_confirmed = False
                     last_sw['label'] += " ( ? )"
                     
-                    # Extrahiere reinen Nukleus für Fibo-Weiche
                     nukleus = last_sw['raw_label'].replace('(', '').replace(')', '').replace('[', '').replace(']', '').strip()
                     if '.' in nukleus: nukleus = nukleus.split('.')[-1]
                     elif '-' in nukleus: nukleus = nukleus.split('-')[-1]
 
-                    # Retracement (Nukleus 2 oder 4)
                     if nukleus in ['2', 'II']:
                         p1, p0 = None, None
                         for sw in snapped_waves[:-1]:
@@ -202,82 +196,105 @@ def main():
             }
         }), file=sys.stderr)
 
-        # --- PLOT DASHBOARD ---
+        # =========================================================================
+        # --- PLOT DASHBOARD: TRADINGVIEW CRISP CLASSIC LIGHT THEME ---
+        # =========================================================================
         plt.rcParams['font.family'] = 'sans-serif'
         fig, ax = plt.subplots(figsize=(16, 8))
         
-        bg_color, grid_color, spine_color = '#131722', '#2A2E39', '#363C4E'
-        cyan_base, orange_base, text_color = '#00BFA5', '#FF9800', '#B2B5BE'
+        bg_color, grid_color, spine_color = '#FFFFFF', '#E0E3EB', '#131722'
+        price_line_col, wick_col = '#1E222D', '#A3A6AF'
+        
+        impulse_blue = '#2962FF'
+        correction_orange = '#FF9800'
         
         fig.patch.set_facecolor(bg_color)
         ax.set_facecolor(bg_color)
         ax.set_yscale('log')
         
-        ax.plot(df.index, df['high'], color='#787B86', linewidth=0.8, linestyle=':', alpha=0.35)
-        ax.plot(df.index, df['low'], color='#787B86', linewidth=0.8, linestyle=':', alpha=0.35)
-        ax.plot(df.index, df['close'], color=cyan_base, linewidth=2.0, label='Close Price')
+        ax.plot(df.index, df['high'], color=wick_col, linewidth=0.8, linestyle=':', alpha=0.5)
+        ax.plot(df.index, df['low'], color=wick_col, linewidth=0.8, linestyle=':', alpha=0.5)
+        ax.plot(df.index, df['close'], color=price_line_col, linewidth=1.8, label='Close Price')
 
-        # =========================================================================
-        # GENERISCHER TIEFEN-RENDERER (Erkennt Sub-Grade an Form & Zeichen)
-        # =========================================================================
+        # --- POLYGON SHADING ENGINE ---
+        poly_dates, poly_prices = [], []
+        
+        for idx_sw, sw in enumerate(snapped_waves):
+            poly_dates.append(sw['date'])
+            poly_prices.append(sw['price'])
+            
+            nuk = sw['raw_label'].replace('(', '').replace(')', '').replace('[', '').replace(']', '').strip()
+            if '.' in nuk: nuk = nuk.split('.')[-1]
+            
+            if nuk in ['5', 'V'] and len(poly_dates) >= 3:
+                ax.fill(poly_dates, poly_prices, color=impulse_blue, alpha=0.08, edgecolor='none')
+                poly_dates = [sw['date']] 
+                poly_prices = [sw['price']]
+            elif nuk in ['C', 'Y', 'Z'] and len(poly_dates) >= 3:
+                ax.fill(poly_dates, poly_prices, color=correction_orange, alpha=0.12, edgecolor='none')
+                poly_dates = [sw['date']]
+                poly_prices = [sw['price']]
+
+        if len(poly_dates) >= 3:
+            ax.fill(poly_dates, poly_prices, color=impulse_blue if resolve_wave_role(snapped_waves[-1]['raw_label']) else correction_orange, alpha=0.08, edgecolor='none')
+
+        # --- WELLEN-LINIEN & PIVOT-MARKER ---
         for k in range(1, len(snapped_waves)):
             p1 = snapped_waves[k-1]
             p2 = snapped_waves[k]
             lbl_raw = p2['raw_label']
+            is_sub = ('.' in lbl_raw) or any(c.islower() for c in p2['label']) or ('((' in lbl_raw)
             
-            # Prüft generisch auf Sub-Grad Indikatoren (Punkt, Kleinbuchstaben oder Doppelklammer)
-            is_sub_degree = ('.' in lbl_raw) or any(c.islower() for c in p2['label']) or ('((' in lbl_raw)
-            
-            if is_sub_degree:
-                curr_color = '#FF4081' # Electric Pink für Sub-Wellen
-                curr_style = '-' if p2['is_peak'] else ':'
-                line_w, marker_s = 1.6, 6
+            if is_sub:
+                c_line, c_style, l_w, m_s = '#FF4081', '-', 1.5, 6
             else:
-                line_w, marker_s = 2.5, 9
-                if not p2['is_peak']: curr_color = orange_base; curr_style = '--'
-                elif '(' in lbl_raw: curr_color = '#00E5FF'; curr_style = '-'
-                elif ['I', 'V', 'X'].any(): curr_color = '#B388FF'; curr_style = '-'
-                else: curr_color = '#D81B60'; curr_style = '-'
+                l_w, m_s = 2.2, 9
+                if not p2['is_peak']: c_line, c_style = correction_orange, '--'
+                elif '(' in lbl_raw: c_line, c_style = '#00BFA5', '-' 
+                # FIX: Saubere Generator-Abfrage statt kaputter .any() Listen-Methode!
+                elif any(c in lbl_raw for c in ['I', 'V', 'X']): c_line, c_style = '#7B1FA2', '-' 
+                else: c_line, c_style = impulse_blue, '-'
                 
-            ax.plot([p1['date'], p2['date']], [p1['price'], p2['price']], color=curr_color, linewidth=line_w, linestyle=curr_style, marker='o', markersize=marker_s)
+            ax.plot([p1['date'], p2['date']], [p1['price'], p2['price']], color=c_line, linewidth=l_w, linestyle=c_style, marker='o', markersize=m_s)
 
         if not c_is_confirmed and fib_upper and fib_lower:
             y_b = min(fib_lower, fib_upper)
             y_t = max(fib_lower, fib_upper)
-            ax.axhspan(ymin=y_b, ymax=y_t, facecolor='#00BFA5', alpha=0.15, label=fib_zone_label)
-            ax.hlines(y=fib_sweetspot, xmin=df.index.min(), xmax=last_date + timedelta(days=30), color='#00BFA5', linestyle=':', linewidth=1.8)
+            ax.axhspan(ymin=y_b, ymax=y_t, facecolor='#00BFA5', alpha=0.18, label=fib_zone_label)
+            ax.hlines(y=fib_sweetspot, xmin=df.index.min(), xmax=last_date + timedelta(days=30), color='#00BFA5', linestyle=':', linewidth=2.0)
             ax.annotate(f"🎯 SWEETSPOT ({fib_sweetspot:,.2f} USD)", xy=(last_date, fib_sweetspot), xytext=(0, 6), textcoords='offset points', color='#00BFA5', fontsize=11, fontweight='bold', ha='right', va='bottom')
 
         for sw_idx, sw in enumerate(snapped_waves):
             offset_y = 16 if sw['is_peak'] else -22
             if sw_idx > 1 and sw['is_peak'] == snapped_waves[sw_idx-2]['is_peak']:
-                offset_y = 38 if sw['is_peak'] else -44
+                offset_y = 36 if sw['is_peak'] else -42
 
             va = 'bottom' if sw['is_peak'] else 'top'
             lbl_raw = sw['raw_label']
             is_sub = ('.' in lbl_raw) or any(c.islower() for c in sw['label']) or ('((' in lbl_raw)
             
-            f_size = 14 if is_sub else 20
-            if "( ? )" in sw['label']: t_col = '#FFD54F'
+            f_size = 13 if is_sub else 18
+            if "( ? )" in sw['label']: t_col = '#E53935' 
             elif is_sub: t_col = '#FF4081'
-            elif not sw['is_peak']: t_col = orange_base
-            elif '(' in lbl_raw: t_col = '#00E5FF'
-            elif ['I', 'V', 'X'].any(): t_col = '#B388FF'
-            else: t_col = '#D81B60'
+            elif not sw['is_peak']: t_col = '#E65100' 
+            elif '(' in lbl_raw: t_col = '#00796B' 
+            # FIX: Saubere Generator-Abfrage auch bei den Text-Labels!
+            elif any(c in lbl_raw for c in ['I', 'V', 'X']): t_col = '#4A148C'
+            else: t_col = impulse_blue
             
-            ax.annotate(sw['label'], xy=(sw['date'], sw['price']), xytext=(0, offset_y), textcoords='offset points', color=t_col, fontsize=f_size, fontweight='heavy', ha='center', va=va)
+            ax.annotate(sw['label'], xy=(sw['date'], sw['price']), xytext=(0, offset_y), textcoords='offset points', color=t_col, fontsize=f_size, fontweight='bold', ha='center', va=va)
 
         if price_b_gate and not c_is_confirmed:
             ax.hlines(y=price_b_gate, xmin=df.index.min(), xmax=last_date + timedelta(days=30), color='#E53935', linestyle='-.', linewidth=1.5)
             ax.annotate(f"🔒 GATE ({price_b_gate:,.2f} USD)", xy=(last_date, price_b_gate), xytext=(0, 6), textcoords='offset points', color='#E53935', fontsize=11, fontweight='bold', ha='right', va='bottom')
 
-        ax.grid(True, which='both', color=grid_color, linestyle='--', linewidth=0.6)
+        ax.grid(True, which='both', color=grid_color, linestyle='-', linewidth=0.8)
         ax.set_axisbelow(True)
         
         for side in ['top', 'left']: ax.spines[side].set_visible(False)
         for side in ['bottom', 'right']: ax.spines[side].set_color(spine_color)
         
-        ax.tick_params(axis='both', which='both', colors=text_color, labelsize=11, color=spine_color)
+        ax.tick_params(axis='both', which='both', colors=spine_color, labelsize=11)
         ax.yaxis.tick_right()
         ax.set_xlim(df.index.min() - timedelta(days=15), df.index.max() + timedelta(days=30))
             
@@ -286,7 +303,7 @@ def main():
         ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f"{x:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')))
         
-        fig.text(0.05, 0.92, f"{symbol} - Universal EW Master", color='white', fontsize=24, ha='left', va='center', fontweight='bold')
+        fig.text(0.05, 0.92, f"{symbol} - Official TradingView Light Theme", color=spine_color, fontsize=24, ha='left', va='center', fontweight='bold')
         plt.subplots_adjust(top=0.85, bottom=0.1, left=0.05, right=0.88)
         
         buf = io.BytesIO()
@@ -301,4 +318,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-            
+    
