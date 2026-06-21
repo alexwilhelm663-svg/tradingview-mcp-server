@@ -30,124 +30,93 @@ def main():
         for col in ['open', 'high', 'low', 'close']:
             df[col] = df[col].astype(float)
         
-        # 1. Startpunkt (Welle 0 Boden) verankern
-        w0 = waves[0]
-        w0_target = pd.to_datetime(w0['date'], errors='coerce')
-        if pd.isna(w0_target) or df.empty: sys.exit(1)
-
-        start_mask = (df.index >= (w0_target - timedelta(days=45))) & (df.index <= (w0_target + timedelta(days=45)))
-        start_win = df[start_mask]
+        # Umfassendes Rollen-Register für Extrema-Relaxation
+        peak_roles = ['1', '3', '5', 'B', '(1)', '(3)', '(5)', '(B)', 'I', 'III', 'V', 'X']
+        trough_roles = ['0', '2', '4', 'A', 'C', '(2)', '(4)', '(A)', '(C)', 'II', 'IV', 'W', 'Y', 'Z']
         
-        crop_date = start_win['low'].idxmin() if not start_win.empty else df.index[df.index.get_indexer([w0_target], method='nearest')[0]]
+        snapped_waves = []
+        for w in waves:
+            raw_upper = str(w['label']).upper().strip()
+            # Falls Label nicht in Trough-Liste, default zu Peak
+            is_pk = True if raw_upper in peak_roles else (False if raw_upper in trough_roles else True)
+            
+            snapped_waves.append({
+                'label': w['label'],
+                'raw_label': raw_upper,
+                'ai_date': pd.to_datetime(w['date'], errors='coerce'),
+                'is_peak': is_pk,
+                'date': None,
+                'price': None
+            })
 
-        # 1 Jahr Vorlauf auf der X-Achse
-        context_start = crop_date - timedelta(days=365)
+        # =========================================================================
+        # TOPOLOGICAL TWO-PASS SNAPPING (Löst N-Wellen lückenlos)
+        # =========================================================================
+        # --- PASS 1: ALLE TÄLER VERANKERN ---
+        last_trough_date = df.index.min()
+        for sw in snapped_waves:
+            if not sw['is_peak']:
+                t_date = sw['ai_date']
+                if pd.isna(t_date): t_date = last_trough_date + timedelta(days=30)
+                
+                win_start = max(last_trough_date + timedelta(days=7), t_date - timedelta(days=40))
+                win_end = max(win_start + timedelta(days=14), t_date + timedelta(days=40))
+                if win_start > df.index.max(): win_start = df.index.max()
+                
+                mask = (df.index >= win_start) & (df.index <= win_end)
+                win = df[mask]
+                actual_date = win['low'].idxmin() if not win.empty else (win_start if win_start in df.index else df.index[df.index.get_indexer([win_start], method='nearest')[0]])
+                
+                sw['date'] = actual_date
+                sw['price'] = float(df.loc[actual_date, 'low'])
+                last_trough_date = actual_date
+
+        # --- PASS 2: ALLE GIPFEL ZWISCHEN DEN TÄLERN EINSPANNEN ---
+        for i, sw in enumerate(snapped_waves):
+            if sw['is_peak']:
+                prev_trough_date = df.index.min()
+                for j in range(i-1, -1, -1):
+                    if not snapped_waves[j]['is_peak'] and snapped_waves[j]['date'] is not None:
+                        prev_trough_date = snapped_waves[j]['date']
+                        break
+                
+                next_trough_date = df.index.max()
+                for j in range(i+1, len(snapped_waves)):
+                    if not snapped_waves[j]['is_peak'] and snapped_waves[j]['date'] is not None:
+                        next_trough_date = snapped_waves[j]['date']
+                        break
+                
+                win_start = prev_trough_date + timedelta(days=1)
+                win_end = next_trough_date - timedelta(days=1)
+                if win_end <= win_start: win_end = win_start + timedelta(days=7)
+                if win_start > df.index.max(): win_start = df.index.max()
+                
+                mask = (df.index >= win_start) & (df.index <= win_end)
+                win = df[mask]
+                actual_date = win['high'].idxmax() if not win.empty else (win_start if win_start in df.index else df.index[df.index.get_indexer([win_start], method='nearest')[0]])
+                
+                sw['date'] = actual_date
+                sw['price'] = float(df.loc[actual_date, 'high'])
+
+        # Vorlauf X-Achse
+        w0_date = snapped_waves[0]['date']
+        context_start = w0_date - timedelta(days=365)
         if context_start < df.index.min(): context_start = df.index.min()
         df = df.loc[context_start:]
         if df.empty: sys.exit(1)
 
-        wave_dates = [crop_date]
-        wave_prices = [df.loc[crop_date, 'low']]
-        wave_labels = [w0['label']]
-        is_peak_list = [False]
-
-        raw_labels = [str(w['label']).upper().strip() for w in waves]
-
-        # =========================================================================
-        # 2. MIDPOINT-FORWARD HORIZON (Die Extrema-Relaxation)
-        # =========================================================================
-        for i in range(1, len(waves)):
-            w = waves[i]
-            t_date = pd.to_datetime(w['date'], errors='coerce')
-            if pd.isna(t_date): continue
-
-            prev_locked_date = wave_dates[-1]
-            lbl_upper = raw_labels[i]
-
-            # Rollenregister
-            if lbl_upper in ['1', '3', '5', 'I', 'III', 'V', 'B', 'TOP']:
-                is_peak = True
-            elif lbl_upper in ['0', '2', '4', 'II', 'IV', 'A', 'C', 'START']:
-                is_peak = False
-            else:
-                is_peak = w['price'] > wave_prices[-1]
-
-            # Linke Wand: Zwingend 1 Tag nach Vorgänger-Punkt
-            win_start = prev_locked_date + timedelta(days=1)
-
-            # Rechte Wand: Midpoint Horizon Berechnung
-            if i < len(waves) - 2:
-                t_next_opp = pd.to_datetime(waves[i+1]['date'], errors='coerce')
-                t_next_same = pd.to_datetime(waves[i+2]['date'], errors='coerce')
-                
-                if not pd.isna(t_next_opp) and not pd.isna(t_next_same) and t_next_same > t_next_opp:
-                    half_delta = (t_next_same - t_next_opp) / 2
-                    win_end = t_next_opp + half_delta
-                elif not pd.isna(t_next_opp):
-                    win_end = t_next_opp + timedelta(days=25)
-                else:
-                    win_end = win_start + timedelta(days=90)
-            elif i < len(waves) - 1:
-                t_next = pd.to_datetime(waves[i+1]['date'], errors='coerce')
-                win_end = t_next + timedelta(days=25) if not pd.isna(t_next) else win_start + timedelta(days=90)
-            else:
-                win_end = df.index.max()
-
-            if win_start > df.index.max(): win_start = df.index.max()
-            if win_end > df.index.max(): win_end = df.index.max()
-            if win_end < win_start: win_end = win_start + timedelta(days=14)
-
-            mask = (df.index >= win_start) & (df.index <= win_end)
-            win = df[mask]
-
-            if not win.empty:
-                actual_date = win['high'].idxmax() if is_peak else win['low'].idxmin()
-                price = win.loc[actual_date, 'high' if is_peak else 'low']
-            else:
-                actual_date = win_start if win_start in df.index else df.index[df.index.get_indexer([win_start], method='nearest')[0]]
-                price = df.loc[actual_date, 'high' if is_peak else 'low']
-
-            if isinstance(price, pd.Series): price = price.iloc[0]
-
-            wave_dates.append(actual_date)
-            wave_prices.append(float(price))
-            wave_labels.append(w['label'])
-            is_peak_list.append(is_peak)
-
-        # --- 3. QUANT FIBONACCI ENGINE & DEMUTS-SCHRANKE (B-Gate) ---
+        # --- B-GATE PRÜFUNG FÜR DAS ALLERLETZTE KORREKTUR-TAL ---
         c_is_confirmed = True
         price_b_gate = None
-        date_b_gate = None
         last_close = df['close'].iloc[-1]
-        last_date = df.index.max()
 
-        fib_100_target = None
-        fib_061_target = None
-        fib_161_target = None
-
-        if 'C' in raw_labels and 'B' in raw_labels and 'A' in raw_labels and '5' in raw_labels:
-            idx_5 = raw_labels.index('5')
-            idx_a = raw_labels.index('A')
-            idx_b = raw_labels.index('B')
-            idx_c = raw_labels.index('C')
-
-            p5 = wave_prices[idx_5]
-            pa = wave_prices[idx_a]
-            pb = wave_prices[idx_b]
-            date_b_gate = wave_dates[idx_b]
-            price_b_gate = pb
-
-            if last_close < pb:
+        # Sucht das letzte 'B' oder '(B)' im Stream
+        b_candidates = [sw for sw in snapped_waves if sw['raw_label'] in ['B', '(B)']]
+        if b_candidates:
+            last_b = b_candidates[-1]
+            price_b_gate = last_b['price']
+            if last_close < price_b_gate:
                 c_is_confirmed = False
-                wave_labels[idx_c] = "C ( ? )"
-
-                ratio_a = pa / p5 if p5 > 0 else 0.7
-                fib_061_target = pb * (ratio_a ** 0.618)
-                fib_100_target = pb * (ratio_a ** 1.000)
-                fib_161_target = pb * (ratio_a ** 1.618)
-
-                wave_dates[idx_c] = last_date + timedelta(days=14)
-                wave_prices[idx_c] = fib_100_target
 
         print(json.dumps({
             "correction_gate": {
@@ -157,75 +126,67 @@ def main():
             }
         }), file=sys.stderr)
 
-        # --- PLOT DASHBOARD (TradingView Charcoal Deep Dark) ---
+        # --- PLOT DASHBOARD ---
         plt.rcParams['font.family'] = 'sans-serif'
         fig, ax = plt.subplots(figsize=(16, 8))
         
         bg_color, grid_color, spine_color = '#131722', '#2A2E39', '#363C4E'
-        cyan, magenta, orange, text_color = '#00BFA5', '#D81B60', '#FF9800', '#B2B5BE'
+        cyan_base, orange_base, text_color = '#00BFA5', '#FF9800', '#B2B5BE'
         
         fig.patch.set_facecolor(bg_color)
         ax.set_facecolor(bg_color)
         ax.set_yscale('log')
         
         # Wick Channel
-        ax.plot(df.index, df['high'], color='#787B86', linewidth=0.8, linestyle=':', alpha=0.35, label='High / Low Wicks')
+        ax.plot(df.index, df['high'], color='#787B86', linewidth=0.8, linestyle=':', alpha=0.35)
         ax.plot(df.index, df['low'], color='#787B86', linewidth=0.8, linestyle=':', alpha=0.35)
-        ax.plot(df.index, df['close'], color=cyan, linewidth=2.2, label='Close Price')
-        
-        if len(wave_dates) > 1:
-            try:
-                idx_5 = raw_labels.index('5')
-                ax.plot(wave_dates[:idx_5+1], wave_prices[:idx_5+1], color=magenta, linewidth=2.5, linestyle='-', marker='o', markersize=10, label='Motive Waves (1-5)')
-                ax.plot(wave_dates[:idx_5+1], wave_prices[:idx_5+1], color=magenta, linewidth=0, marker='o', markersize=18, alpha=0.25)
-                
-                if len(wave_dates) > idx_5:
-                    if 'B' in raw_labels and not c_is_confirmed:
-                        idx_b = raw_labels.index('B')
-                        ax.plot(wave_dates[idx_5:idx_b+1], wave_prices[idx_5:idx_b+1], color=orange, linewidth=2.5, linestyle='--', marker='o', markersize=10, label='Corrective Waves (A-B)')
-                        ax.plot(wave_dates[idx_b:], wave_prices[idx_b:], color='#FFCC80', linewidth=2.0, linestyle=':', marker='o', markersize=9, alpha=0.9)
-                        
-                        if fib_161_target and fib_061_target:
-                            ax.axhspan(ymin=fib_161_target, ymax=fib_061_target, facecolor='#00BFA5', alpha=0.12, label='🎯 Fib Target Cluster')
-                            ax.hlines(y=fib_100_target, xmin=date_b_gate, xmax=last_date + timedelta(days=35), color='#00BFA5', linestyle=':', linewidth=1.8)
-                            ax.annotate(f"🎯 FIB TARGET 1.00 ({fib_100_target:,.2f} USD)", xy=(last_date, fib_100_target), xytext=(0, 6), textcoords='offset points', color='#00BFA5', fontsize=11, fontweight='bold', ha='right', va='bottom')
-                        
-                        ax.hlines(y=price_b_gate, xmin=date_b_gate, xmax=last_date + timedelta(days=35), color='#E53935', linestyle='-.', linewidth=1.5)
-                        
-                        # =========================================================================
-                        # SYNTAX FIX: facecolor/edgecolor exakt NUR im bbox-Dictionary!
-                        # =========================================================================
-                        checklist = (
-                            "🔒 KORREKTUR-ABSCHLUSS CHECKLISTE:\n"
-                            " [ ] Stufe 1: Impulsiver 5-Teiler (i-v) nach oben\n"
-                            " [ ] Stufe 2: Dreiteiliger Pullback (a-b-c) bildet höheres Tief\n"
-                            f" [{'x' if c_is_confirmed else ' '}] Stufe 3: Schlusskurs bricht B-Gate ({price_b_gate:,.2f} USD)"
-                        )
-                        ax.text(
-                            0.96, 0.06, checklist, 
-                            transform=ax.transAxes, 
-                            color='white', 
-                            fontsize=11, 
-                            fontweight='bold', 
-                            ha='right', 
-                            va='bottom', 
-                            bbox=dict(boxstyle='round,pad=0.6', facecolor='#1E222D', edgecolor=orange if not c_is_confirmed else cyan, alpha=0.95)
-                        )
-                    else:
-                        ax.plot(wave_dates[idx_5:], wave_prices[idx_5:], color=orange, linewidth=2.5, linestyle='--', marker='o', markersize=10, label='Corrective Waves (A-B-C)')
-            except ValueError:
-                ax.plot(wave_dates, wave_prices, color=magenta, linewidth=2.5, linestyle='-', marker='o', markersize=10)
+        ax.plot(df.index, df['close'], color=cyan_base, linewidth=2.0, label='Close Price')
 
-        for date, price, label, is_p in zip(wave_dates, wave_prices, wave_labels, is_peak_list):
-            xytext = (0, 16) if is_p else (0, -22)
-            va = 'bottom' if is_p else 'top'
+        # =========================================================================
+        # MULTI-CYCLE FARBMASCHINE: Zeichnet Segmente dynamisch nach Superzyklus
+        # =========================================================================
+        curr_color = '#D81B60' # Magenta (Zyklus 1)
+        curr_style = '-'
+        
+        for k in range(1, len(snapped_waves)):
+            p1 = snapped_waves[k-1]
+            p2 = snapped_waves[k]
+            lbl2 = p2['raw_label']
             
-            if "( ? )" in label: lbl_color = '#FFD54F'
-            elif label.upper() in ['A', 'B', 'C', 'W', 'X', 'Y']: lbl_color = orange
-            else: lbl_color = magenta
+            # Farb-Weichen je nach Nomenklatur-Grad
+            if lbl2 in ['A', 'B', 'C', 'W', 'X', 'Y', 'Z']:
+                curr_color = orange_base
+                curr_style = '--'
+            elif lbl2 in ['(1)', '(2)', '(3)', '(4)', '(5)']:
+                curr_color = '#00E5FF' # Leuchtend Cyan (Zyklus 2 Impuls)
+                curr_style = '-'
+            elif lbl2 in ['(A)', '(B)', '(C)']:
+                curr_color = '#FFD54F' # Gelb gestrichelt (Zyklus 2 Korrektur)
+                curr_style = '--'
+            elif lbl2 in ['I', 'II', 'III', 'IV', 'V']:
+                curr_color = '#B388FF' # Flieder/Lila (Zyklus 3 Impuls)
+                curr_style = '-'
+                
+            ax.plot([p1['date'], p2['date']], [p1['price'], p2['price']], 
+                    color=curr_color, linewidth=2.5, linestyle=curr_style, marker='o', markersize=9)
+
+        # Labels formatieren
+        for sw in snapped_waves:
+            xytext = (0, 16) if sw['is_peak'] else (0, -22)
+            va = 'bottom' if sw['is_peak'] else 'top'
+            lbl = sw['raw_label']
             
-            ax.annotate(label, xy=(date, price), xytext=xytext, textcoords='offset points', color=lbl_color, fontsize=22, fontweight='heavy', ha='center', va=va)
+            if lbl in ['A', 'B', 'C', 'W', 'X', 'Y', 'Z']: t_col = orange_base
+            elif lbl in ['(1)', '(2)', '(3)', '(4)', '(5)']: t_col = '#00E5FF'
+            elif lbl in ['(A)', '(B)', '(C)']: t_col = '#FFD54F'
+            elif lbl in ['I', 'II', 'III', 'IV', 'V']: t_col = '#B388FF'
+            else: t_col = '#D81B60'
             
+            ax.annotate(sw['label'], xy=(sw['date'], sw['price']), xytext=xytext, textcoords='offset points', color=t_col, fontsize=20, fontweight='heavy', ha='center', va=va)
+
+        if price_b_gate and not c_is_confirmed:
+            ax.hlines(y=price_b_gate, xmin=df.index.min(), xmax=df.index.max() + timedelta(days=25), color='#E53935', linestyle='-.', linewidth=1.5)
+
         ax.grid(True, which='both', color=grid_color, linestyle='--', linewidth=0.6)
         ax.set_axisbelow(True)
         
@@ -234,20 +195,14 @@ def main():
         
         ax.tick_params(axis='both', which='both', colors=text_color, labelsize=11, color=spine_color)
         ax.yaxis.tick_right()
-        
-        ax.set_xlim(df.index.min() - timedelta(days=15), df.index.max() + timedelta(days=35))
+        ax.set_xlim(df.index.min() - timedelta(days=15), df.index.max() + timedelta(days=25))
             
         locator = mdates.AutoDateLocator(minticks=5, maxticks=10)
         ax.xaxis.set_major_locator(locator)
         ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f"{x:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')))
         
-        fig.text(0.05, 0.92, f"{symbol} - ", color='white', fontsize=24, ha='left', va='center', fontweight='bold')
-        if not c_is_confirmed and price_b_gate:
-            fig.text(0.18, 0.92, "Korrektur Aktiv [Boden C unbestätigt]", color='#FF9800', fontsize=22, ha='left', va='center', fontweight='bold')
-        else:
-            fig.text(0.18, 0.92, "Elliott-Wellen Superzyklus", color=cyan, fontsize=22, ha='left', va='center')
-        
+        fig.text(0.05, 0.92, f"{symbol} - Total-Scan", color='white', fontsize=24, ha='left', va='center', fontweight='bold')
         plt.subplots_adjust(top=0.85, bottom=0.1, left=0.05, right=0.88)
         
         buf = io.BytesIO()
