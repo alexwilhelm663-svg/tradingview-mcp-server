@@ -52,7 +52,6 @@ def main():
         wave_labels = [w0['label']]
         is_peak_list = [False]
 
-        # Sauberes, unveränderliches Lookup-Array der Roh-Labels
         raw_labels = [str(w['label']).upper().strip() for w in waves]
 
         # 2. Kausales Snapping aller Folgewellen
@@ -94,34 +93,57 @@ def main():
             is_peak_list.append(is_peak)
 
         # =========================================================================
-        # 3. DIE DEMUTS-SCHRANKE (B-Gate Statusprüfung für Welle C)
+        # 3. QUANT FIBONACCI PROJECTION ENGINE & B-GATE SCHRANKE
         # =========================================================================
         c_is_confirmed = True
         price_b_gate = None
         date_b_gate = None
-        last_close_price = df['close'].iloc[-1]
+        last_close = df['close'].iloc[-1]
+        last_date = df.index.max()
 
-        if 'C' in raw_labels and 'B' in raw_labels:
+        fib_100_target = None
+        fib_061_target = None
+        fib_161_target = None
+
+        if 'C' in raw_labels and 'B' in raw_labels and 'A' in raw_labels and '5' in raw_labels:
+            idx_5 = raw_labels.index('5')
+            idx_a = raw_labels.index('A')
             idx_b = raw_labels.index('B')
             idx_c = raw_labels.index('C')
-            price_b_gate = wave_prices[idx_b]
+
+            p5 = wave_prices[idx_5]
+            pa = wave_prices[idx_a]
+            pb = wave_prices[idx_b]
             date_b_gate = wave_dates[idx_b]
+            price_b_gate = pb
 
-            # Notiert der aktuelle Schlusskurs noch unter der B-Spitze, ist C unbestätigt!
-            if last_close_price < price_b_gate:
+            if last_close < pb:
                 c_is_confirmed = False
-                wave_labels[idx_c] = "C ( ? )" # Warn-Präfix ins Bild setzen
+                wave_labels[idx_c] = "C ( ? )"
 
-        # Sende Status-Telemetrie an Node.js für die Telegram-Textausgabe
+                # LOG-GEOMETRISCHE FIBONACCI-MATHEMATIK (Exaktes Vektor-Verhältnis Welle A)
+                ratio_a = pa / p5 if p5 > 0 else 0.7
+
+                fib_061_target = pb * (ratio_a ** 0.618)
+                fib_100_target = pb * (ratio_a ** 1.000)
+                fib_161_target = pb * (ratio_a ** 1.618)
+
+                # ANKER-KORREKTUR: Wir zwingen den geschätzten Zukunftspunkt C mathematisch 
+                # exakt auf die Koordinate des 1.00-Standardziels!
+                target_c_date = last_date + timedelta(days=14)
+                wave_dates[idx_c] = target_c_date
+                wave_prices[idx_c] = fib_100_target
+
         print(json.dumps({
             "correction_gate": {
                 "b_gate_price": price_b_gate if price_b_gate else 0,
-                "current_close": float(last_close_price),
-                "is_confirmed": c_is_confirmed
+                "current_close": float(last_close),
+                "is_confirmed": c_is_confirmed,
+                "fib_target_100": fib_100_target if fib_100_target else 0
             }
         }), file=sys.stderr)
 
-        # --- PLOT DASHBOARD (TradingView Dark Theme + LOG SCALE) ---
+        # --- PLOT DASHBOARD ---
         plt.rcParams['font.family'] = 'sans-serif'
         fig, ax = plt.subplots(figsize=(16, 8))
         
@@ -138,25 +160,43 @@ def main():
         if len(wave_dates) > 1:
             try:
                 idx_5 = raw_labels.index('5')
-                # Impuls-Linie (0 bis 5)
                 ax.plot(wave_dates[:idx_5+1], wave_prices[:idx_5+1], color=magenta, linewidth=2.5, linestyle='-', marker='o', markersize=11, label='Motive Waves (1-5)')
                 
-                # Korrektur-Linie (5 bis C)
                 if len(wave_dates) > idx_5:
                     if 'B' in raw_labels and not c_is_confirmed:
                         idx_b = raw_labels.index('B')
-                        # 5 -> A -> B normal gestrichelt
+                        
+                        # 1. Bestätigte Korrektur 5 -> A -> B
                         ax.plot(wave_dates[idx_5:idx_b+1], wave_prices[idx_5:idx_b+1], color=orange, linewidth=2.5, linestyle='--', marker='o', markersize=11, label='Corrective Waves (A-B)')
-                        # B -> C gepunktet als schwebende Projektion
-                        ax.plot(wave_dates[idx_b:], wave_prices[idx_b:], color='#FFCC80', linewidth=2.0, linestyle=':', marker='o', markersize=10, alpha=0.8, label='Proj. Low C (unconfirmed)')
                         
-                        # HORIZONTALE WARNLINIE (B-Gate) EINZEICHNEN
-                        ax.hlines(y=price_b_gate, xmin=date_b_gate, xmax=df.index.max() + timedelta(days=15), color='#E53935', linestyle='-.', linewidth=1.5, alpha=0.85)
+                        # 2. Projektionsstrich B -> C (Laserstrahl ins Fib-Ziel)
+                        ax.plot(wave_dates[idx_b:], wave_prices[idx_b:], color='#FFCC80', linewidth=2.0, linestyle=':', marker='o', markersize=10, alpha=0.85, label='Proj. Low C (Fib 1.00)')
                         
-                        # Auf einer Log-Skala entspricht Multiplikation mit 1.05 einem konstanten vertikalen Pixel-Abstand!
+                        # =========================================================================
+                        # 3. ZIEL-CLUSTER EINBLENDEN (Halbtransparente Teal-Zone)
+                        # =========================================================================
+                        ax.axhspan(ymin=fib_161_target, ymax=fib_061_target, facecolor='#00BFA5', alpha=0.15, label='🎯 Fib Target Cluster (0.618 - 1.618)')
+                        
+                        # Haupt-Ziellinie (1.00 Sweetspot)
+                        ax.hlines(y=fib_100_target, xmin=date_b_gate, xmax=last_date + timedelta(days=25), color='#00BFA5', linestyle=':', linewidth=1.8)
+                        
                         ax.annotate(
-                            f"🔒 CONFIRMATION GATE (B-Top: {price_b_gate:,.2f} USD)",
-                            xy=(df.index.max(), price_b_gate),
+                            f"🎯 FIB TARGET 1.00A ({fib_100_target:,.2f} USD)",
+                            xy=(last_date, fib_100_target),
+                            xytext=(0, 6),
+                            textcoords='offset points',
+                            color='#00BFA5',
+                            fontsize=11,
+                            fontweight='bold',
+                            ha='right',
+                            va='bottom'
+                        )
+                        
+                        # Horizontale Warnschranke (B-Gate)
+                        ax.hlines(y=price_b_gate, xmin=date_b_gate, xmax=last_date + timedelta(days=25), color='#E53935', linestyle='-.', linewidth=1.5, alpha=0.85)
+                        ax.annotate(
+                            f"🔒 CONFIRMATION GATE ({price_b_gate:,.2f} USD)",
+                            xy=(last_date, price_b_gate),
                             xytext=(0, 6),
                             textcoords='offset points',
                             color='#E53935',
@@ -174,13 +214,9 @@ def main():
             xytext = (0, 18) if is_p else (0, -18)
             va = 'bottom' if is_p else 'top'
             
-            # Farb-Register der Labels
-            if "( ? )" in label:
-                lbl_color = '#FFD54F' # Warngelb für unbestätigtes C
-            elif label.upper() in ['A', 'B', 'C', 'W', 'X', 'Y']:
-                lbl_color = orange
-            else:
-                lbl_color = magenta
+            if "( ? )" in label: lbl_color = '#FFD54F'
+            elif label.upper() in ['A', 'B', 'C', 'W', 'X', 'Y']: lbl_color = orange
+            else: lbl_color = magenta
             
             ax.annotate(
                 label,
@@ -200,16 +236,14 @@ def main():
         for spine in ax.spines.values(): spine.set_color(spine_color)
         ax.tick_params(axis='both', which='both', colors=text_color, labelsize=11, color=spine_color)
         
-        ax.set_xlim(df.index.min() - timedelta(days=15), df.index.max() + timedelta(days=15))
+        ax.set_xlim(df.index.min() - timedelta(days=15), df.index.max() + timedelta(days=25))
             
         locator = mdates.AutoDateLocator(minticks=5, maxticks=10)
         ax.xaxis.set_major_locator(locator)
         ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f"{x:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')))
         
-        # DYNAMISCHER TITEL (Warnung, falls unbestätigt)
         fig.text(0.5, 0.92, f"{symbol} - ", color='white', fontsize=22, ha='right', va='center')
-        
         if not c_is_confirmed and price_b_gate:
             fig.text(0.5, 0.92, "Korrektur Aktiv [Boden C unbestätigt]", color='#FF9800', fontsize=22, ha='left', va='center', fontweight='bold')
         else:
@@ -232,4 +266,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+                
