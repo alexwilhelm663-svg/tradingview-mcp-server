@@ -1,48 +1,31 @@
-# =========================================================================
-# 1. BASE IMAGE
-# =========================================================================
-FROM node:22-bookworm-slim
+FROM node:20-bookworm
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-# =========================================================================
-# 2. SYSTEM-FUNDAMENT
-# =========================================================================
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# 1. System-Abhängigkeiten für Python und Matplotlib (C-Extensions)
+RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
-    python3-dev \
-    build-essential \
-    pkg-config \
-    libfreetype6-dev \
-    libpng-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# 2. Arbeitsverzeichnis im Container festlegen
 WORKDIR /app
 
-# =========================================================================
-# 3. NODE.JS ABHÄNGIGKEITEN
-# =========================================================================
-COPY package*.json tsconfig.json ./
-RUN npm install
-
-# =========================================================================
-# 4. PYTHON QUANT ENGINE (Reine Python-Pakete!)
-# =========================================================================
+# 3. Python-Abhängigkeiten kopieren und installieren
 COPY requirements.txt* ./
 RUN if [ -f requirements.txt ]; then \
         pip3 install --no-cache-dir --break-system-packages -r requirements.txt; \
     else \
-        pip3 install --no-cache-dir --break-system-packages pandas matplotlib; \
+        pip3 install --no-cache-dir --break-system-packages pandas matplotlib numpy; \
     fi
 
-# =========================================================================
-# 5. BUILD & START
-# =========================================================================
-COPY . .
+# 4. DER FEHLENDE HEBEL: Erst die package.json kopieren und Pakete einkaufen!
+COPY package*.json ./
+RUN npm install
 
+# 5. Erst JETZT den eigentlichen Bot-Code kopieren und kompilieren
+COPY . .
 RUN npm run build
 
+# 6. Cloud-Port freigeben und Triebwerk starten
 ENV PORT=10000
 EXPOSE 10000
 
