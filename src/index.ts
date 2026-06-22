@@ -10,18 +10,37 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V69: Absolute Truth Engine (Ironclad Stderr Parser) aktiv...");
+console.log("🚀 Bot V70: LLM-X-Ray Engine (Deep JSON Inspection) aktiv...");
 
-function parseWavesFromJson(text: string) {
+// DER NEUE, AGGRESSIVE PARSER: Findet das Array, egal wo es steckt
+function inspectAndExtractWaves(rawText: string): { waves: any[] | null, error: string | null } {
   try {
-    const clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
-    const parsed = JSON.parse(clean);
-    if (parsed.waves && Array.isArray(parsed.waves)) return parsed.waves;
-    if (Array.isArray(parsed)) return parsed;
-    return null;
-  } catch (e) { 
-    const match = text.match(/\[\s*\{.*\}\s*\]/s);
-    try { return match ? JSON.parse(match[0]) : null; } catch(err) { return null; }
+    const clean = rawText.replace(/^```json\s*/g, "").replace(/```\s*$/g, "").trim();
+    const data = JSON.parse(clean);
+
+    let arr: any[] | null = null;
+    if (Array.isArray(data)) arr = data;
+    else if (data.waves && Array.isArray(data.waves)) arr = data.waves;
+    else if (data.data && Array.isArray(data.data)) arr = data.data;
+    else {
+      // Sucht im gesamten Objekt nach dem ersten Array, das er finden kann
+      for (const key of Object.keys(data)) {
+        if (Array.isArray(data[key])) { arr = data[key]; break; }
+      }
+    }
+
+    if (!arr) return { waves: null, error: `JSON geparst, aber kein Array gefunden. Vorhandene Keys: [${Object.keys(data).join(", ")}]` };
+    if (arr.length === 0) return { waves: null, error: "Das gefundene Array war leer []" };
+
+    // Stichprobe am ersten Element
+    const first = arr[0];
+    if (!first.hasOwnProperty("label") || !first.hasOwnProperty("date") || !first.hasOwnProperty("price")) {
+      return { waves: null, error: `Falsches Objekt-Schema im Array. Gefundenes Item 0: ${JSON.stringify(first)}` };
+    }
+
+    return { waves: arr, error: null };
+  } catch (e: any) {
+    return { waves: null, error: `JSON-Parse-Crash (${e.message}). \nLLM-Rohtext-Anfang: "${rawText.substring(0, 120)}..."` };
   }
 }
 
@@ -50,11 +69,7 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return rawCandles;
 }
 
-// IRONCLAD PYTHON BRIDGE: Verliert kein einziges Zeichen mehr aus Stderr
-function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ 
-  pngBuffer: Buffer | null, 
-  errorMessage: string | null 
-}> {
+function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, errorMessage: string | null }> {
   return new Promise((resolve) => {
     const pyProcess = spawn("python3", ["python_service/drawer.py"]);
     let stdoutBufs: Buffer[] = [];
@@ -68,37 +83,21 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
 
     pyProcess.on("close", (code) => {
       const trimmedStderr = stderrStr.trim();
+      if (code !== 0) return resolve({ pngBuffer: null, errorMessage: `Python System Crash [Exit ${code}]:\n${trimmedStderr}` });
 
-      // Fall 1: Python ist mit einem echten Systemfehler gecrasht (KeyError, Syntax, etc.)
-      if (code !== 0) {
-        return resolve({ pngBuffer: null, errorMessage: `Python System Crash [Exit ${code}]:\n${trimmedStderr}` });
-      }
-
-      // Fall 2: Python lief durch (Exit 0), hat aber eine JSON-Validierungs-Meldung in stderr hinterlassen!
       if (trimmedStderr.length > 0) {
         try {
           const parsed = JSON.parse(trimmedStderr);
           if (parsed.validation && parsed.validation.valid === false) {
-            return resolve({ 
-              pngBuffer: null, 
-              errorMessage: parsed.validation.message || JSON.stringify(parsed.validation) 
-            });
+            return resolve({ pngBuffer: null, errorMessage: parsed.validation.message || JSON.stringify(parsed.validation) });
           }
         } catch (e) {
-          // Es war Text im stderr, kein JSON, aber es existiert Text!
-          if (stdoutBufs.length === 0) {
-            return resolve({ pngBuffer: null, errorMessage: `Python Ablehnung: ${trimmedStderr}` });
-          }
+          if (stdoutBufs.length === 0) return resolve({ pngBuffer: null, errorMessage: `Python Ablehnung: ${trimmedStderr}` });
         }
       }
 
-      // Fall 3: Einwandfreier Durchlauf, wir haben ein Bild!
-      if (stdoutBufs.length > 0) {
-        return resolve({ pngBuffer: Buffer.concat(stdoutBufs), errorMessage: null });
-      }
-
-      // Fall 4: Absolutes Geister-Szenario
-      resolve({ pngBuffer: null, errorMessage: "Python beendete den Prozess ohne Bildausgabe und ohne Fehlermeldung." });
+      if (stdoutBufs.length > 0) return resolve({ pngBuffer: Buffer.concat(stdoutBufs), errorMessage: null });
+      resolve({ pngBuffer: null, errorMessage: "Python beendete den Prozess ohne Bildausgabe." });
     });
   });
 }
@@ -108,7 +107,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Ziehe Historie: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Historie: ${cleanSymbol}...`);
   let candles: any[] = [];
   try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
 
@@ -124,42 +123,48 @@ bot.command("analyse", async (ctx) => {
     iteration++;
     try {
       const promptText = iteration === 1 
-        ? `Führe die Elliott-Wellen-Zählung für die gesamte Historie durch. Liefere AUSSCHLIESSLICH ein JSON mit dem Key 'waves'.`
-        : `🔴 KORREKTUR-BEFEHL! Dein letzter Versuch wurde von der mathematischen Geometrie-Prüfung abgelehnt. 
-Exakter Grund der Ablehnung:
-"${rejectionReason}"
-
-Liefere eine neue, korrigierte Zählung, die diesen exakten Fehler behebt!`;
+        ? `Führe die Elliott-Wellen-Zählung für die Historie durch. 
+WICHTIG: Antworte AUSSCHLIESSLICH mit einem JSON-Objekt. 
+Dieses JSON muss zwingend ein Array namens "waves" enthalten.
+Jedes Element im Array MUSS exakt diese Struktur haben:
+{
+  "label": "0",
+  "date": "YYYY-MM-DD",
+  "price": 123.45
+}`
+        : `🔴 KORREKTUR! Dein letzter Output war fehlerhaft. Grund der Ablehnung:\n"${rejectionReason}"\n\nBehebe diesen exakten Fehler und liefere das korrekte JSON!`;
 
       const result = await modelLite.generateContent({
         contents: [{ role: "user", parts: [{ text: promptText }] }],
+        // Zwingt die Google-API auf Protokollebene dazu, reines JSON zu spucken
         generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
       });
 
-      const waves = parseWavesFromJson(result.response.text());
-      if (!waves || !Array.isArray(waves) || waves.length === 0 || !waves[0].label) {
-        rejectionReason = "KI lieferte strukturell defektes JSON (Keys fehlen).";
-        await ctx.reply(`🔄 [Runde ${iteration}] Veto: ${rejectionReason}`);
+      const rawLlmAnswer = result.response.text();
+      const inspection = inspectAndExtractWaves(rawLlmAnswer);
+
+      if (!inspection.waves) {
+        rejectionReason = inspection.error!;
+        await ctx.reply(`🔄 [Runde ${iteration}] JSON-Inspektion Veto: \n\`\`\`text\n${rejectionReason}\n\`\`\``);
         continue;
       }
 
-      const py = await runPythonCritic(cleanSymbol, waves, candles);
-      
+      const py = await runPythonCritic(cleanSymbol, inspection.waves, candles);
       if (py.pngBuffer) {
         finalPhoto = py.pngBuffer;
-        break; // BINGO!
+        break; 
       }
 
-      rejectionReason = py.errorMessage || "Unbekannter Geometrie-Verstoß";
-      await ctx.reply(`🔄 [Runde ${iteration}] Veto-Grund: ${rejectionReason}`);
+      rejectionReason = py.errorMessage || "Geometrie-Verstoß";
+      await ctx.reply(`🔄 [Runde ${iteration}] Python-Veto: ${rejectionReason}`);
 
     } catch(e: any) {
         await ctx.reply(`⚠️ API-Fehler: ${e.message}`);
     }
   }
 
-  if (!finalPhoto) return ctx.reply(`❌ Abbruch nach 3 Zyklen.\n\nLetzter, ungeschminkter Fehlerbericht:\n\`\`\`text\n${rejectionReason}\n\`\`\``);
-  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View (Max History): ${cleanSymbol}` });
+  if (!finalPhoto) return ctx.reply(`❌ Abbruch nach 3 Zyklen.\n\nLetzter Fehlerstand:\n\`\`\`text\n${rejectionReason}\n\`\`\``);
+  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View: ${cleanSymbol}` });
 });
 
 if (RENDER_EXTERNAL_URL) {
