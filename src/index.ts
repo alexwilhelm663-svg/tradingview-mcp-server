@@ -10,29 +10,21 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V76: The Thermal-Jiggle & Wick-Snap Apex Engine aktiv...");
+console.log("🚀 Bot V77: God-Mode Clamp & Overlap Auto-Healer aktiv...");
 
 function translateErrorToMathConstraint(errStr: string, atlDate: string, atlPrice: number): string {
   const s = String(errStr);
-  
   if (s.includes("Overlap-Verstoß") || s.includes("dringt illegal in das Gebiet von Gipfel")) {
     const match = s.match(/Gipfel '[^']+' \(([0-9.]+) USD\)/) || s.match(/Gipfel '[^']+' \(([0-9.]+)\)/);
     const limit = match ? match[1] : "den davorliegenden Gipfel";
-    return `\n🛑 OVERLAP-REGEL: Welle 4 MUSS zwingend EINE ZAHL STRIKT GRÖSSER ALS ${limit} sein! Wähle ein höheres Chart-Tal!`;
+    return `\n🛑 OVERLAP-REGEL: Welle 4 MUSS zwingend EINE ZAHL STRIKT GRÖSSER ALS ${limit} sein!`;
   }
-
-  if (s.includes("Retracement-Bruch") || s.includes("fällt tiefer als der Nullpunkt")) {
-    return `\n🛑 RETRACEMENT-REGEL: Welle 2 darf niemals tiefer fallen als Welle 0 (${atlPrice}). Setze Welle '0' zwingend auf den ${atlDate}!`;
+  if (s.includes("Topologie-Verstoß")) {
+    return `\n🛑 TOPOLOGIE-REGEL: Ein Tal (2 oder 4) muss zwingend tiefer liegen als der Gipfel davor!`;
   }
-
-  if (s.includes("Topologie-Verstoß") || s.includes("notiert höher oder gleich")) {
-    return `\n🛑 TOPOLOGIE-REGEL: Ein Korrektur-Tal (Welle 2 oder 4) MUSS zwingend einen TIEFEREN Kurs haben als der Gipfel davor (Welle 1 oder 3)! Du hast ein Tal über einen Gipfel gelegt. Wähle für das Tal einen kleineren Zahlenwert!`;
-  }
-
   return "";
 }
 
-// WICK-SNAP SALVAGER: Greift bei Gipfeln das High, bei Tälern das Low!
 function salvagePriceFromCandles(dateStr: string, waveLabel: string, candles: any[]): number {
   const target = String(dateStr).substring(0, 10);
   const match = candles.find(c => c.date === target);
@@ -47,8 +39,8 @@ function salvagePriceFromCandles(dateStr: string, waveLabel: string, candles: an
   return parseFloat(match.close);
 }
 
-// KORREKTUR DES DATENLECKS: Normalisiert jetzt NUR noch gegen die amputierten Kerzen!
-function normalizeLlmOutput(rawText: string, candles: any[]): { waves: any[] | null, error: string | null } {
+// DER GOD-MODE PARSER: KORRIGIERT AUTONOM
+function normalizeAndHealWaves(rawText: string, analysisCandles: any[], atlDate: string, atlPrice: number): { waves: any[] | null, error: string | null } {
   try {
     const clean = rawText.replace(/^```json\s*/g, "").replace(/```\s*$/g, "").trim();
     const data = JSON.parse(clean);
@@ -56,9 +48,8 @@ function normalizeLlmOutput(rawText: string, candles: any[]): { waves: any[] | n
     let rawArray: any[] | null = null;
     if (Array.isArray(data)) rawArray = data;
     else if (data.waves && Array.isArray(data.waves)) rawArray = data.waves;
-    else if (data.elliott_wave_structure?.wave_count && Array.isArray(data.elliott_wave_structure.wave_count)) {
-      rawArray = data.elliott_wave_structure.wave_count;
-    } else if (data.elliott_wave_count?.cycle_degree) {
+    else if (data.elliott_wave_structure?.wave_count) rawArray = data.elliott_wave_structure.wave_count;
+    else if (data.elliott_wave_count?.cycle_degree) {
       rawArray = Object.entries(data.elliott_wave_count.cycle_degree).map(([k, v]) => ({ wave: k, date: v }));
     } else {
       for (const key of Object.keys(data)) {
@@ -66,9 +57,9 @@ function normalizeLlmOutput(rawText: string, candles: any[]): { waves: any[] | n
       }
     }
 
-    if (!rawArray || rawArray.length === 0) return { waves: null, error: `Kein Wellen-Array extrahiert.` };
+    if (!rawArray || rawArray.length === 0) return { waves: null, error: "Kein Wellen-Array extrahiert." };
 
-    const normalizedWaves: any[] = [];
+    const list: any[] = [];
     for (const item of rawArray) {
       if (typeof item !== "object" || item === null) continue;
 
@@ -82,21 +73,59 @@ function normalizeLlmOutput(rawText: string, candles: any[]): { waves: any[] | n
 
       let rawPrice = item.price || item.Kurs || item.kurs || item.value || item.end_price;
       let cleanPrice = parseFloat(rawPrice);
-      
-      if (isNaN(cleanPrice) || cleanPrice === 0) {
-        // HIER GREIFT DER DOCHT-SNAP
-        cleanPrice = salvagePriceFromCandles(cleanDate, cleanLabel, candles);
-      }
+      if (isNaN(cleanPrice) || cleanPrice === 0) cleanPrice = salvagePriceFromCandles(cleanDate, cleanLabel, analysisCandles);
 
       if (cleanDate && !isNaN(cleanPrice) && cleanPrice > 0) {
-        normalizedWaves.push({ label: cleanLabel, date: cleanDate, price: Number(cleanPrice.toFixed(2)) });
+        list.push({ label: cleanLabel, date: cleanDate, price: Number(cleanPrice.toFixed(2)) });
       }
     }
 
-    if (normalizedWaves.length < 3) return { waves: null, error: `Zu wenige Wellen nach Normalisierung.` };
-    return { waves: normalizedWaves, error: null };
+    if (list.length < 3) return { waves: null, error: "Zu wenige Wellen nach Bereinigung." };
+
+    // =================================================================
+    // 1. DIE WELLE-0 ZWANGSKLEMME (Gegen Krypto-Erinnerungen)
+    // =================================================================
+    const w0 = list.find(w => w.label === "0");
+    if (w0) {
+      w0.date = atlDate;
+      w0.price = atlPrice;
+    } else {
+      list[0].date = atlDate;
+      list[0].price = atlPrice;
+      list[0].label = "0";
+    }
+
+    // =================================================================
+    // 2. ZEIT-PARADOXON KILLER
+    // =================================================================
+    for (const w of list) {
+      if (w.date < atlDate) {
+        return { waves: null, error: `Zeit-Paradoxon: Welle '${w.label}' liegt am ${w.date} (VOR dem Allzeittief am ${atlDate}).` };
+      }
+    }
+
+    // =================================================================
+    // 3. OVERLAP AUTO-HEALER (Der ARM-Lebensretter)
+    // =================================================================
+    const w1 = list.find(w => w.label === "1");
+    const w3 = list.find(w => w.label === "3");
+    const w4 = list.find(w => w.label === "4");
+    const w5 = list.find(w => w.label === "5");
+
+    if (w1 && w3 && w4 && w5 && w4.price <= w1.price) {
+      // Suche im sauberen Chartfenster zwischen Gipfel 3 und Gipfel 5 nach einem Tal > Gipfel 1
+      const safeCandles = analysisCandles.filter(c => c.date > w3.date && c.date < w5.date && parseFloat(c.low) > w1.price);
+      if (safeCandles.length > 0) {
+        safeCandles.sort((a, b) => parseFloat(a.low) - parseFloat(b.low)); // Tiefstes sicheres Tal
+        w4.date = safeCandles[0].date;
+        w4.price = parseFloat(safeCandles[0].low);
+        console.log(`🩹 [Auto-Heal] Welle 4 autonom auf ${w4.date} (${w4.price}) verschoben! Overlap verhindert.`);
+      }
+    }
+
+    return { waves: list, error: null };
   } catch (e: any) {
-    return { waves: null, error: `JSON-Parser Crash: ${e.message}` };
+    return { waves: null, error: `Parser-Crash: ${e.message}` };
   }
 }
 
@@ -178,13 +207,10 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Stream-Amputation & Docht-Kalibrierung: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ God-Mode Kalibrierung: ${cleanSymbol}...`);
   let marketData;
-  try { 
-    marketData = await fetchVanillaYahooCandles(cleanSymbol); 
-  } catch (e: any) { 
-    return ctx.reply(`❌ Download: ${e.message}`); 
-  }
+  try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
+  catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
 
   const { fullCandles, analysisCandles, atlDate, atlPrice } = marketData;
 
@@ -193,19 +219,9 @@ bot.command("analyse", async (ctx) => {
   }
 
   const minifiedMarketStream = analysisCandles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
+  const fullSystemPrompt = getElliottWaveSystemPrompt(analysisCandles[0].date, analysisCandles[analysisCandles.length-1].date, minifiedMarketStream) + 
+    `\n🔥 ZWANGS-ANKER: Welle 0 ist der ${atlDate} (${atlPrice}).`;
   
-  const TOPOLOGY_LAW_PROMPT = `
-\n==================================================================
-🔥 DIE EISERNEN GESETZE DER GEOMETRIE 🔥
-1. Welle 0 MUSS der ${atlDate} (${atlPrice}) sein!
-2. Welle 1, 3 und 5 sind GIPFEL (Highs). Ihr Kurs MUSS markant hoch sein!
-3. Welle 2 und 4 sind TÄLER (Lows). Ihr Kurs MUSS zwingend tiefer liegen als der Gipfel davor!
-Es ist mathematisch STRICT VERBOTEN, dass ein Tal (2 oder 4) preislich >= seinem Gipfel (1 oder 3) ist.
-==================================================================`;
-
-  const fullSystemPrompt = getElliottWaveSystemPrompt(analysisCandles[0].date, analysisCandles[analysisCandles.length-1].date, minifiedMarketStream) + TOPOLOGY_LAW_PROMPT;
-  
-  // Wir steuern die History manuell, um die Temperatur pro Runde hochzuschrauben!
   const manualChatHistory: any[] = [];
   let iteration = 0;
   let pythonVetoReason = "";
@@ -214,41 +230,33 @@ Es ist mathematisch STRICT VERBOTEN, dass ein Tal (2 oder 4) preislich >= seinem
   while (iteration < 3) {
     iteration++;
     try {
-      // THERMAL JIGGLE: Wir erhöhen die thermische Unruhe pro Veto!
       const currentTemp = iteration === 1 ? 0.1 : (iteration === 2 ? 0.35 : 0.65);
-      
       const dynamicModel = genAI.getGenerativeModel({ 
         model: "gemini-3.1-flash-lite", 
         systemInstruction: fullSystemPrompt,
         generationConfig: { responseMimeType: "application/json", temperature: currentTemp }
       });
 
-      let promptText = "";
-      if (iteration === 1) {
-        promptText = `Generiere die Elliott-Wellen-Zählung als JSON mit dem Array "waves". Denke an die Topologie (Tal < Gipfel)!`;
-      } else {
-        const mathTutorConstraint = translateErrorToMathConstraint(pythonVetoReason, atlDate, atlPrice);
-        promptText = `🔴 REGEL-VETO DER PYTHON-ENGINE!\n\nGrund der Ablehnung:\n"${pythonVetoReason}"\n${mathTutorConstraint}\n\nGeneriere ein NEUES, zwingend korrigiertes JSON.`;
-      }
+      let promptText = iteration === 1 
+        ? `Generiere die Elliott-Wellen-Zählung als JSON mit dem Array "waves".`
+        : `🔴 REGEL-VETO DER PYTHON-ENGINE!\nGrund:\n"${pythonVetoReason}"\n${translateErrorToMathConstraint(pythonVetoReason, atlDate, atlPrice)}\nGeneriere ein korrigiertes JSON.`;
 
       const response = await dynamicModel.generateContent({
         contents: [...manualChatHistory, { role: "user", parts: [{ text: promptText }] }]
       });
 
       const rawLlmAnswer = response.response.text();
-      
       manualChatHistory.push({ role: "user", parts: [{ text: promptText }] });
       manualChatHistory.push({ role: "model", parts: [{ text: rawLlmAnswer }] });
 
-      // KORREKTUR: Wir normalisieren strikt gegen die amputierten analysisCandles!
-      const normalization = normalizeLlmOutput(rawLlmAnswer, analysisCandles);
+      // GOD MODE PARSER (KORRIGIERT WELLE 0 & OVERLAPS AUTONOM)
+      const normalization = normalizeAndHealWaves(rawLlmAnswer, analysisCandles, atlDate, atlPrice);
       
       if (!normalization.waves) {
         pythonVetoReason = normalization.error!;
         continue;
       }
 
-      // Python bekommt die sauberen Wellen, aber die FULL CANDLES zum Zeichnen
       const py = await runPythonCritic(cleanSymbol, normalization.waves, fullCandles);
       if (py.pngBuffer) {
         finalPhoto = py.pngBuffer;
@@ -256,10 +264,15 @@ Es ist mathematisch STRICT VERBOTEN, dass ein Tal (2 oder 4) preislich >= seinem
       }
 
       pythonVetoReason = py.errorMessage || "Topologie-Verstoß";
-      await ctx.reply(`🔄 [Runde ${iteration} | Temp ${currentTemp}] Python sagt: ${pythonVetoReason.substring(0, 100)}`);
+      await ctx.reply(`🔄 [Runde ${iteration}] Python sagt: ${pythonVetoReason.substring(0, 100)}`);
 
     } catch(e: any) {
-        await ctx.reply(`⚠️ API-Fehler: ${e.message}`);
+        if (e.message.includes("503")) {
+          await ctx.reply(`⏳ Google-Server überlastet (503). Warte 3 Sekunden...`);
+          await new Promise(r => setTimeout(r, 3000));
+        } else {
+          await ctx.reply(`⚠️ API-Fehler: ${e.message}`);
+        }
     }
   }
 
