@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V61: Gemini-Kaskade (Flash-Lite Primary / 3.5-Flash Fallback) aktiv...");
+console.log("🚀 Bot V62: Structural JSON-Guardrail aktiv...");
 
 function parseWavesFromJson(text: string) {
   try {
@@ -19,16 +19,12 @@ function parseWavesFromJson(text: string) {
     if (parsed.waves && Array.isArray(parsed.waves)) return parsed.waves;
     if (Array.isArray(parsed)) return parsed;
     return null;
-  } catch (e) { 
-    const match = text.match(/\[.*\]/s);
-    try { return match ? JSON.parse(match[0]) : null; } catch(err) { return null; }
-  }
+  } catch (e) { return null; }
 }
 
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
   const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=5y`;
-  
   const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const raw = await res.json();
@@ -72,34 +68,27 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Bitte Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Ziehe 5-Jahres-Stream: ${cleanSymbol}...`);
-
+  await ctx.reply(`⏳ Ziehe Stream: ${cleanSymbol}...`);
   let candles: any[] = [];
-  try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Download-Fehler: ${e.message}`); }
+  try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Fehler: ${e.message}`); }
 
   const minifiedMarketStream = candles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
   const systemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream);
 
-  // Instanziierung beider Modelle
   const modelLite = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite", systemInstruction: systemPrompt });
   const modelPro = genAI.getGenerativeModel({ model: "gemini-3.5-flash", systemInstruction: systemPrompt });
 
   let iteration = 0;
-  let criticRejection = "";
+  let criticRejection = "Start";
   let finalPhoto: Buffer | null = null;
 
-  await ctx.reply(`⚡ Analyse startet (Modell: gemini-3.1-flash-lite)...`);
+  await ctx.reply(`⚡ Analyse startet...`);
 
   while (iteration < 3) {
     iteration++;
     let currentModel = modelLite;
-    let modelName = "gemini-3.1-flash-lite";
-
     try {
-      const promptText = criticRejection 
-        ? `KORREKTUR: "${criticRejection.substring(0, 50)}". Antworte zwingend als JSON mit Key 'waves'.` 
-        : `Analysiere den Kurs-Stream.`;
-
+      const promptText = `Analyseergebnis als JSON. WICHTIG: Jedes Wellen-Objekt MUSS die Keys 'label', 'date' und 'price' enthalten. ${criticRejection}`;
       const result = await currentModel.generateContent({
         contents: [{ role: "user", parts: [{ text: promptText }] }],
         generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
@@ -108,42 +97,25 @@ bot.command("analyse", async (ctx) => {
       const llmRawAnswer = result.response.text();
       const waves = parseWavesFromJson(llmRawAnswer);
       
-      if (!waves || !Array.isArray(waves)) { criticRejection = "Strukturfehler"; continue; }
+      // STRUKTUR-WACHE
+      if (!waves || !Array.isArray(waves)) { criticRejection = "JSON ist kein Array"; continue; }
+      const hasLabels = waves.every((w: any) => w.hasOwnProperty('label') && w.hasOwnProperty('date') && w.hasOwnProperty('price'));
+      if (!hasLabels) { criticRejection = "Fehlende Keys ('label', 'date', 'price')"; continue; }
 
       const py = await runPythonCritic(cleanSymbol, waves, candles);
       if (py.validationData && py.validationData.valid) {
         finalPhoto = py.pngBuffer;
         break;
       }
-      criticRejection = py.validationData?.message || py.rawStderr || "Topologie-Verstoß";
-      await ctx.reply(`🔄 [Runde ${iteration}/3] Veto: "${criticRejection.substring(0, 100)}"`);
-
+      criticRejection = py.validationData?.message || "Topologie-Fehler";
+      await ctx.reply(`🔄 [Runde ${iteration}] Veto: ${criticRejection}`);
     } catch(e: any) {
-        // FALLBACK LOGIK
-        await ctx.reply(`⚠️ ${modelName} schwächelt, wechsle auf gemini-3.5-flash...`);
-        try {
-            const fallbackResult = await modelPro.generateContent({
-                contents: [{ role: "user", parts: [{ text: criticRejection ? "KORREKTUR (Pro): " + criticRejection : "Analysiere den Kurs-Stream." }] }],
-                generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
-            });
-            const llmRawAnswer = fallbackResult.response.text();
-            const waves = parseWavesFromJson(llmRawAnswer);
-            
-            if (waves && Array.isArray(waves)) {
-                const py = await runPythonCritic(cleanSymbol, waves, candles);
-                if (py.validationData && py.validationData.valid) {
-                    finalPhoto = py.pngBuffer;
-                    break;
-                }
-            }
-        } catch (innerErr) {
-            await ctx.reply(`❌ Beide Modelle blockiert. Letzter Fehler: ${e.message}`);
-        }
+        await ctx.reply(`⚠️ Fehler: ${e.message}`);
     }
   }
 
   if (!finalPhoto) return ctx.reply(`❌ Abbruch. Letztes Veto: ${criticRejection}`);
-  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View via Gemini: ${cleanSymbol}` });
+  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 View: ${cleanSymbol}` });
 });
 
 if (RENDER_EXTERNAL_URL) {
