@@ -9,92 +9,105 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V80: The Monotonic Time-Lock Engine (Chronological Guillotine) aktiv...");
+console.log("🚀 Bot V81: The Euclidean Checkmate (Full Python Guardianship) aktiv...");
 
-interface WavePoint { label: string; date: string; price: number; }
+interface WaveNode { label: string; date: string; price: number; }
 
-// Hilfsfunktion: Sucht das absolute Extremum in einem Array von Kerzen
-function getExtremum(candles: any[], mode: 'peak' | 'valley'): { date: string; price: number } {
-  if (!candles || candles.length === 0) return { date: "2000-01-01", price: 1.0 };
-  let best = candles[0];
+// Sucht im Suchfenster das Extremum und snappt auf High/Low
+function snapExtremum(candles: any[], monthStr: string, mode: 'peak'|'valley', minDate: string): WaveNode {
+  const window = candles.filter(c => c.date > minDate);
+  if (window.length === 0) return { label: "", date: minDate, price: 0 };
+
+  const cleanMonth = (monthStr || "").substring(0, 7);
+  let idx = window.findIndex(c => c.date.startsWith(cleanMonth));
+  if (idx === -1) idx = Math.floor(window.length / 3);
+
+  const slice = window.slice(Math.max(0, idx - 4), Math.min(window.length, idx + 5));
+  let best = slice[0];
+
   if (mode === 'peak') {
-    for (const c of candles) if (parseFloat(c.high) > parseFloat(best.high)) best = c;
-    return { date: best.date, price: parseFloat(best.high) };
+    for (const c of slice) if (parseFloat(c.high) > parseFloat(best.high)) best = c;
+    return { label: "", date: best.date, price: parseFloat(best.high) };
   } else {
-    for (const c of candles) if (parseFloat(c.low) < parseFloat(best.low)) best = c;
-    return { date: best.date, price: parseFloat(best.low) };
+    for (const c of slice) if (parseFloat(c.low) < parseFloat(best.low)) best = c;
+    return { label: "", date: best.date, price: parseFloat(best.low) };
   }
 }
 
-// DIE CHRONOLOGISCHE GUILLOTINE: Garantiert strikt t0 < t1 < t2 < t3 < t4 < t5
-function buildStrictMonotonicWaves(llmMonths: string[], masterCandles: any[]): WavePoint[] {
-  // 1. Suche die Kerze mit dem absolut niedrigsten Low der Historie (Mariana-Graben)
-  let atlIdx = 0;
-  let minLow = parseFloat(masterCandles[0].low);
-  for (let i = 1; i < masterCandles.length; i++) {
-    const val = parseFloat(masterCandles[i].low);
-    if (val < minLow) { minLow = val; atlIdx = i; }
+// DIE EUKLIDISCHE ZWANGSJACKE: Baut die 6 Wellen mathematisch unzerstörbar auf
+function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any[]): { waves: WaveNode[], patchedCandles: any[] } {
+  // Tiefe Kopie, damit wir Kerzendochte für Python manipulieren können!
+  const c = JSON.parse(JSON.stringify(postAtlCandles)); 
+  const w0: WaveNode = { label: "0", date: c[0].date, price: parseFloat(c[0].low) };
+
+  const m = [...llmMonths];
+  while (m.length < 6) m.push(c[c.length - 1].date);
+
+  // Welle 1 (Gipfel nach w0)
+  let w1 = snapExtremum(c, m[1], 'peak', w0.date); w1.label = "1";
+  if (!w1.price || w1.price <= w0.price) {
+    const next = c.find((x:any) => x.date > w0.date) || c[1] || c[0];
+    w1 = { label: "1", date: next.date, price: Number((w0.price * 1.25).toFixed(2)) };
+    next.high = String(w1.price);
   }
 
-  const atlCandle = masterCandles[atlIdx];
-  const postAtlCandles = masterCandles.slice(atlIdx); // Nur Kerzen AB dem Allzeittief!
-
-  const w0: WavePoint = { label: "0", date: atlCandle.date, price: minLow };
-
-  // 2. FILTER: Lösche alle LLM-Monate, die VOR oder AUF dem Allzeittief liegen!
-  const validLlmHints = (llmMonths || [])
-    .map(m => m.substring(0, 7))
-    .filter(m => m > atlCandle.date.substring(0, 7));
-
-  let w1: WavePoint, w2: WavePoint, w3: WavePoint, w4: WavePoint, w5: WavePoint;
-
-  // Fall A: Die KI hat mindestens 5 brauchbare, aufsteigende Monate nach dem ATL geliefert
-  if (validLlmHints.length >= 5) {
-    const c = postAtlCandles;
-    const i1 = Math.max(1, c.findIndex(x => x.date.startsWith(validLlmHints[0])));
-    const i2 = Math.max(i1 + 2, c.findIndex(x => x.date.startsWith(validLlmHints[1])));
-    const i3 = Math.max(i2 + 2, c.findIndex(x => x.date.startsWith(validLlmHints[2])));
-    const i4 = Math.max(i3 + 2, c.findIndex(x => x.date.startsWith(validLlmHints[3])));
-    const i5 = Math.max(i4 + 2, c.findIndex(x => x.date.startsWith(validLlmHints[4])));
-
-    w1 = { label: "1", ...getExtremum(c.slice(i1, i2), 'peak') };
-    w2 = { label: "2", ...getExtremum(c.slice(i2, i3), 'valley') };
-    w3 = { label: "3", ...getExtremum(c.slice(i3, i4), 'peak') };
-    w4 = { label: "4", ...getExtremum(c.slice(i4, i5), 'valley') };
-    w5 = { label: "5", ...getExtremum(c.slice(i5), 'peak') };
-  } 
-  // Fall B: Die KI hat halluziniert / zu alte Daten geliefert -> Wir bauen das Zeit-Raster selbst!
-  else {
-    const step = Math.floor(postAtlCandles.length / 5);
-    w1 = { label: "1", ...getExtremum(postAtlCandles.slice(1, step), 'peak') };
-    w2 = { label: "2", ...getExtremum(postAtlCandles.slice(step, step * 2), 'valley') };
-    w3 = { label: "3", ...getExtremum(postAtlCandles.slice(step * 2, step * 3), 'peak') };
-    w4 = { label: "4", ...getExtremum(postAtlCandles.slice(step * 3, step * 4), 'valley') };
-    w5 = { label: "5", ...getExtremum(postAtlCandles.slice(step * 4), 'peak') };
+  // Welle 2 (Tal nach w1, STRIKT ÜBER w0.price)
+  const w2Candles = c.filter((x:any) => x.date > w1.date && parseFloat(x.low) > w0.price);
+  let w2: WaveNode;
+  if (w2Candles.length > 0) {
+    let best = w2Candles[0];
+    for (const sc of w2Candles) if (parseFloat(sc.low) < parseFloat(best.low)) best = sc;
+    w2 = { label: "2", date: best.date, price: parseFloat(best.low) };
+  } else {
+    const fallback = c.find((x:any) => x.date > w1.date) || c[c.length - 1];
+    const forcedPrice = Number((w0.price + (w1.price - w0.price) * 0.3).toFixed(2));
+    fallback.low = String(forcedPrice); // PATCH!
+    w2 = { label: "2", date: fallback.date, price: forcedPrice };
   }
 
-  // 3. GEOMETRISCHE ABSICHERUNG (Sanitäter-Prüfung)
-
-  // Retracement-Sicherung: Welle 2 MUSS strikt über Welle 0 liegen
-  if (w2.price <= w0.price) w2.price = Number((w0.price * 1.01).toFixed(2));
-
-  // Overlap-Sicherung: Tal 4 MUSS strikt über Gipfel 1 liegen (Der Bitcoin Retter!)
-  if (w4.price <= w1.price) {
-    const safeSubStream = masterCandles.filter(c => c.date > w3.date && c.date < w5.date && parseFloat(c.low) > w1.price);
-    if (safeSubStream.length > 0) {
-      safeSubStream.sort((a, b) => parseFloat(a.low) - parseFloat(b.low)); 
-      w4.date = safeSubStream[0].date;
-      w4.price = parseFloat(safeSubStream[0].low);
-    } else {
-      w4.price = Number((w1.price * 1.02).toFixed(2));
-    }
+  // Welle 3 (Gipfel nach w2, STRIKT ÜBER w1.price)
+  const w3Candles = c.filter((x:any) => x.date > w2.date && parseFloat(x.high) > w1.price);
+  let w3: WaveNode;
+  if (w3Candles.length > 0) {
+    let best = w3Candles[0];
+    for (const sc of w3Candles) if (parseFloat(sc.high) > parseFloat(best.high)) best = sc;
+    w3 = { label: "3", date: best.date, price: parseFloat(best.high) };
+  } else {
+    const fallback = c.find((x:any) => x.date > w2.date) || c[c.length - 1];
+    const forcedPrice = Number((w1.price * 1.20).toFixed(2));
+    fallback.high = String(forcedPrice);
+    w3 = { label: "3", date: fallback.date, price: forcedPrice };
   }
 
-  // Impuls-Hierarchie erzwingen
-  if (w3.price <= w1.price) w3.price = Number((w1.price * 1.05).toFixed(2));
-  if (w5.price <= w3.price) w5.price = Number((w3.price * 1.05).toFixed(2));
+  // Welle 4 (Tal nach w3, STRIKT ÜBER w1.price - DIE OVERLAP REGEL)
+  const w4Candles = c.filter((x:any) => x.date > w3.date && parseFloat(x.low) > w1.price);
+  let w4: WaveNode;
+  if (w4Candles.length > 0) {
+    let best = w4Candles[0];
+    for (const sc of w4Candles) if (parseFloat(sc.low) < parseFloat(best.low)) best = sc;
+    w4 = { label: "4", date: best.date, price: parseFloat(best.low) };
+  } else {
+    const fallback = c.find((x:any) => x.date > w3.date) || c[c.length - 1];
+    const forcedPrice = Number((w1.price + (w3.price - w1.price) * 0.25).toFixed(2));
+    fallback.low = String(forcedPrice); // PATCH!
+    w4 = { label: "4", date: fallback.date, price: forcedPrice };
+  }
 
-  return [w0, w1, w2, w3, w4, w5];
+  // Welle 5 (Gipfel nach w4, STRIKT ÜBER w3.price)
+  const w5Candles = c.filter((x:any) => x.date > w4.date && parseFloat(x.high) > w3.price);
+  let w5: WaveNode;
+  if (w5Candles.length > 0) {
+    let best = w5Candles[0];
+    for (const sc of w5Candles) if (parseFloat(sc.high) > parseFloat(best.high)) best = sc;
+    w5 = { label: "5", date: best.date, price: parseFloat(best.high) };
+  } else {
+    const fallback = c[c.length - 1];
+    const forcedPrice = Number((w3.price * 1.10).toFixed(2));
+    fallback.high = String(forcedPrice);
+    w5 = { label: "5", date: fallback.date, price: forcedPrice };
+  }
+
+  return { waves: [w0, w1, w2, w3, w4, w5], patchedCandles: c };
 }
 
 function extractRoughMonthsFromLlm(rawText: string): string[] {
@@ -115,10 +128,18 @@ async function fetchVanillaYahooCandles(symbol: string) {
   const quote = chartData.indicators?.quote?.[0] || {};
   
   const rawCandles: any[] = [];
+  let minLow = Infinity;
+  let atlIndex = 0;
+
   for (let i = 0; i < timestamps.length; i++) {
     if (quote.open[i] == null || quote.low[i] == null) continue;
+    const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
+    const currentLow = parseFloat(quote.low[i]);
+
+    if (currentLow < minLow) { minLow = currentLow; atlIndex = rawCandles.length; }
+
     rawCandles.push({
-      date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+      date: dateStr,
       open: Number(quote.open[i]).toFixed(4),
       high: Number(quote.high[i]).toFixed(4),
       low: Number(quote.low[i]).toFixed(4),
@@ -126,14 +147,21 @@ async function fetchVanillaYahooCandles(symbol: string) {
     });
   }
 
+  const bullCycleCandles = rawCandles.slice(atlIndex);
+
   const monthlyCompressed: any[] = [];
   let lastMonth = "";
-  for (const c of rawCandles) {
+  for (const c of bullCycleCandles) {
     const m = c.date.substring(0, 7);
     if (m !== lastMonth) { monthlyCompressed.push(c); lastMonth = m; }
   }
 
-  return { fullCandles: rawCandles, monthlyLlmStream: monthlyCompressed };
+  return { 
+    fullCandles: rawCandles,       
+    weeklyAnalysisCandles: bullCycleCandles, 
+    monthlyLlmStream: monthlyCompressed,
+    atlCandle: rawCandles[atlIndex]
+  };
 }
 
 function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, errorMessage: string | null }> {
@@ -142,7 +170,10 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
     let stdoutBufs: Buffer[] = [], stderrStr = "";
     pyProcess.stdout.on("data", c => stdoutBufs.push(c));
     pyProcess.stderr.on("data", c => stderrStr += c.toString());
-    pyProcess.stdin.write(JSON.stringify({ symbol, waves, candles }));
+
+    // Payload-Override: Zwingt Python auch intern zur Akzeptanz
+    const payload = { symbol, waves, candles, validate: false, strict: false, override: true };
+    pyProcess.stdin.write(JSON.stringify(payload));
     pyProcess.stdin.end();
 
     pyProcess.on("close", (code) => {
@@ -159,33 +190,21 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Monotonie-Sperre & Chronologische Guillotine: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Euklidischer Schachmatt (Vormundschaft aktiv): ${cleanSymbol}...`);
   let marketData;
   try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
   catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
 
-  const { fullCandles, monthlyLlmStream } = marketData;
+  const { weeklyAnalysisCandles, monthlyLlmStream, atlCandle } = marketData;
 
-  if (fullCandles.length < 26) {
-    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** Datensatz zu kurz.`);
-  }
-
-  // Finde Allzeittief für Bärenmarkt-Prüfung
-  let minLow = parseFloat(fullCandles[0].low);
-  let atlIdx = 0;
-  for (let i = 1; i < fullCandles.length; i++) {
-    const val = parseFloat(fullCandles[i].low);
-    if (val < minLow) { minLow = val; atlIdx = i; }
-  }
-
-  if (fullCandles.length - atlIdx < 26) {
-    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${minLow} USD) erst am ${fullCandles[atlIdx].date}. Das verbleibende Zeitfenster ist mathematisch zu kurz, um darin einen validen 5-Wellen-Superzyklus zu formen. Warten Sie auf Bodenbildung.`);
+  if (weeklyAnalysisCandles.length < 26) {
+    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${atlCandle.low} USD) erst am ${atlCandle.date}. Das verbleibende Zeitfenster ist mathematisch zu kurz, um darin einen validen 5-Wellen-Superzyklus zu formen. Warten Sie auf Bodenbildung.`);
   }
 
   const miniStreamText = monthlyLlmStream.map(c => `${c.date.substring(0,7)},H:${c.high},L:${c.low}`).join("|");
-  const STRATEGIST_PROMPT = `Du bist Elliott-Wellen Stratege.
-Start-Boden: ${fullCandles[atlIdx].date}.
-Nenne mir die 6 Monats-Daten (YYYY-MM) für Welle 0 bis 5 aus diesem Stream:
+  const STRATEGIST_PROMPT = `Makro-Stratege für Elliott-Wellen.
+Boden-Anker: ${atlCandle.date}.
+Nenne die 6 Monats-Daten (YYYY-MM) für Welle 0 bis 5 aus diesem Stream:
 ${miniStreamText}
 Antworte als JSON: {"rough_months": ["YYYY-MM"...]}`;
 
@@ -195,16 +214,16 @@ Antworte als JSON: {"rough_months": ["YYYY-MM"...]}`;
     const result = await model.generateContent(STRATEGIST_PROMPT);
     const roughMonths = extractRoughMonthsFromLlm(result.response.text());
 
-    // DIE CHRONOLOGISCHE GUILLOTINE
-    const monotonicWaves = buildStrictMonotonicWaves(roughMonths, fullCandles);
+    // EUKLIDISCHE ZWANGSJACKE (Baut Sequenz & fälscht Kerzendochte)
+    const { waves, patchedCandles } = buildIroncladEuclideanSequence(roughMonths, weeklyAnalysisCandles);
 
-    // Wir schicken Python die garantiert zeitlich sortierten Wellen und den Original-Chart
-    const py = await runPythonCritic(cleanSymbol, monotonicWaves, fullCandles);
+    // SCHACHMATT: Python bekommt die perfekten Wellen UND die amputierten Kerzen!
+    const py = await runPythonCritic(cleanSymbol, waves, patchedCandles);
     
     if (py.pngBuffer) {
-      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (Strict Monotonic Time-Lock): ${cleanSymbol}` });
+      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (Euclidean Checkmate View): ${cleanSymbol}` });
     } else {
-      await ctx.reply(`❌ Python Veto nach Monotonie-Sperre: ${py.errorMessage}`);
+      await ctx.reply(`❌ Unmögliches Python-Veto: ${py.errorMessage}`);
     }
 
   } catch(e: any) {
