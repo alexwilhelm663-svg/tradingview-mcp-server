@@ -4,16 +4,18 @@ import http from "http";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getElliottWaveSystemPrompt } from "./prompt";
 
+// Initialisiere mit dem API-Key aus den Umgebungsvariablen
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
 
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V58: Gemini 1.5 Flash Engine (Unlimited Context) aktiv...");
+console.log("🚀 Bot V59: Gemini 1.5 Flash-Latest (Production Alias) aktiv...");
 
 function parseWavesFromJson(text: string) {
   try {
+    // Bereinige Markdown-Tags, falls Gemini welche einfügt
     const jsonStr = text.replace(/```json/g, "").replace(/```/g, "").trim();
     const parsed = JSON.parse(jsonStr);
     if (parsed.waves && Array.isArray(parsed.waves)) return parsed.waves;
@@ -27,8 +29,8 @@ function parseWavesFromJson(text: string) {
 
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
-  // Wir ziehen jetzt wieder 5 Jahre, da Gemini den Platz hat!
   const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=5y`;
+  
   const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const raw = await res.json();
@@ -75,23 +77,24 @@ bot.command("analyse", async (ctx) => {
   await ctx.reply(`⏳ Ziehe 5-Jahres-Stream via Google Cloud: ${cleanSymbol}...`);
 
   let candles: any[] = [];
-  try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Fehler: ${e.message}`); }
+  try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Download-Fehler: ${e.message}`); }
 
   const minifiedMarketStream = candles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
   const systemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream);
 
-  // Gemini Setup
+  // =====================================================================
+  // MODELL-ALIAS FIX: 'gemini-1.5-flash-latest' ist die stabile Adresse
+  // =====================================================================
   const model = genAI.getGenerativeModel({ 
-    model: "gemini-1.5-flash",
+    model: "gemini-1.5-flash-latest",
     systemInstruction: systemPrompt
   });
 
   let iteration = 0;
   let criticRejection = "";
   let finalPhoto: Buffer | null = null;
-  let finalResponseText = "";
 
-  await ctx.reply(`⚡ Gemini 1.5 Flash (Context: Unlimited) aktiv...`);
+  await ctx.reply(`⚡ Gemini 1.5 Flash-Latest (Unlimited Context) aktiv...`);
 
   while (iteration < 3) {
     iteration++;
@@ -113,7 +116,6 @@ bot.command("analyse", async (ctx) => {
       const py = await runPythonCritic(cleanSymbol, waves, candles);
       if (py.validationData && py.validationData.valid) {
         finalPhoto = py.pngBuffer;
-        finalResponseText = llmRawAnswer;
         break;
       }
       criticRejection = py.validationData?.message || py.rawStderr || "Topologie-Verstoß";
