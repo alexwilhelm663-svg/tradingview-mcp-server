@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V52: Cognitive Re-Anchoring Mentor & Dynamic Temp aktiv...");
+console.log("🚀 Bot V53: Groq JSON-Keyword Mandatory Inject aktiv...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -122,10 +122,11 @@ bot.command("analyse", async (ctx) => {
   while (iteration < 3) {
     iteration++;
     try {
-      // =================================================================
-      // DER KI-MENTOR (Übersetzt das sture Python-Veto in Wellen-Logik)
-      // =================================================================
-      let promptText = "Führe die Wellenzählung durch.";
+      // =====================================================================
+      // DER GROQ-SCHLÜSSEL: Das Wort "JSON" MUSS im Prompt-String stehen!
+      // =====================================================================
+      let promptText = "Führe die Wellenzählung durch und antworte AUSSCHLIESSLICH als JSON-Objekt mit dem Key 'waves'.";
+      
       if (criticRejection) {
         promptText = `🔴 KRITISCHER REGELVERSTOSS IM VORHERIGEN VERSUCH:
 "${criticRejection}"
@@ -135,10 +136,9 @@ MENTOR-ANWEISUNG FÜR DIE KORREKTUR (Cognitive Re-Anchoring):
 2. Falls ein 'Retracement-Bruch' vorliegt: Schiebe den Startpunkt '0' zeitlich weiter nach rechts auf das absolut tiefste Tal des Bärenmarktes!
 3. Nutze deine Generalvollmacht aus Klausel 3.
 
-Liefere das korrigierte JSON-Objekt.`;
+Liefere das korrigierte JSON-Objekt mit dem Key 'waves'.`;
       }
 
-      // Dynamische Kreativitäts-Freigabe: Steigert die Temperatur pro Fehler leicht
       const currentTemp = Math.min(0.1 + ((iteration - 1) * 0.15), 0.4);
 
       const res = await groq.chat.completions.create({
@@ -170,7 +170,7 @@ Liefere das korrigierte JSON-Objekt.`;
       await ctx.reply(`🔄 [Runde ${iteration}/3 | Temp: ${currentTemp.toFixed(2)}] Veto: "${criticRejection.substring(0, 150)}"`);
       
     } catch(e: any) {
-        await ctx.reply(`⚠️ Groq-API Stau: \n\`${e.message || "Timeout"}\``);
+        await ctx.reply(`⚠️ Groq-API Fehler: \n\`${e.message || JSON.stringify(e)}\``);
         await new Promise(r => setTimeout(r, 2000));
     }
   }
