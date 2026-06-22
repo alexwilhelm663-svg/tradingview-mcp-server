@@ -10,28 +10,18 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V68: Strict JSON-Schema Enforcement aktiv...");
-
-// Der Schema-Enforcer: Zwingt die KI zum exakten Format
-const REQUIRED_SCHEMA = `
-Du MÜSST exakt dieses Format verwenden:
-{
-  "waves": [
-    {"label": "0", "date": "YYYY-MM-DD", "price": 0.0},
-    {"label": "1", "date": "YYYY-MM-DD", "price": 0.0},
-    ...
-  ]
-}
-Jedes Objekt muss 'label', 'date' und 'price' haben!`;
+console.log("🚀 Bot V69: Absolute Truth Engine (Ironclad Stderr Parser) aktiv...");
 
 function parseWavesFromJson(text: string) {
   try {
-    const jsonStr = text.replace(/```json/g, "").replace(/```/g, "").trim();
-    const data = JSON.parse(jsonStr);
-    return data.waves || data; 
+    const clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(clean);
+    if (parsed.waves && Array.isArray(parsed.waves)) return parsed.waves;
+    if (Array.isArray(parsed)) return parsed;
+    return null;
   } catch (e) { 
-    console.log("DEBUG RAW OUTPUT:", text); // Damit wir sehen, was er schickt
-    return null; 
+    const match = text.match(/\[\s*\{.*\}\s*\]/s);
+    try { return match ? JSON.parse(match[0]) : null; } catch(err) { return null; }
   }
 }
 
@@ -42,7 +32,7 @@ async function fetchVanillaYahooCandles(symbol: string) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const raw = await res.json();
   const chartData = raw.chart?.result?.[0];
-  if (!chartData) throw new Error("Keine Daten.");
+  if (!chartData) throw new Error("Keine Daten im Yahoo-JSON.");
   
   const timestamps = chartData.timestamp || [];
   const quote = chartData.indicators?.quote?.[0] || {};
@@ -60,27 +50,65 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return rawCandles;
 }
 
-function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, error: string | null }> {
+// IRONCLAD PYTHON BRIDGE: Verliert kein einziges Zeichen mehr aus Stderr
+function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ 
+  pngBuffer: Buffer | null, 
+  errorMessage: string | null 
+}> {
   return new Promise((resolve) => {
     const pyProcess = spawn("python3", ["python_service/drawer.py"]);
-    let stdoutBufs: Buffer[] = [], stderrStr = "";
+    let stdoutBufs: Buffer[] = [];
+    let stderrStr = "";
+
     pyProcess.stdout.on("data", c => stdoutBufs.push(c));
     pyProcess.stderr.on("data", c => stderrStr += c.toString());
+
     pyProcess.stdin.write(JSON.stringify({ symbol, waves, candles }));
     pyProcess.stdin.end();
+
     pyProcess.on("close", (code) => {
-      if (code !== 0) return resolve({ pngBuffer: null, error: `Python Exit ${code}: ${stderrStr}` });
-      resolve({ pngBuffer: stdoutBufs.length > 0 ? Buffer.concat(stdoutBufs) : null, error: null });
+      const trimmedStderr = stderrStr.trim();
+
+      // Fall 1: Python ist mit einem echten Systemfehler gecrasht (KeyError, Syntax, etc.)
+      if (code !== 0) {
+        return resolve({ pngBuffer: null, errorMessage: `Python System Crash [Exit ${code}]:\n${trimmedStderr}` });
+      }
+
+      // Fall 2: Python lief durch (Exit 0), hat aber eine JSON-Validierungs-Meldung in stderr hinterlassen!
+      if (trimmedStderr.length > 0) {
+        try {
+          const parsed = JSON.parse(trimmedStderr);
+          if (parsed.validation && parsed.validation.valid === false) {
+            return resolve({ 
+              pngBuffer: null, 
+              errorMessage: parsed.validation.message || JSON.stringify(parsed.validation) 
+            });
+          }
+        } catch (e) {
+          // Es war Text im stderr, kein JSON, aber es existiert Text!
+          if (stdoutBufs.length === 0) {
+            return resolve({ pngBuffer: null, errorMessage: `Python Ablehnung: ${trimmedStderr}` });
+          }
+        }
+      }
+
+      // Fall 3: Einwandfreier Durchlauf, wir haben ein Bild!
+      if (stdoutBufs.length > 0) {
+        return resolve({ pngBuffer: Buffer.concat(stdoutBufs), errorMessage: null });
+      }
+
+      // Fall 4: Absolutes Geister-Szenario
+      resolve({ pngBuffer: null, errorMessage: "Python beendete den Prozess ohne Bildausgabe und ohne Fehlermeldung." });
     });
   });
 }
 
 bot.command("analyse", async (ctx) => {
   const symbolArg = ctx.message.text.split(" ")[1];
-  if (!symbolArg) return ctx.reply("❌ Symbol?");
+  if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Historie: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Ziehe Historie: ${cleanSymbol}...`);
   let candles: any[] = [];
   try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
 
@@ -89,46 +117,49 @@ bot.command("analyse", async (ctx) => {
   const modelLite = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite", systemInstruction: systemPrompt });
 
   let iteration = 0;
-  let lastError = "Keine Details";
+  let rejectionReason = "";
   let finalPhoto: Buffer | null = null;
 
   while (iteration < 3) {
     iteration++;
     try {
-      // Hier injecten wir das Schema ZWINGEND in den User-Prompt
-      const promptText = `Analysiere EW. 
-      FEHLER LETZTES MAL: ${lastError.substring(0, 50)}. 
-      ${REQUIRED_SCHEMA}`;
+      const promptText = iteration === 1 
+        ? `Führe die Elliott-Wellen-Zählung für die gesamte Historie durch. Liefere AUSSCHLIESSLICH ein JSON mit dem Key 'waves'.`
+        : `🔴 KORREKTUR-BEFEHL! Dein letzter Versuch wurde von der mathematischen Geometrie-Prüfung abgelehnt. 
+Exakter Grund der Ablehnung:
+"${rejectionReason}"
+
+Liefere eine neue, korrigierte Zählung, die diesen exakten Fehler behebt!`;
 
       const result = await modelLite.generateContent({
         contents: [{ role: "user", parts: [{ text: promptText }] }],
         generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
       });
 
-      const rawText = result.response.text();
-      const waves = parseWavesFromJson(rawText);
-      
-      if (!waves || !Array.isArray(waves) || !waves[0].label) {
-          await ctx.reply(`🔄 [Runde ${iteration}] KI lieferte invalides JSON. Rohdaten: ${rawText.substring(0, 50)}`);
-          lastError = "Ungültige Struktur";
-          continue;
+      const waves = parseWavesFromJson(result.response.text());
+      if (!waves || !Array.isArray(waves) || waves.length === 0 || !waves[0].label) {
+        rejectionReason = "KI lieferte strukturell defektes JSON (Keys fehlen).";
+        await ctx.reply(`🔄 [Runde ${iteration}] Veto: ${rejectionReason}`);
+        continue;
       }
 
       const py = await runPythonCritic(cleanSymbol, waves, candles);
-      if (!py.error && py.pngBuffer) {
-        finalPhoto = py.pngBuffer;
-        break;
-      }
       
-      lastError = py.error || "Topologie-Fehler";
-      await ctx.reply(`🔄 [Runde ${iteration}] Python sagt: ${lastError.substring(0, 100)}`);
+      if (py.pngBuffer) {
+        finalPhoto = py.pngBuffer;
+        break; // BINGO!
+      }
+
+      rejectionReason = py.errorMessage || "Unbekannter Geometrie-Verstoß";
+      await ctx.reply(`🔄 [Runde ${iteration}] Veto-Grund: ${rejectionReason}`);
+
     } catch(e: any) {
         await ctx.reply(`⚠️ API-Fehler: ${e.message}`);
     }
   }
 
-  if (!finalPhoto) return ctx.reply(`❌ Abbruch. Letztes Veto: ${lastError}`);
-  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View: ${cleanSymbol}` });
+  if (!finalPhoto) return ctx.reply(`❌ Abbruch nach 3 Zyklen.\n\nLetzter, ungeschminkter Fehlerbericht:\n\`\`\`text\n${rejectionReason}\n\`\`\``);
+  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View (Max History): ${cleanSymbol}` });
 });
 
 if (RENDER_EXTERNAL_URL) {
