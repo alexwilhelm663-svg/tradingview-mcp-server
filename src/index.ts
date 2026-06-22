@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft: GROQ Engine v42 mit Webhook-Kopplung aktiv.");
+console.log("🤖 Bot läuft: GROQ Engine v43 mit Webhook-Kopplung aktiv.");
 
 interface ChatSession {
   lastDataPayload: any;
