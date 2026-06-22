@@ -13,7 +13,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit 4-Dezimalen-Quant-Präzision & GenAI 2.0 Pool (v28)...");
+console.log("🤖 Bot läuft in der Cloud mit entkoppelter API-Stau-Weiche & 4-Dezimalen-Quant-Engine (v29)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -119,7 +119,6 @@ bot.command("analyse", async (ctx) => {
     const result = await yahooFinance.historical(cleanSymbol, { period1, period2, interval: yahooInterval }) as any[];
     if (!result || result.length === 0) throw new Error("Yahoo lieferte ein leeres Array.");
 
-    // FIX: 4 Nachkommastellen für historische Penny-Stock-Fraktale (NVDA 1999)
     candlesArray = result.map(c => ({
       date: c.date.toISOString().split('T')[0],
       open: Number(c.open).toFixed(4),
@@ -143,27 +142,31 @@ bot.command("analyse", async (ctx) => {
   let finalErrLogLog = "";
   let finalPhotoBuffer: Buffer | null = null;
   
-  let iteration = 0;
-  const maxIterations = 3;
+  let topologyIteration = 0;
+  const maxTopologyIterations = 3;
   let criticRejectionReason = "";
 
-  // FIX: Saubere GenAI v1beta Model-Pool Kaskade
+  let apiHiccupCount = 0;
+  const maxApiHiccups = 4;
+
   const modelPool = [
       "gemini-2.5-flash", 
-      "gemini-2.0-flash", 
+      "gemini-2.5-flash", // Im Free Tier bleiben wir stur bei Flash 2.5 (höchste RPM-Eimer!)
       "gemini-2.5-pro"
   ];
 
-  await ctx.reply(`⏳ Starte **Automated Actor-Critic Self-Healing Pipeline** für ${cleanSymbol} (Max 3 Topologie-Iterationen)...`);
+  await ctx.reply(`⏳ Starte **Automated Actor-Critic Pipeline** für ${cleanSymbol} (Max 3 Topologie-Zyklen)...`);
 
-  while (iteration < maxIterations) {
-    iteration++;
-    const activeModel = modelPool[iteration-1] || "gemini-2.5-flash";
+  // =========================================================================
+  // DIE ENTKOPPELTE SCHLEIFE: Trennt API-Stau mathematisch von Linter-Vetos
+  // =========================================================================
+  while (topologyIteration < maxTopologyIterations) {
+    const activeModel = modelPool[topologyIteration] || "gemini-2.5-flash";
 
     if (criticRejectionReason) {
-      await ctx.reply(`⚠️ **Python-Kritiker Veto (Runde ${iteration-1}/${maxIterations}):** *"${criticRejectionReason}"*\nSperre KI mit Veto-Befund erneut ins Verhörzimmer (Modell: ${activeModel})...`);
+      await ctx.reply(`⚠️ **Python-Kritiker Veto (Runde ${topologyIteration}/${maxTopologyIterations}):** *"${criticRejectionReason}"*\nSperre KI mit Veto-Befund erneut ins Verhörzimmer (Modell: ${activeModel})...`);
       
-      currentPrompt = `KORREKTUR-ZYKLUS (Stufe ${iteration}/${maxIterations}):\n\nDeine vorherige Wellen-Tabelle wurde vom mathematischen Python-Kritiker mit folgendem harten Veto abgelehnt:\n\n[ "${criticRejectionReason}" ]\n\nDu bist VERPFLICHTET, exakt diesen topologischen Fehler in den Werten der Tabelle zu korrigieren! Verändere ausschließlich die fehlerhaften Zeilen, behalte das IPO-Startdatum ${streamStartDate} bei und gib unten erneut die korrigierte, vollständige Markdown-Tabelle aus.\n\nHier sind nochmal die Marktdaten zur Orientierung:\n${minifiedMarketStream}`;
+      currentPrompt = `KORREKTUR-ZYKLUS (Stufe ${topologyIteration + 1}/${maxTopologyIterations}):\n\nDeine vorherige Wellen-Tabelle wurde vom mathematischen Python-Kritiker mit folgendem harten Veto abgelehnt:\n\n[ "${criticRejectionReason}" ]\n\nDu bist VERPFLICHTET, exakt diesen topologischen Fehler in den Werten der Tabelle zu korrigieren! Verändere ausschließlich die fehlerhaften Zeilen, behalte das IPO-Startdatum ${streamStartDate} bei und gib unten erneut die korrigierte, vollständige Markdown-Tabelle aus.\n\nHier sind nochmal die Marktdaten zur Orientierung:\n${minifiedMarketStream}`;
     }
 
     let llmRawAnswer = "";
@@ -177,32 +180,57 @@ bot.command("analyse", async (ctx) => {
         }
       });
       llmRawAnswer = response.text || "";
-    } catch(e: any) {
-      await ctx.reply(`⚠️ API-Schluckauf in Runde ${iteration}: ${e.message}. Versuche nächsten Step...`);
-      await new Promise(r => setTimeout(r, 3000));
+
+    } catch(apiErr: any) {
+      apiHiccupCount++;
+      if (apiHiccupCount > maxApiHiccups) {
+        return ctx.reply(`❌ **API-Kollaps:** Analyse abgebrochen. Die Google GenAI Server haben uns 4x hintereinander wegen Überlastung oder Free-Tier Rate-Limits abgewiesen.\n\nGrund: ${apiErr.message}`);
+      }
+
+      const rawErrStr = JSON.stringify(apiErr);
+      let pauseSeconds = 15; 
+
+      // PARSER-WUNDER: Sucht in Googles Fehlermeldung nach dem exakten Ticket ("retryDelay": "46s")
+      const delayMatch = rawErrStr.match(/retryDelay["']?:\s*["']?(\d+)s/);
+      if (delayMatch && delayMatch[1]) {
+        pauseSeconds = parseInt(delayMatch[1], 10) + 2; // +2 Sekunden TÜV-Puffer
+      } else if (rawErrStr.includes("429") || rawErrStr.includes("RESOURCE_EXHAUSTED")) {
+        pauseSeconds = 45; // Standard-Pausenblock für Free-Tier TPM Erholung
+      }
+
+      await ctx.reply(`⚠️ **Google API Stau (${apiErr.status || '429'}):** Free-Tier Token-Eimer erschöpft. Bot wartet vorschriftsmäßig an der Ampel für **${pauseSeconds} Sekunden**... (Stau-Event ${apiHiccupCount}/${maxApiHiccups})`);
+      
+      await new Promise(r => setTimeout(r, pauseSeconds * 1000));
+      
+      // WICHTIG: Wir zählen die topologyIteration absichtlich NICHT hoch! Er schickt denselben Step nochmal ab!
       continue;
     }
 
+    // --- AB HIER WAR DIE API ERFOLGREICH! JETZT RÜCKT DIE TOPOLOGIE VOR: ---
+    topologyIteration++;
+
     const candidateWaves = parseWavesFromText(llmRawAnswer);
     if (candidateWaves.length === 0) {
-      criticRejectionReason = "LLM hat keine auslesbare Markdown-Tabelle geliefert.";
+      criticRejectionReason = "LLM hat geantwortet, aber keine syntaktisch lesbare Markdown-Tabelle erzeugt.";
       continue;
     }
 
     const pyCritic = await runPythonCritic(cleanSymbol, candidateWaves, candlesArray);
 
     if (pyCritic.validationData && pyCritic.validationData.valid) {
+      // 🟢 GEWONNEN!
       finalPhotoBuffer = pyCritic.pngBuffer;
       finalErrLogLog = pyCritic.errLog;
       finalResponseText = llmRawAnswer;
       break;
     } else {
-      criticRejectionReason = pyCritic.validationData?.message || "Unbekannter Geometrie-Fehler.";
+      // 🔴 KRITIKER VETO!
+      criticRejectionReason = pyCritic.validationData?.message || "Unbekannte topologische Verletzung.";
     }
   }
 
   if (!finalPhotoBuffer) {
-    return ctx.reply(`❌ **Automatischer Self-Healing Abbruch:** Die KI konnte die Chart-Topologie für ${cleanSymbol} auch nach 3 mathematischen Korrektur-Zyklen nicht fehlerfrei auflösen.\n\nLetzter Kritiker-Befund:\n*_" ${criticRejectionReason} "_*\n\nBitte Timeframe wechseln oder Rohdaten prüfen.`);
+    return ctx.reply(`❌ **Automatischer Self-Healing Abbruch:** Die KI konnte die Chart-Topologie für ${cleanSymbol} nach ${maxTopologyIterations} mathematischen Iterationen nicht fehlerfrei auflösen.\n\nLetzter Kritiker-Befund:\n*_" ${criticRejectionReason} "_*\n\nBitte Timeframe wechseln oder Rohdaten prüfen.`);
   }
 
   chatSessions[chatId] = {
@@ -225,10 +253,10 @@ bot.command("analyse", async (ctx) => {
   } catch(e) {}
 
   if (isDebug && finalErrLogLog) {
-      await ctx.reply(`🩻 **PYTHON TELEMETRIE (Runde ${iteration}):**\n\`\`\`json\n${finalErrLogLog.substring(0, 3800)}\n\`\`\``);
+      await ctx.reply(`🩻 **PYTHON TELEMETRIE (Runde ${topologyIteration}):**\n\`\`\`json\n${finalErrLogLog.substring(0, 3800)}\n\`\`\``);
   }
 
-  await ctx.replyWithPhoto({ source: finalPhotoBuffer }, { caption: `📊 EW Self-Healing Master View: ${cleanSymbol} (${finalIntervalLabel}) - Validiert in Runde ${iteration}` });
+  await ctx.replyWithPhoto({ source: finalPhotoBuffer }, { caption: `📊 EW Self-Healing Master View: ${cleanSymbol} (${finalIntervalLabel}) - Validiert in Runde ${topologyIteration}` });
   
   const fullReport = finalResponseText + statusBadge;
   for (let i = 0; i < fullReport.length; i += 4000) {
