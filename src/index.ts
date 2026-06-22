@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V60: Hard-coded Gemini-1.5-Flash (Production ID) aktiv...");
+console.log("🚀 Bot V61: Gemini-Kaskade (Flash-Lite Primary / 3.5-Flash Fallback) aktiv...");
 
 function parseWavesFromJson(text: string) {
   try {
@@ -72,36 +72,35 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Bitte Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Ziehe 5-Jahres-Stream via Google Cloud: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Ziehe 5-Jahres-Stream: ${cleanSymbol}...`);
 
   let candles: any[] = [];
-  try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Fehler: ${e.message}`); }
+  try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Download-Fehler: ${e.message}`); }
 
   const minifiedMarketStream = candles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
   const systemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream);
 
-  // =====================================================================
-  // HARD-LOCKED PRODUKTIONS-MODELL: gemini-1.5-flash
-  // =====================================================================
-  const model = genAI.getGenerativeModel({ 
-    model: "gemini-1.5-flash",
-    systemInstruction: systemPrompt
-  });
+  // Instanziierung beider Modelle
+  const modelLite = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite", systemInstruction: systemPrompt });
+  const modelPro = genAI.getGenerativeModel({ model: "gemini-3.5-flash", systemInstruction: systemPrompt });
 
   let iteration = 0;
   let criticRejection = "";
   let finalPhoto: Buffer | null = null;
 
-  await ctx.reply(`⚡ Gemini 1.5 Flash (Production ID) aktiv...`);
+  await ctx.reply(`⚡ Analyse startet (Modell: gemini-3.1-flash-lite)...`);
 
   while (iteration < 3) {
     iteration++;
+    let currentModel = modelLite;
+    let modelName = "gemini-3.1-flash-lite";
+
     try {
       const promptText = criticRejection 
         ? `KORREKTUR: "${criticRejection.substring(0, 50)}". Antworte zwingend als JSON mit Key 'waves'.` 
         : `Analysiere den Kurs-Stream.`;
 
-      const result = await model.generateContent({
+      const result = await currentModel.generateContent({
         contents: [{ role: "user", parts: [{ text: promptText }] }],
         generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
       });
@@ -118,9 +117,28 @@ bot.command("analyse", async (ctx) => {
       }
       criticRejection = py.validationData?.message || py.rawStderr || "Topologie-Verstoß";
       await ctx.reply(`🔄 [Runde ${iteration}/3] Veto: "${criticRejection.substring(0, 100)}"`);
+
     } catch(e: any) {
-        await ctx.reply(`⚠️ Gemini-API Fehler: \n\`${e.message}\``);
-        await new Promise(r => setTimeout(r, 2000));
+        // FALLBACK LOGIK
+        await ctx.reply(`⚠️ ${modelName} schwächelt, wechsle auf gemini-3.5-flash...`);
+        try {
+            const fallbackResult = await modelPro.generateContent({
+                contents: [{ role: "user", parts: [{ text: criticRejection ? "KORREKTUR (Pro): " + criticRejection : "Analysiere den Kurs-Stream." }] }],
+                generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
+            });
+            const llmRawAnswer = fallbackResult.response.text();
+            const waves = parseWavesFromJson(llmRawAnswer);
+            
+            if (waves && Array.isArray(waves)) {
+                const py = await runPythonCritic(cleanSymbol, waves, candles);
+                if (py.validationData && py.validationData.valid) {
+                    finalPhoto = py.pngBuffer;
+                    break;
+                }
+            }
+        } catch (innerErr) {
+            await ctx.reply(`❌ Beide Modelle blockiert. Letzter Fehler: ${e.message}`);
+        }
     }
   }
 
