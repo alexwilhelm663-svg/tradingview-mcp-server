@@ -10,12 +10,22 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V63: Diagnostic Mode (Raw Stderr Dump) aktiv...");
+console.log("🚀 Bot V64: Structural Guardrail (Label-Enforcer) aktiv...");
+
+// Der Struktur-Wächter: Prüft jedes Wellen-Objekt auf den Key 'label'
+function validateWaveStructure(waves: any[]) {
+    if (!Array.isArray(waves)) return "Nicht als Array formatiert.";
+    for (let i = 0; i < waves.length; i++) {
+        if (!waves[i].label) return `Welle an Index ${i} hat keinen 'label'-Key!`;
+    }
+    return null; // Alles okay
+}
 
 function parseWavesFromJson(text: string) {
   try {
     const jsonStr = text.replace(/```json/g, "").replace(/```/g, "").trim();
-    return JSON.parse(jsonStr).waves || JSON.parse(jsonStr);
+    const data = JSON.parse(jsonStr);
+    return data.waves || data; 
   } catch (e) { return null; }
 }
 
@@ -73,35 +83,39 @@ bot.command("analyse", async (ctx) => {
   const modelLite = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite", systemInstruction: systemPrompt });
 
   let iteration = 0;
-  let lastError = "Keine Details";
+  let lastError = "Start";
   let finalPhoto: Buffer | null = null;
 
   while (iteration < 3) {
     iteration++;
     try {
       const result = await modelLite.generateContent({
-        contents: [{ role: "user", parts: [{ text: `Analysiere EW. Aktueller Fehler: ${lastError}. JSON mit Key 'waves'.` }] }],
+        contents: [{ role: "user", parts: [{ text: `Analysiere EW. FEHLER BEIM LETZTEN MAL: ${lastError}. JSON mit Key 'waves' MUSS zwingend 'label', 'date' und 'price' haben!` }] }],
         generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
       });
 
       const waves = parseWavesFromJson(result.response.text());
-      if (!waves) { lastError = "KI lieferte ungültiges JSON"; continue; }
+      // WÄCHTER-CHECK
+      const structuralError = validateWaveStructure(waves);
+      if (structuralError) {
+          lastError = structuralError;
+          await ctx.reply(`🔄 [Runde ${iteration}] Struktur-Fehler: ${lastError}`);
+          continue;
+      }
 
       const py = await runPythonCritic(cleanSymbol, waves, candles);
       if (!py.error && py.pngBuffer) {
         finalPhoto = py.pngBuffer;
         break;
       }
-      
-      // HIER KOMMT DIE WAHRHEIT
-      lastError = py.error || "Unbekannter Logik-Fehler in Python";
-      await ctx.reply(`🔄 [Runde ${iteration}] Python sagt: \n\`\`\`text\n${lastError.substring(0, 500)}\n\`\`\``);
+      lastError = py.error || "Topologie-Fehler";
+      await ctx.reply(`🔄 [Runde ${iteration}] Python sagt: ${lastError.substring(0, 50)}`);
     } catch(e: any) {
         await ctx.reply(`⚠️ API-Fehler: ${e.message}`);
     }
   }
 
-  if (!finalPhoto) return ctx.reply(`❌ Abbruch. Letzter Dump:\n${lastError}`);
+  if (!finalPhoto) return ctx.reply(`❌ Abbruch. Letztes Veto: ${lastError}`);
   await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View: ${cleanSymbol}` });
 });
 
