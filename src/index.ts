@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V65: Max-History Mode (Range=max) aktiv...");
+console.log("🚀 Bot V66: Full Diagnostics (Validation-Restore) aktiv...");
 
 function validateWaveStructure(waves: any[]) {
     if (!Array.isArray(waves)) return "Nicht als Array formatiert.";
@@ -30,7 +30,6 @@ function parseWavesFromJson(text: string) {
 
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
-  // RANGE = MAX: Zieht die komplette Historie
   const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=max`;
   const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -54,7 +53,8 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return rawCandles;
 }
 
-function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, error: string | null }> {
+// RESTORED: Parsen der Python-Validation-Daten
+function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, validationData: any | null, rawStderr: string }> {
   return new Promise((resolve) => {
     const pyProcess = spawn("python3", ["python_service/drawer.py"]);
     let stdoutBufs: Buffer[] = [], stderrStr = "";
@@ -63,8 +63,9 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
     pyProcess.stdin.write(JSON.stringify({ symbol, waves, candles }));
     pyProcess.stdin.end();
     pyProcess.on("close", (code) => {
-      if (code !== 0) return resolve({ pngBuffer: null, error: `Python Exit ${code}: ${stderrStr}` });
-      resolve({ pngBuffer: stdoutBufs.length > 0 ? Buffer.concat(stdoutBufs) : null, error: null });
+      let val = null;
+      try { val = JSON.parse(stderrStr).validation; } catch(e) {}
+      resolve({ pngBuffer: stdoutBufs.length > 0 ? Buffer.concat(stdoutBufs) : null, validationData: val, rawStderr: stderrStr });
     });
   });
 }
@@ -74,7 +75,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol?");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Ziehe komplette Historie: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Ziehe Historie: ${cleanSymbol}...`);
   let candles: any[] = [];
   try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
 
@@ -90,7 +91,7 @@ bot.command("analyse", async (ctx) => {
     iteration++;
     try {
       const result = await modelLite.generateContent({
-        contents: [{ role: "user", parts: [{ text: `Analysiere EW über den gesamten Zeitraum. FEHLER: ${lastError}. JSON mit Key 'waves' MUSS 'label', 'date' und 'price' haben!` }] }],
+        contents: [{ role: "user", parts: [{ text: `Analysiere EW. FEHLER BEIM LETZTEN MAL: ${lastError}. JSON mit Key 'waves' MUSS 'label', 'date' und 'price' haben!` }] }],
         generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
       });
 
@@ -103,19 +104,23 @@ bot.command("analyse", async (ctx) => {
       }
 
       const py = await runPythonCritic(cleanSymbol, waves, candles);
-      if (!py.error && py.pngBuffer) {
+      
+      // DIAGNOSE: Wenn keine ValidationData, dann ist Python abgestürzt
+      if (py.validationData && py.validationData.valid) {
         finalPhoto = py.pngBuffer;
         break;
       }
-      lastError = py.error || "Topologie-Fehler";
-      await ctx.reply(`🔄 [Runde ${iteration}] Python sagt: ${lastError.substring(0, 50)}`);
+      
+      // HIER KOMMT DIE WAHRHEIT
+      lastError = py.validationData?.message || py.rawStderr || "Unbekannter Logik-Fehler";
+      await ctx.reply(`🔄 [Runde ${iteration}] Python sagt: ${lastError}`);
     } catch(e: any) {
         await ctx.reply(`⚠️ API-Fehler: ${e.message}`);
     }
   }
 
   if (!finalPhoto) return ctx.reply(`❌ Abbruch. Letztes Veto: ${lastError}`);
-  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View (Max History): ${cleanSymbol}` });
+  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View: ${cleanSymbol}` });
 });
 
 if (RENDER_EXTERNAL_URL) {
