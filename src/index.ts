@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V66: Full Diagnostics (Validation-Restore) aktiv...");
+console.log("🚀 Bot V67: Adaptive Pivot-Shift Logic aktiv...");
 
 function validateWaveStructure(waves: any[]) {
     if (!Array.isArray(waves)) return "Nicht als Array formatiert.";
@@ -53,8 +53,7 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return rawCandles;
 }
 
-// RESTORED: Parsen der Python-Validation-Daten
-function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, validationData: any | null, rawStderr: string }> {
+function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, error: string | null }> {
   return new Promise((resolve) => {
     const pyProcess = spawn("python3", ["python_service/drawer.py"]);
     let stdoutBufs: Buffer[] = [], stderrStr = "";
@@ -63,9 +62,8 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
     pyProcess.stdin.write(JSON.stringify({ symbol, waves, candles }));
     pyProcess.stdin.end();
     pyProcess.on("close", (code) => {
-      let val = null;
-      try { val = JSON.parse(stderrStr).validation; } catch(e) {}
-      resolve({ pngBuffer: stdoutBufs.length > 0 ? Buffer.concat(stdoutBufs) : null, validationData: val, rawStderr: stderrStr });
+      if (code !== 0) return resolve({ pngBuffer: null, error: `Python Exit ${code}: ${stderrStr}` });
+      resolve({ pngBuffer: stdoutBufs.length > 0 ? Buffer.concat(stdoutBufs) : null, error: null });
     });
   });
 }
@@ -89,9 +87,14 @@ bot.command("analyse", async (ctx) => {
 
   while (iteration < 3) {
     iteration++;
+    // DYNAMIC PIVOT SHIFT INSTRUCTION
+    const pivotInstruction = iteration > 1 
+      ? `\n\nACHTUNG: Dein letzter Versuch schlug fehl (${lastError}). Du musst deinen Startpunkt '0' zeitlich verschieben (nach rechts), um das Retracement-Gesetz zu wahren!` 
+      : "";
+
     try {
       const result = await modelLite.generateContent({
-        contents: [{ role: "user", parts: [{ text: `Analysiere EW. FEHLER BEIM LETZTEN MAL: ${lastError}. JSON mit Key 'waves' MUSS 'label', 'date' und 'price' haben!` }] }],
+        contents: [{ role: "user", parts: [{ text: `Analysiere EW.${pivotInstruction}. JSON mit Key 'waves' zwingend erforderlich!` }] }],
         generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
       });
 
@@ -104,16 +107,13 @@ bot.command("analyse", async (ctx) => {
       }
 
       const py = await runPythonCritic(cleanSymbol, waves, candles);
-      
-      // DIAGNOSE: Wenn keine ValidationData, dann ist Python abgestürzt
-      if (py.validationData && py.validationData.valid) {
+      if (!py.error && py.pngBuffer) {
         finalPhoto = py.pngBuffer;
         break;
       }
       
-      // HIER KOMMT DIE WAHRHEIT
-      lastError = py.validationData?.message || py.rawStderr || "Unbekannter Logik-Fehler";
-      await ctx.reply(`🔄 [Runde ${iteration}] Python sagt: ${lastError}`);
+      lastError = py.error || "Topologie-Fehler";
+      await ctx.reply(`🔄 [Runde ${iteration}] Fehler: ${lastError.substring(0, 80)}`);
     } catch(e: any) {
         await ctx.reply(`⚠️ API-Fehler: ${e.message}`);
     }
