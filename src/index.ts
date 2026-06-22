@@ -2,16 +2,17 @@ import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
-import yahooFinance from "yahoo-finance2";
+import { YahooFinance } from "yahoo-finance2"; // NATIVE NAMED CLASS IMPORT
 import { getElliottWaveSystemPrompt } from "./prompt";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const yahooFinance = new YahooFinance(); // REKORREKTE INSTANZIERUNG FÜR V3
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
 
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft: Overload-Schild aktiv (v37) - Clean JSON Pivot...");
+console.log("🤖 Bot läuft: Yahoo-Finance Instance-Fix & JSON-Pipeline (v38)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -57,7 +58,7 @@ bot.command("analyse", async (ctx) => {
 
   let candles: any[] = [];
   try {
-    // === DER MAGISCHE SCHUTZSCHILD (as any[]) ===
+    // Ruft den instanziierten Yahoo-Client absolut korrekt auf
     const rawResult = await yahooFinance.historical(cleanSymbol, { 
       period1: "2020-01-01", 
       period2: new Date(), 
