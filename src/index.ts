@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V46: Groq JSON-Object Fix & Error-Unmasking aktiv...");
+console.log("🚀 Bot V47: Python Stderr-Unmasking & Live-Feedback aktiv...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -19,7 +19,6 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
-// Extrahiert das Array sicher aus dem JSON-Object { "waves": [ ... ] }
 function parseWavesFromJson(text: string) {
   try {
     const parsed = JSON.parse(text);
@@ -66,7 +65,14 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return candles;
 }
 
-function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, validationData: { valid: boolean, message: string } | null }> {
+// =========================================================================
+// DER SCHEINWERFER: Gibt jetzt zwingend die rohe Python-Fehlerausgabe mit!
+// =========================================================================
+function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ 
+  pngBuffer: Buffer | null, 
+  validationData: { valid: boolean, message: string } | null,
+  rawStderr: string 
+}> {
   return new Promise((resolve) => {
     const pythonCommand = process.platform === "win32" ? "python" : "python3";
     const pyProcess = spawn(pythonCommand, ["python_service/drawer.py"]);
@@ -81,7 +87,11 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
     pyProcess.on("close", () => {
       let val = null;
       try { val = JSON.parse(stderrStr).validation; } catch(e) {}
-      resolve({ pngBuffer: stdoutBufs.length > 0 ? Buffer.concat(stdoutBufs) : null, validationData: val });
+      resolve({ 
+        pngBuffer: stdoutBufs.length > 0 ? Buffer.concat(stdoutBufs) : null, 
+        validationData: val,
+        rawStderr: stderrStr // <--- HIER STECKT DIE WAHRHEIT DRIN
+      });
     });
   });
 }
@@ -107,8 +117,7 @@ bot.command("analyse", async (ctx) => {
   let finalPhoto: Buffer | null = null;
   let finalResponseText = "";
 
-  // Update auf das modernste, pfeilschnelle Groq-Modell
-  await ctx.reply(`⚡ Starte Groq LPU (Modell: llama-3.3-70b-versatile)...`);
+  await ctx.reply(`⚡ LPU-Engine getriggert (Modell: llama-3.3-70b-versatile)...`);
 
   while (iteration < 3) {
     iteration++;
@@ -133,7 +142,11 @@ bot.command("analyse", async (ctx) => {
       const llmRawAnswer = res.choices[0]?.message?.content || "";
       const waves = parseWavesFromJson(llmRawAnswer);
       
-      if (!waves) { criticRejection = "KI lieferte kein auslesbares 'waves'-Array"; continue; }
+      if (!waves) { 
+        criticRejection = "KI lieferte kein gültiges 'waves'-Array"; 
+        await ctx.reply(`🔄 [Runde ${iteration}/3] KI-JSON Syntax unlesbar. Starte Neuversuch...`);
+        continue; 
+      }
 
       const py = await runPythonCritic(cleanSymbol, waves, candles);
       if (py.validationData && py.validationData.valid) {
@@ -141,18 +154,25 @@ bot.command("analyse", async (ctx) => {
         finalResponseText = llmRawAnswer;
         break;
       }
-      criticRejection = py.validationData?.message || "Topologie-Fehler.";
+
+      // =====================================================================
+      // DIE WAHRHEIT INS TELEGRAM:
+      // Wenn val null ist (Python-Absturz), schickt er den Traceback ins Chat!
+      // =====================================================================
+      const actualError = py.validationData?.message || py.rawStderr || "Stummer Python-Crash";
+      criticRejection = actualError;
+      
+      await ctx.reply(`🔄 [Runde ${iteration}/3] Python-Veto: "${actualError.substring(0, 200)}..."`);
+      
     } catch(e: any) {
-        // =================================================================
-        // MASKE RUNTER: Schreibt den echten API-Fehler direkt ins Telegram!
-        // =================================================================
-        console.error("Groq API Error:", e);
-        await ctx.reply(`⚠️ Groq-Fehler (Runde ${iteration}): \n\`${e.message || JSON.stringify(e)}\``);
-        await new Promise(r => setTimeout(r, 3000));
+        await ctx.reply(`⚠️ Groq-Systemfehler: \n\`${e.message || "Unknown"}\``);
+        await new Promise(r => setTimeout(r, 2000));
     }
   }
 
-  if (!finalPhoto) return ctx.reply(`❌ Abbruch. Letzter Befund: "${criticRejection}"`);
+  if (!finalPhoto) {
+    return ctx.reply(`❌ **Endgültiger Abbruch nach 3 Versuchen.**\n\nRoher Python-Befund:\n\`\`\`text\n${criticRejection.substring(0, 1500)}\n\`\`\``);
+  }
 
   chatSessions[chatId] = {
     lastDataPayload: { candles, waves: parseWavesFromJson(finalResponseText) },
