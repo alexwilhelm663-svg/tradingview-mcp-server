@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V48: OHLC 'open'-Key Fix aktiv...");
+console.log("🚀 Bot V52: Cognitive Re-Anchoring Mentor & Dynamic Temp aktiv...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -31,9 +31,6 @@ function parseWavesFromJson(text: string) {
   }
 }
 
-// =========================================================================
-// DER KORRIGIERTE SCRAPER (Liefert jetzt das vollständige OHLC-Quartett!)
-// =========================================================================
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
   const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=5y`;
@@ -51,24 +48,24 @@ async function fetchVanillaYahooCandles(symbol: string) {
   const timestamps = chartData.timestamp || [];
   const quote = chartData.indicators?.quote?.[0] || {};
   
-  const opens = quote.open || []; // <--- DA IST DER VERLORENE SOHN!
+  const opens = quote.open || [];
   const highs = quote.high || [];
   const lows = quote.low || [];
   const closes = quote.close || [];
 
-  const candles: any[] = [];
+  const rawCandles: any[] = [];
   for (let i = 0; i < timestamps.length; i++) {
     if (opens[i] == null || highs[i] == null || lows[i] == null) continue;
     const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
-    candles.push({
+    rawCandles.push({
       date: dateStr,
-      open: Number(opens[i]).toFixed(4), // <--- EINGEPACKT!
+      open: Number(opens[i]).toFixed(4),
       high: Number(highs[i]).toFixed(4),
       low: Number(lows[i]).toFixed(4),
       close: Number(closes[i]).toFixed(4)
     });
   }
-  return candles;
+  return rawCandles;
 }
 
 function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ 
@@ -105,14 +102,14 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Bitte Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Ziehe V8-Kurse: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Ziehe 5-Jahres-Stream: ${cleanSymbol}...`);
 
   let candles: any[] = [];
   try {
     candles = await fetchVanillaYahooCandles(cleanSymbol);
   } catch (e: any) { return ctx.reply(`❌ Download-Fehler: ${e.message}`); }
 
-  const minifiedMarketStream = candles.map(c => `${c.date},${c.high},${c.low}`).join("|");
+  const minifiedMarketStream = candles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
   const systemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream);
 
   let iteration = 0;
@@ -120,34 +117,45 @@ bot.command("analyse", async (ctx) => {
   let finalPhoto: Buffer | null = null;
   let finalResponseText = "";
 
-  await ctx.reply(`⚡ LPU-Engine getriggert (Modell: llama-3.3-70b-versatile)...`);
+  await ctx.reply(`⚡ LPU-Engine aktiv (Modell: llama-3.3-70b-versatile)...`);
 
   while (iteration < 3) {
     iteration++;
     try {
-      const promptText = criticRejection 
-        ? `Fehler: ${criticRejection}. Gib das JSON-Objekt korrigiert zurück.` 
-        : `Analysiere den Kurs-Stream.`;
+      // =================================================================
+      // DER KI-MENTOR (Übersetzt das sture Python-Veto in Wellen-Logik)
+      // =================================================================
+      let promptText = "Führe die Wellenzählung durch.";
+      if (criticRejection) {
+        promptText = `🔴 KRITISCHER REGELVERSTOSS IM VORHERIGEN VERSUCH:
+"${criticRejection}"
+
+MENTOR-ANWEISUNG FÜR DIE KORREKTUR (Cognitive Re-Anchoring):
+1. Falls ein 'Overlap-Verstoß' (Tal IV dringt in Gipfel I ein) vorliegt: Du hast die Wellengrade verwechselt! Das tiefe Tal, das du fälschlicherweise als 'IV' markiert hast, ist in Wahrheit der große Makro-Rücksetzer Welle 'II' (oder das Ende einer Makro-Korrektur Welle '0'). Benenne dieses tiefe Tal in 'II' oder '0' um und suche die Gipfel III, IV und V erst im Chartverlauf rechts davon!
+2. Falls ein 'Retracement-Bruch' vorliegt: Schiebe den Startpunkt '0' zeitlich weiter nach rechts auf das absolut tiefste Tal des Bärenmarktes!
+3. Nutze deine Generalvollmacht aus Klausel 3.
+
+Liefere das korrigierte JSON-Objekt.`;
+      }
+
+      // Dynamische Kreativitäts-Freigabe: Steigert die Temperatur pro Fehler leicht
+      const currentTemp = Math.min(0.1 + ((iteration - 1) * 0.15), 0.4);
 
       const res = await groq.chat.completions.create({
         model: "llama-3.3-70b-versatile",
         messages: [
-          { 
-            role: "system", 
-            content: systemPrompt + "\n\nZWANGS-FORMAT: Du MUSST ein JSON-Objekt mit dem Key 'waves' liefern!\nBeispiel: { \"waves\": [ {\"label\": \"I\", \"date\": \"2024-01-01\", \"price\": 100.0} ] }" 
-          },
+          { role: "system", content: systemPrompt },
           { role: "user", content: promptText }
         ],
         response_format: { type: "json_object" },
-        temperature: 0.2
+        temperature: currentTemp
       });
 
       const llmRawAnswer = res.choices[0]?.message?.content || "";
       const waves = parseWavesFromJson(llmRawAnswer);
       
       if (!waves) { 
-        criticRejection = "KI lieferte kein gültiges 'waves'-Array"; 
-        await ctx.reply(`🔄 [Runde ${iteration}/3] KI-JSON Syntax unlesbar. Starte Neuversuch...`);
+        criticRejection = "KI lieferte kein auslesbares 'waves'-Array"; 
         continue; 
       }
 
@@ -158,20 +166,16 @@ bot.command("analyse", async (ctx) => {
         break;
       }
 
-      const actualError = py.validationData?.message || py.rawStderr || "Stummer Python-Crash";
-      criticRejection = actualError;
-      
-      await ctx.reply(`🔄 [Runde ${iteration}/3] Python-Veto: "${actualError.substring(0, 200)}..."`);
+      criticRejection = py.validationData?.message || py.rawStderr || "Topologie-Verstoß";
+      await ctx.reply(`🔄 [Runde ${iteration}/3 | Temp: ${currentTemp.toFixed(2)}] Veto: "${criticRejection.substring(0, 150)}"`);
       
     } catch(e: any) {
-        await ctx.reply(`⚠️ Groq-Systemfehler: \n\`${e.message || "Unknown"}\``);
+        await ctx.reply(`⚠️ Groq-API Stau: \n\`${e.message || "Timeout"}\``);
         await new Promise(r => setTimeout(r, 2000));
     }
   }
 
-  if (!finalPhoto) {
-    return ctx.reply(`❌ **Endgültiger Abbruch nach 3 Versuchen.**\n\nRoher Python-Befund:\n\`\`\`text\n${criticRejection.substring(0, 1500)}\n\`\`\``);
-  }
+  if (!finalPhoto) return ctx.reply(`❌ **Abbruch nach 3 Zyklen.**\n\nLetztes Veto:\n\`\`\`text\n${criticRejection.substring(0, 1000)}\n\`\`\``);
 
   chatSessions[chatId] = {
     lastDataPayload: { candles, waves: parseWavesFromJson(finalResponseText) },
@@ -179,6 +183,9 @@ bot.command("analyse", async (ctx) => {
   };
 
   await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View via Groq: ${cleanSymbol}` });
+  if (finalResponseText.trim()) {
+    await ctx.reply(`💬 Rohes JSON:\n\`\`\`json\n${finalResponseText.substring(0, 3800)}\n\`\`\``);
+  }
 });
 
 if (RENDER_EXTERNAL_URL) {
@@ -186,12 +193,8 @@ if (RENDER_EXTERNAL_URL) {
   bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
   http.createServer((req, res) => {
     if (req.url === webhookPath && req.method === "POST") {
-      let body = "";
-      req.on("data", chunk => body += chunk);
-      req.on("end", () => {
-        res.writeHead(200); res.end("ok");
-        try { bot.handleUpdate(JSON.parse(body)); } catch (e) {}
-      });
+      let body = ""; req.on("data", c => body += c);
+      req.on("end", () => { res.writeHead(200); res.end("ok"); try { bot.handleUpdate(JSON.parse(body)); } catch (e) {} });
     } else res.end("OK");
   }).listen(PORT);
 } else bot.launch();
