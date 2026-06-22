@@ -1,21 +1,16 @@
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
-
-// @ts-ignore: Schaltet die bürokratische Compiler-Prüfung für dieses Modul ab!
-import YahooFinance from "yahoo-finance2";
-
 import Groq from "groq-sdk";
 import { getElliottWaveSystemPrompt } from "./prompt";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const yahooFinance = new YahooFinance();
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
 
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft: GROQ Engine v44 (Compiler-Maulkorb & Selective Copy aktiv).");
+console.log("🚀 Bot startet: Nativer V8-Fetch Modus aktiv (v45) - Ohne NPM Yahoo-Ballast...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -30,6 +25,44 @@ function parseWavesFromJson(text: string) {
     const jsonStr = match ? match[0] : text;
     return JSON.parse(jsonStr);
   } catch (e) { return null; }
+}
+
+// =========================================================================
+// DER EIGENE, UNZERSTÖRBARE YAHOO-CLIENT (0% NPM-Abhängigkeiten!)
+// =========================================================================
+async function fetchVanillaYahooCandles(symbol: string) {
+  const cleanSym = symbol.trim().toUpperCase();
+  // Offener Yahoo V8 Chart-Endpoint (5 Jahre, Wochenkerzen)
+  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=5y`;
+  
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
+  });
+  
+  if (!res.ok) throw new Error(`HTTP Error ${res.status} bei Yahoo-Anfrage`);
+  const raw = await res.json();
+  
+  const chartData = raw.chart?.result?.[0];
+  if (!chartData) throw new Error("Keine Kursdaten im Yahoo-JSON gefunden.");
+
+  const timestamps = chartData.timestamp || [];
+  const quote = chartData.indicators?.quote?.[0] || {};
+  const highs = quote.high || [];
+  const lows = quote.low || [];
+  const closes = quote.close || [];
+
+  const candles: any[] = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    if (highs[i] == null || lows[i] == null) continue;
+    const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
+    candles.push({
+      date: dateStr,
+      high: Number(highs[i]).toFixed(4),
+      low: Number(lows[i]).toFixed(4),
+      close: Number(closes[i]).toFixed(4)
+    });
+  }
+  return candles;
 }
 
 function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, validationData: { valid: boolean, message: string } | null }> {
@@ -54,27 +87,17 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
 
 bot.command("analyse", async (ctx) => {
   const chatId = ctx.chat.id;
-  const symbol = ctx.message.text.split(" ")[1]?.toUpperCase();
-  if (!symbol) return ctx.reply("❌ Bitte Symbol angeben! Beispiel: /analyse NVDA");
-  const cleanSymbol = symbol.trim().split(":").pop()!;
+  const symbolArg = ctx.message.text.split(" ")[1];
+  if (!symbolArg) return ctx.reply("❌ Bitte Symbol angeben! Beispiel: /analyse NVDA");
+  const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Scanne Yahoo: ${cleanSymbol} (Letzte 5 Jahre)...`);
+  await ctx.reply(`⏳ Ziehe Kursdaten via nativer V8-Engine: ${cleanSymbol} (5 Jahre)...`);
 
   let candles: any[] = [];
   try {
-    const rawResult = await yahooFinance.historical(cleanSymbol, { 
-      period1: "2020-01-01", 
-      period2: new Date(), 
-      interval: "1wk" 
-    }) as any[];
-
-    candles = rawResult.map(c => ({
-        date: c.date.toISOString().split('T')[0],
-        high: Number(c.high).toFixed(4),
-        low: Number(c.low).toFixed(4),
-        close: Number(c.close).toFixed(4)
-    })).filter(c => Number(c.high) > 0);
-  } catch (e: any) { return ctx.reply(`❌ Yahoo Fehler: ${e.message}`); }
+    candles = await fetchVanillaYahooCandles(cleanSymbol);
+    if (candles.length === 0) throw new Error("Leeres Kerzen-Array empfangen.");
+  } catch (e: any) { return ctx.reply(`❌ Kurs-Download fehlgeschlagen: ${e.message}`); }
 
   const minifiedMarketStream = candles.map(c => `${c.date},${c.high},${c.low}`).join("|");
   const systemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream);
@@ -84,7 +107,7 @@ bot.command("analyse", async (ctx) => {
   let finalPhoto: Buffer | null = null;
   let finalResponseText = "";
 
-  await ctx.reply(`⚡ Pipeline aktiv via Groq LPU (llama3-70b-8192)...`);
+  await ctx.reply(`⚡ LPU Quanten-Pipeline aktiv via Groq (llama3-70b-8192)...`);
 
   while (iteration < 3) {
     iteration++;
@@ -116,8 +139,8 @@ bot.command("analyse", async (ctx) => {
       }
       criticRejection = py.validationData?.message || "Topologie-Fehler.";
     } catch(e: any) {
-        await ctx.reply(`⚠️ Groq Stau. Warte 10s...`);
-        await new Promise(r => setTimeout(r, 10000));
+        await ctx.reply(`⚠️ Groq-API Stau. Warte 5s...`);
+        await new Promise(r => setTimeout(r, 5000));
     }
   }
 
