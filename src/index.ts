@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V47: Python Stderr-Unmasking & Live-Feedback aktiv...");
+console.log("🚀 Bot V48: OHLC 'open'-Key Fix aktiv...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -31,6 +31,9 @@ function parseWavesFromJson(text: string) {
   }
 }
 
+// =========================================================================
+// DER KORRIGIERTE SCRAPER (Liefert jetzt das vollständige OHLC-Quartett!)
+// =========================================================================
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
   const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=5y`;
@@ -47,16 +50,19 @@ async function fetchVanillaYahooCandles(symbol: string) {
 
   const timestamps = chartData.timestamp || [];
   const quote = chartData.indicators?.quote?.[0] || {};
+  
+  const opens = quote.open || []; // <--- DA IST DER VERLORENE SOHN!
   const highs = quote.high || [];
   const lows = quote.low || [];
   const closes = quote.close || [];
 
   const candles: any[] = [];
   for (let i = 0; i < timestamps.length; i++) {
-    if (highs[i] == null || lows[i] == null) continue;
+    if (opens[i] == null || highs[i] == null || lows[i] == null) continue;
     const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
     candles.push({
       date: dateStr,
+      open: Number(opens[i]).toFixed(4), // <--- EINGEPACKT!
       high: Number(highs[i]).toFixed(4),
       low: Number(lows[i]).toFixed(4),
       close: Number(closes[i]).toFixed(4)
@@ -65,9 +71,6 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return candles;
 }
 
-// =========================================================================
-// DER SCHEINWERFER: Gibt jetzt zwingend die rohe Python-Fehlerausgabe mit!
-// =========================================================================
 function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ 
   pngBuffer: Buffer | null, 
   validationData: { valid: boolean, message: string } | null,
@@ -90,7 +93,7 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
       resolve({ 
         pngBuffer: stdoutBufs.length > 0 ? Buffer.concat(stdoutBufs) : null, 
         validationData: val,
-        rawStderr: stderrStr // <--- HIER STECKT DIE WAHRHEIT DRIN
+        rawStderr: stderrStr
       });
     });
   });
@@ -155,10 +158,6 @@ bot.command("analyse", async (ctx) => {
         break;
       }
 
-      // =====================================================================
-      // DIE WAHRHEIT INS TELEGRAM:
-      // Wenn val null ist (Python-Absturz), schickt er den Traceback ins Chat!
-      // =====================================================================
       const actualError = py.validationData?.message || py.rawStderr || "Stummer Python-Crash";
       criticRejection = actualError;
       
