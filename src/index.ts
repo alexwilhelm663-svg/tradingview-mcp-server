@@ -3,6 +3,7 @@ import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
 import YahooFinance from "yahoo-finance2";
+import { getElliottWaveSystemPrompt } from "./prompt";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const yahooFinance = new YahooFinance();
@@ -12,7 +13,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit All-Time Max Genesis, 8k Tokens & 100% Klammer-Garantie (v24)...");
+console.log("🤖 Bot läuft in der Cloud mit Modul-Prompt, Actor-Critic Loop & 8k Tokens (v27)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -50,6 +51,33 @@ function parseWavesFromText(text: string): Array<{ label: string; date: string; 
   return waves;
 }
 
+function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, errLog: string, validationData: { valid: boolean, message: string } | null }> {
+  return new Promise((resolve) => {
+    const pythonCommand = process.platform === "win32" ? "python" : "python3";
+    const pyProcess = spawn(pythonCommand, ["python_service/drawer.py"]);
+    
+    const stdoutBufs: Buffer[] = [];
+    let stderrStr = "";
+
+    pyProcess.stdout.on("data", c => stdoutBufs.push(c));
+    pyProcess.stderr.on("data", c => stderrStr += c.toString());
+
+    pyProcess.stdin.write(JSON.stringify({ symbol, waves, candles }));
+    pyProcess.stdin.end();
+
+    pyProcess.on("close", () => {
+      let val = null;
+      try {
+        const parsed = JSON.parse(stderrStr);
+        if (parsed.validation) val = parsed.validation;
+      } catch(e) {}
+
+      const photoBuf = stdoutBufs.length > 0 ? Buffer.concat(stdoutBufs) : null;
+      resolve({ pngBuffer: photoBuf, errLog: stderrStr, validationData: val });
+    });
+  });
+}
+
 bot.command("analyse", async (ctx) => {
   const chatId = ctx.chat.id;
   const rawText = ctx.message.text;
@@ -63,7 +91,7 @@ bot.command("analyse", async (ctx) => {
       requestedInterval = args[2].toLowerCase().trim();
   }
 
-  if (!symbol) return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse MSTR");
+  if (!symbol) return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse NVDA");
 
   let cleanSymbol = symbol.trim().toUpperCase();
   if (cleanSymbol.includes(":")) cleanSymbol = cleanSymbol.split(":").pop()!;
@@ -104,184 +132,107 @@ bot.command("analyse", async (ctx) => {
   }
 
   const minifiedMarketStream = candlesArray.map(c => `${c.date},${c.high},${c.low}`).join("|");
-
   const streamStartDate = candlesArray[0].date;
   const streamEndDate = candlesArray[candlesArray.length - 1].date;
 
-  const mainPrompt = `Rolle und Ziel:
-Du bist ein erstklassiger technischer Analyst und Senior-Experte für das Elliott-Wellen-Prinzip (Senior-EW-Analyst). Analysiere den folgenden komprimierten Marktdaten-Stream. Da Asset-Preise exponentiell wachsen, wird deine Zählung auf einer logarithmischen Y-Achse dargestellt.
+  // Importiert den gigantischen System-Prompt dynamisch zur Laufzeit aus dem Modul!
+  const basePrompt = getElliottWaveSystemPrompt(streamStartDate, streamEndDate, minifiedMarketStream);
 
-Komprimierter Kurs-Stream (Format: Datum,High,Low | Datum,High,Low):
-${minifiedMarketStream}
-
----
-SYSTEM-REGELWERK (ELLIOTT-WELLEN-PRINZIP):
-
-Gemäß dem Elliott-Wellen-Prinzip werden alle Marktbewegungen in zwei grundlegende Kategorien unterteilt: **Motive Wellen** (die den übergeordneten Trend vorantreiben) und **Korrektive Wellen** (die sich gegen den übergeordneten Trend richten). Im Folgenden sind die detaillierten Regeln und Richtlinien für beide Wellenarten zusammengefasst.
-
-### 1. Motive Wellen
-Motive Wellen bestehen immer aus fünf Unterwellen und bewegen sich in die gleiche Richtung wie der Trend des nächstgrößeren Grades. Sie haben die Aufgabe, den Markt kraftvoll voranzutreiben.
-
-**Harte Regeln für Motive Wellen (Impulse):**
-* **Welle 2** darf Welle 1 niemals zu mehr als 100 % korrigieren (sie darf nicht über den Startpunkt von Welle 1 hinausgehen).
-* **Welle 4** darf Welle 3 niemals zu 100 % korrigieren und darf nicht in das Preisgebiet von Welle 1 eindringen (Überschneidungsverbot). Ausnahmen bilden hierbei nur diagonale Dreiecke.
-* **Welle 3** wandert immer über das Ende von Welle 1 hinaus.
-* **Welle 3 ist nie die kürzeste** unter den drei Antriebswellen (1, 3 und 5).
-* Die Antriebswellen 1, 3 und 5 sind selbst motive Wellen, und Unterwelle 3 ist immer zwingend ein Impuls.
-
-**Richtlinien für Motive Wellen:**
-* **Extensionen (Dehnungen):** Die allermeisten Impulse weisen in exakt einer der drei Antriebswellen (1, 3 oder 5) eine deutlich verlängerte Dehnung auf. Eine solche Sequenz sieht dann oft wie neun Wellen ähnlicher Größe aus statt wie fünf. Im Aktienmarkt ist meistens die Welle 3 die gestreckte Welle.
-* **Trunkierung (Verkürzung):** Gelegentlich schafft es Welle 5 nicht, über das Ende der Welle 3 hinauszugehen. Dies folgt oft auf eine extrem starke Welle 3 und signalisiert eine bevorstehende dramatische Umkehr.
-* **Alternation (Abwechslung):** Innerhalb eines Impulses unterscheiden sich Welle 2 und Welle 4 fast immer in ihrer Form. Wenn Welle 2 eine scharfe Korrektur (Zickzack) ist, wird Welle 4 normalerweise eine Seitwärtskorrektur (Flat oder Dreieck) sein und umgekehrt.
-* **Gleichheit:** Zwei der Antriebswellen streben nach Gleichheit in Dauer und Ausmaß. Ist keine perfekte Gleichheit gegeben, liegt oft ein Fibonacci-Verhältnis von 0,618 vor.
-* **Kanalisierung:** Parallele Trendkanäle markieren typischerweise die oberen und unteren Grenzen von Impulsen.
-
----
-
-### 2. Korrektive Wellen
-Korrektive Wellen bewegen sich immer gegen den übergeordneten Trend. Sie stellen in der Regel einen "Kampf" gegen den dominierenden Trend dar und sind daher schwerer zu identifizieren als motive Wellen.
-
-**Wichtigste Regel:** Eine Korrektur besteht niemals aus fünf Wellen. Eine erste 5-Wellen-Bewegung gegen den Trend ist daher nie das Ende einer Korrektur, sondern nur ein Teil davon.
-
-Korrekturen lassen sich in vier Hauptkategorien unterteilen:
-
-**A. Zickzacks / Zigzags (5-3-5):**
-* Dies sind scharfe Korrekturen, die steil gegen den Trend verlaufen.
-* Sie werden als A-B-C markiert, wobei die Unterwellenstruktur 5-3-5 aufweist.
-* Die Spitze der Welle B liegt dabei merklich tiefer als der Start der Welle A.
-
-**B. Flache Korrekturen / Flats (3-3-5):**
-* Dies sind Seitwärtskorrekturen, bei denen der Preis per Saldo retraced wird, die aber insgesamt flach verlaufen.
-* **Expanded Flat (Erweitert):** Die mit Abstand häufigste Form. Hier zieht Welle B in neues Preisterrain über den Start von Welle A hinaus, und Welle C endet substanziell unter dem Ende von Welle A.
-
----
-
-### 3. ZWANGS-PARAMETER FÜR DEN TOTAL-SCAN
-
-* **PFLICHTSTART BEIM IPO:** Kursdaten starten am **${streamStartDate}**. Du bist mathematisch VERPFLICHTET, den Startpunkt deiner Zählung (Welle 0) exakt auf dieses Startdatum zu legen! Der allererste Eintrag deiner Tabelle MUSS lauten: \`| 0 | ${streamStartDate} | [Preis] |\`.
-* **PFLICHT ZUR LÜCKENLOSEN TOTAL-ZÄHLUNG BIS ZUM ENDDATUM:** Die Zeitreihe endet am **${streamEndDate}**. Du bist verpflichtet, sämtliche Wellenzyklen von der Geburtsstunde ${streamStartDate} bis zum Enddatum ${streamEndDate} lückenlos durchzuzählen! Der letzte Eintrag deiner Tabelle MUSS das Enddatum **${streamEndDate}** erreichen.
-* **DAS PRINZIP DER GENERISCHEN DEHNUNG:** Gemäß der Richtlinie für Dehnungen neigt in einem Motiv-Impuls fast immer exakt eine Welle zu einer massiven Verlängerung. Eine gedehnte Welle unterteilt sich auf dem untergeordneten Grad selbst wieder in 5 Motiv-Wellen. Wenn der Vektor einer Antriebswelle extrem lang ist, bist du mathematisch aufgefordert, diese Welle generisch zu entpacken (z.B. 1, 2, (1), (2), (3), (4), (5), 4, 5 in der Tabelle).
-
----
-
-### 4. EISERNE TABELLEN-SEMANTIK & FEHLER-PRÄVENTION (MANDATORY MATHEMATICAL GUARDRAILS)
-Um fatale Parser- und Matplotlib-Crashes im Python-Renderer zu verhindern, bist du UNTER ANDROHUNG DES ABBRUCHS VERPFLICHTET, deine generierte Markdown-Tabelle vor der Ausgabe Zeile für Zeile auf folgende 5 Gesetze zu validieren:
-
-1. **VERBOT VON ZEITSPRÜNGEN (Monotonie der Zeit):** Die Datumsangaben in der Tabelle MÜSSEN zwingend chronologisch vorwärts marschieren oder gleich bleiben: \`Datum(Zeile i) <= Datum(Zeile i+1)\`. Ein Datum einer Folgewelle darf niemals in der Vergangenheit liegen.
-2. **VERBOT VON RETRACEMENT-BRÜCHEN (Eisernes Boden-Limit):** Eine interne Unterwelle 2 (z.B. \`(2)\` oder \`ii\`) darf NIEMALS tiefer fallen als der Startpreis der zugehörigen Unterwelle 1! 
-3. **VERBOT VON ANTI-GRAVITATIONSTIEFS:** Ein Korrektur-Tal (Welle 2, 4, A, C) MUSS zwingend tiefer notieren als der direkt davorliegende Berggipfel (Welle 1, 3, B)! 
-4. **VERBOT VON IMPULS-ÜBERSCHNEIDUNGEN (Overlap):** In einem regulären Impuls darf das Tal der Welle 4 NIEMALS tiefer fallen als die Spitze der Welle 1.
-5. **DAS EIN-TABELLEN-MONOPOL (Verbot von Live-Korrekturen):** Du validierst deine Wellen im "Chain of Thought" im Hintergrund. Wenn du feststellst, dass deine Zahlen einen Overlap oder Retracement-Fehler erzeugen, KORRIGIERST DU SIE IM KOPF! Es ist dir strengstens verboten, erst eine fehlerhafte Tabelle, danach eine Fehleranalyse und danach eine Neubewertung auszugeben. Dein Text darf ausnahmslos nur EINE EINZIGE, finale, mathematisch perfekt validierte Markdown-Tabelle am ganz unteren Ende deiner Antwort enthalten.
-
----
-FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
-Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem Muster. Beginne zwingend bei ${streamStartDate} und führe die Wellen durch die Jahre, bis das Enddatum ${streamEndDate} erreicht ist!
-
-| Welle | Datum | Preis |
-| --- | --- | --- |
-| 0 | ${streamStartDate} | 15.50 |
-| [I] | YYYY-MM-DD | 188.75 |
-
-Keine Prosa in der Tabelle!`;
-
-  let responseText = "";
-  let attempt = 0;
-  const maxAttempts = 8;
+  let currentPrompt = basePrompt;
+  let finalResponseText = "";
+  let finalErrLogLog = "";
+  let finalPhotoBuffer: Buffer | null = null;
   
+  let iteration = 0;
+  const maxIterations = 3;
+  let criticRejectionReason = "";
+
   const modelPool = [
       "gemini-2.5-flash", "gemini-2.5-flash", 
-      "gemini-1.5-flash", "gemini-1.5-flash", "gemini-1.5-flash", 
-      "gemini-2.5-pro",   "gemini-1.5-pro",   "gemini-2.5-pro"    
+      "gemini-1.5-flash", "gemini-1.5-flash", 
+      "gemini-2.5-pro"
   ];
 
-  await ctx.reply("🧠 Analysiere EW-Fraktale (mit 8k Tokens Lungenvolumen & Ein-Tabellen-Monopol)...");
+  await ctx.reply(`⏳ Starte **Automated Actor-Critic Self-Healing Pipeline** für ${cleanSymbol} (Max 3 Topologie-Iterationen)...`);
 
-  while (attempt < maxAttempts) {
-      const targetModel = modelPool[attempt] || "gemini-2.5-flash";
-      try {
-          if (attempt > 0) {
-              await ctx.reply(`⚠️ Google 503 Stau. Schalte API-Routen um auf Fallback-Pool: **${targetModel}** (Versuch ${attempt + 1}/${maxAttempts})...`);
-          }
-          const response = await ai.models.generateContent({
-              model: targetModel,
-              contents: mainPrompt,
-              config: { 
-                  maxOutputTokens: 8192, 
-                  safetySettings: [{ category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }] 
-              }
-          });
-          responseText = response.text || "";
-          if (responseText) break;
-      } catch (e: any) {
-          attempt++;
-          if (attempt >= maxAttempts) {
-              return ctx.reply(`❌ **KI-Analyse endgültig gescheitert:** Alle 8 Server-Pools nach 3.5 Minuten erschöpft.\nLetzter Fehler: ${e.message}`);
-          }
-          const jitter = Math.floor(Math.random() * 1500);
-          const baseDelay = Math.pow(2, attempt) * 1800;
-          const finalDelay = Math.min(baseDelay + jitter, 25000); 
-          
-          await new Promise(r => setTimeout(r, finalDelay));
-      }
+  while (iteration < maxIterations) {
+    iteration++;
+    const activeModel = modelPool[iteration-1] || "gemini-2.5-flash";
+
+    if (criticRejectionReason) {
+      await ctx.reply(`⚠️ **Python-Kritiker Veto (Runde ${iteration-1}/${maxIterations}):** *"${criticRejectionReason}"*\nSperre KI mit Veto-Befund erneut ins Verhörzimmer (Modell: ${activeModel})...`);
+      
+      currentPrompt = `KORREKTUR-ZYKLUS (Stufe ${iteration}/${maxIterations}):\n\nDeine vorherige Wellen-Tabelle wurde vom mathematischen Python-Kritiker mit folgendem harten Veto abgelehnt:\n\n[ "${criticRejectionReason}" ]\n\nDu bist VERPFLICHTET, exakt diesen topologischen Fehler in den Werten der Tabelle zu korrigieren! Verändere ausschließlich die fehlerhaften Zeilen, behalte das IPO-Startdatum ${streamStartDate} bei und gib unten erneut die korrigierte, vollständige Markdown-Tabelle aus.\n\nHier sind nochmal die Marktdaten zur Orientierung:\n${minifiedMarketStream}`;
+    }
+
+    let llmRawAnswer = "";
+    try {
+      const response = await ai.models.generateContent({
+        model: activeModel,
+        contents: currentPrompt,
+        config: { 
+            maxOutputTokens: 8192, 
+            safetySettings: [{ category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }] 
+        }
+      });
+      llmRawAnswer = response.text || "";
+    } catch(e: any) {
+      await ctx.reply(`⚠️ API-Schluckauf in Runde ${iteration}: ${e.message}. Versuche nächsten Step...`);
+      await new Promise(r => setTimeout(r, 3000));
+      continue;
+    }
+
+    const candidateWaves = parseWavesFromText(llmRawAnswer);
+    if (candidateWaves.length === 0) {
+      criticRejectionReason = "LLM hat keine auslesbare Markdown-Tabelle geliefert.";
+      continue;
+    }
+
+    const pyCritic = await runPythonCritic(cleanSymbol, candidateWaves, candlesArray);
+
+    if (pyCritic.validationData && pyCritic.validationData.valid) {
+      finalPhotoBuffer = pyCritic.pngBuffer;
+      finalErrLogLog = pyCritic.errLog;
+      finalResponseText = llmRawAnswer;
+      break;
+    } else {
+      criticRejectionReason = pyCritic.validationData?.message || "Unbekannter Geometrie-Fehler.";
+    }
   }
 
-  const wavesData = parseWavesFromText(responseText);
-
-  if (wavesData.length === 0) {
-      return ctx.reply(`🚨 **PARSER-FEHLER:** Die KI hat keine auslesbare Tabelle geliefert.\n\nRoher Output:\n\`\`\`text\n${responseText.substring(0, 3800)}\n\`\`\``);
+  if (!finalPhotoBuffer) {
+    return ctx.reply(`❌ **Automatischer Self-Healing Abbruch:** Die KI konnte die Chart-Topologie für ${cleanSymbol} auch nach 3 mathematischen Korrektur-Zyklen nicht fehlerfrei auflösen.\n\nLetzter Kritiker-Befund:\n*_" ${criticRejectionReason} "_*\n\nBitte Timeframe wechseln oder Rohdaten prüfen.`);
   }
 
   chatSessions[chatId] = {
-    lastDataPayload: { candles: candlesArray, waves: wavesData },
-    history: [{ role: "user", text: "Kursdaten analysiert." }, { role: "model", text: responseText }]
+    lastDataPayload: { candles: candlesArray, waves: parseWavesFromText(finalResponseText) },
+    history: [{ role: "user", text: "Kursdaten analysiert." }, { role: "model", text: finalResponseText }]
   };
 
-  const jsonArg = JSON.stringify({ symbol: cleanSymbol, waves: wavesData, candles: candlesArray });
+  let statusBadge = "";
+  try {
+      const pyRep = JSON.parse(finalErrLogLog);
+      if (pyRep.correction_gate) {
+          const cg = pyRep.correction_gate;
+          if (cg.is_confirmed) {
+              statusBadge = `\n\n🟢 **STATUS:** Laufende Korrektur bestätigt beendet! (Schlusskurs ${cg.current_close.toFixed(2)} USD liegt über der Schranke von ${cg.b_gate_price.toFixed(2)} USD).`;
+          } else {
+              const gateStr = cg.b_gate_price !== null && cg.b_gate_price !== undefined ? cg.b_gate_price.toFixed(2) : '0.00';
+              statusBadge = `\n\n⚠️ **STATUS:** Letzte Abwärtswelle weiterhin AKTIV! (Schlusskurs ${cg.current_close.toFixed(2)} USD notiert unter dem Bestätigungs-Gate von ${gateStr} USD).\n🎯 **BERECHNETE FIBO-ZIELZONE:** ${cg.fib_lower.toFixed(2)} USD bis ${cg.fib_upper.toFixed(2)} USD (Sweetspot: ${cg.fib_sweetspot.toFixed(2)} USD).`;
+          }
+      }
+  } catch(e) {}
+
+  if (isDebug && finalErrLogLog) {
+      await ctx.reply(`🩻 **PYTHON TELEMETRIE (Runde ${iteration}):**\n\`\`\`json\n${finalErrLogLog.substring(0, 3800)}\n\`\`\``);
+  }
+
+  await ctx.replyWithPhoto({ source: finalPhotoBuffer }, { caption: `📊 EW Self-Healing Master View: ${cleanSymbol} (${finalIntervalLabel}) - Validiert in Runde ${iteration}` });
   
-  const pythonCommand = process.platform === "win32" ? "python" : "python3";
-  const pythonProcess = spawn(pythonCommand, ["python_service/drawer.py"]);
-  
-  const stdoutChunks: Buffer[] = [];
-  let errLog = "";
-
-  pythonProcess.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-  pythonProcess.stderr.on("data", (chunk: Buffer) => errLog += chunk.toString());
-
-  pythonProcess.stdin.write(jsonArg);
-  pythonProcess.stdin.end();
-
-  pythonProcess.on("close", async (code) => {
-    let statusBadge = "";
-    try {
-        const pyReport = JSON.parse(errLog);
-        if (pyReport.correction_gate) {
-            const cg = pyReport.correction_gate;
-            if (cg.is_confirmed) {
-                statusBadge = `\n\n🟢 **STATUS:** Laufende Korrektur bestätigt beendet! (Schlusskurs ${cg.current_close.toFixed(2)} USD liegt über der Schranke von ${cg.b_gate_price.toFixed(2)} USD).`;
-            } else {
-                const gateStr = cg.b_gate_price !== null && cg.b_gate_price !== undefined ? cg.b_gate_price.toFixed(2) : '0.00';
-                statusBadge = `\n\n⚠️ **STATUS:** Letzte Abwärtswelle weiterhin AKTIV! (Schlusskurs ${cg.current_close.toFixed(2)} USD notiert unter dem Bestätigungs-Gate von ${gateStr} USD).\n🎯 **BERECHNETE FIBO-ZIELZONE:** ${cg.fib_lower.toFixed(2)} USD bis ${cg.fib_upper.toFixed(2)} USD (Sweetspot: ${cg.fib_sweetspot.toFixed(2)} USD).`;
-            }
-        }
-    } catch(e) {}
-
-    if (isDebug && errLog) {
-        await ctx.reply(`🩻 **PYTHON TELEMETRIE:**\n\`\`\`json\n${errLog.substring(0, 3800)}\n\`\`\``);
-    }
-
-    if (code !== 0 || stdoutChunks.length === 0) {
-        await ctx.reply(`❌ **Zeichnen fehlgeschlagen!** Log:\n\`\`\`text\n${errLog}\n\`\`\``);
-    } else {
-        await ctx.replyWithPhoto({ source: Buffer.concat(stdoutChunks) }, { caption: `📊 EW All-Time Genesis Master View: ${cleanSymbol} (${finalIntervalLabel})` });
-    }
-    
-    const fullReport = responseText + statusBadge;
-    const chunkSize = 4000;
-    
-    for (let i = 0; i < fullReport.length; i += chunkSize) {
-        await ctx.reply(fullReport.substring(i, i + chunkSize));
-    }
-  });
+  const fullReport = finalResponseText + statusBadge;
+  for (let i = 0; i < fullReport.length; i += 4000) {
+      await ctx.reply(fullReport.substring(i, i + 4000));
+  }
 });
 
 bot.on("text", async (ctx) => {
