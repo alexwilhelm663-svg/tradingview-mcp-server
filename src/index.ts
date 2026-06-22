@@ -10,44 +10,29 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V71: Ironclad Rosetta-Stone & Price-Salvage Engine aktiv...");
+console.log("🚀 Bot V72: Stateful Memory Loop (Anti-Groundhog-Day Engine) aktiv...");
 
-const JSON_SKELETON_ENFORCER = `
-ANTWORTE STRIKT UND AUSSCHLIESSLICH ALS JSON-ARRAY. 
-KEINE Erklärungen, KEINE Metadaten, KEINE Zusammenfassungen.
-Verwende EXAKT diese Keys pro Objekt:
-[
-  {"label": "0", "date": "YYYY-MM-DD", "price": 0.00},
-  {"label": "1", "date": "YYYY-MM-DD", "price": 0.00}
-]`;
-
-// Sucht in den Yahoo-Kerzen nach dem passenden Kurs, falls die lazy KI nur ein Datum geliefert hat
 function salvagePriceFromCandles(dateStr: string, candles: any[]): number {
   const target = String(dateStr).substring(0, 10);
   const match = candles.find(c => c.date === target);
   if (match && !isNaN(parseFloat(match.close))) return parseFloat(match.close);
-  
-  // Fallback: Nimm den Kurs der zeitlich nächsten Kerze
   for (const c of candles) {
     if (c.date >= target) return parseFloat(c.close);
   }
   return 0.0;
 }
 
-// DER ROSETTA-STEIN: Findet und übersetzt das Wellen-Array, egal wie kreativ die KI war
 function normalizeLlmOutput(rawText: string, candles: any[]): { waves: any[] | null, error: string | null } {
   try {
     const clean = rawText.replace(/^```json\s*/g, "").replace(/```\s*$/g, "").trim();
     const data = JSON.parse(clean);
 
-    // 1. Suche das Array im gesamten JSON-Baum
     let rawArray: any[] | null = null;
     if (Array.isArray(data)) rawArray = data;
     else if (data.waves && Array.isArray(data.waves)) rawArray = data.waves;
     else if (data.elliott_wave_structure?.wave_count && Array.isArray(data.elliott_wave_structure.wave_count)) {
-      rawArray = data.elliott_wave_structure.wave_count; // Fix für ARM-Struktur
+      rawArray = data.elliott_wave_structure.wave_count;
     } else if (data.elliott_wave_count?.cycle_degree) {
-      // Fix für das NVDA-Objekt-Chaos: Wandle das Objekt {"wave_I": "..."} in ein Array um
       rawArray = Object.entries(data.elliott_wave_count.cycle_degree).map(([k, v]) => ({ wave: k, date: v }));
     } else {
       for (const key of Object.keys(data)) {
@@ -55,52 +40,34 @@ function normalizeLlmOutput(rawText: string, candles: any[]): { waves: any[] | n
       }
     }
 
-    if (!rawArray || rawArray.length === 0) {
-      return { waves: null, error: `Konnte kein Wellen-Array extrahieren. LLM sendete: ${rawText.substring(0, 150)}` };
-    }
+    if (!rawArray || rawArray.length === 0) return { waves: null, error: `Kein Wellen-Array gefunden.` };
 
-    // 2. Normalisiere die Objekte im Array (Deutsch/Kreativ -> Standard)
     const normalizedWaves: any[] = [];
     for (const item of rawArray) {
       if (typeof item !== "object" || item === null) continue;
 
-      // Label extrahieren & säubern (z.B. "Welle 1" -> "1", "wave_I" -> "1")
       let rawLabel = item.label || item.Welle || item.wave || item.welle || item.id || item.step || item.name || "X";
       let cleanLabel = String(rawLabel).replace(/welle|wave|cycle|degree|_/gi, "").trim();
       if (!cleanLabel) cleanLabel = String(rawLabel).trim();
 
-      // Datum extrahieren
       let rawDate = item.date || item.Datum || item.datum || item.start || item.time || item.timestamp;
-      // Falls das Datum als Range kam ("1996-04-01 to 1996-09-01"), nimm das Enddatum für Gipfel/Täler
-      if (typeof rawDate === "string" && rawDate.includes("to")) {
-        rawDate = rawDate.split("to")[1].trim();
-      }
+      if (typeof rawDate === "string" && rawDate.includes("to")) rawDate = rawDate.split("to")[1].trim();
       let cleanDate = String(rawDate).substring(0, 10);
 
-      // Preis extrahieren oder über die Yahoo-Kerzen retten!
       let rawPrice = item.price || item.Kurs || item.kurs || item.value || item.end_price;
       let cleanPrice = parseFloat(rawPrice);
       
-      if (isNaN(cleanPrice) || cleanPrice === 0) {
-        cleanPrice = salvagePriceFromCandles(cleanDate, candles);
-      }
+      if (isNaN(cleanPrice) || cleanPrice === 0) cleanPrice = salvagePriceFromCandles(cleanDate, candles);
 
       if (cleanDate && !isNaN(cleanPrice)) {
-        normalizedWaves.push({
-          label: cleanLabel,
-          date: cleanDate,
-          price: Number(cleanPrice.toFixed(2))
-        });
+        normalizedWaves.push({ label: cleanLabel, date: cleanDate, price: Number(cleanPrice.toFixed(2)) });
       }
     }
 
-    if (normalizedWaves.length < 3) {
-      return { waves: null, error: `Nach der Bereinigung blieben zu wenige Wellen übrig: ${JSON.stringify(normalizedWaves)}` };
-    }
-
+    if (normalizedWaves.length < 3) return { waves: null, error: `Zu wenige Wellen nach Normalisierung.` };
     return { waves: normalizedWaves, error: null };
   } catch (e: any) {
-    return { waves: null, error: `JSON-Parser gescheitert (${e.message}). Rohdaten-Anfang: ${rawText.substring(0, 100)}` };
+    return { waves: null, error: `JSON-Parser Crash: ${e.message}` };
   }
 }
 
@@ -145,9 +112,7 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
       if (trimmedStderr.length > 0) {
         try {
           const parsed = JSON.parse(trimmedStderr);
-          if (parsed.validation && parsed.validation.valid === false) {
-            return resolve({ pngBuffer: null, errorMessage: parsed.validation.message });
-          }
+          if (parsed.validation && parsed.validation.valid === false) return resolve({ pngBuffer: null, errorMessage: parsed.validation.message });
         } catch (e) {
           if (stdoutBufs.length === 0) return resolve({ pngBuffer: null, errorMessage: trimmedStderr });
         }
@@ -170,34 +135,57 @@ bot.command("analyse", async (ctx) => {
 
   const minifiedMarketStream = candles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
   const systemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream);
-  const modelLite = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite", systemInstruction: systemPrompt });
+  
+  // Wir binden das Modell direkt an den JSON-MimeType
+  const modelLite = genAI.getGenerativeModel({ 
+    model: "gemini-3.1-flash-lite", 
+    systemInstruction: systemPrompt,
+    generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
+  });
+
+  // BINGO: Wir starten eine zustandsbehaftete Chat-Sitzung!
+  const chatSession = modelLite.startChat();
 
   let iteration = 0;
-  let rejectionReason = "";
+  let pythonVetoReason = "";
+  let lastLlmGeneratedJson = "";
   let finalPhoto: Buffer | null = null;
 
   while (iteration < 3) {
     iteration++;
     try {
-      const promptText = iteration === 1 
-        ? `Führe die Elliott-Wellen-Zählung durch. ${JSON_SKELETON_ENFORCER}`
-        : `🔴 REGELVERSTOSS IM VORHERIGEN VERSUCH:
-"${rejectionReason}"
+      let promptText = "";
 
-KORRIGIERE DIE ZÄHLUNG. VERWENDE KEINE ERKLÄRUNGEN. ${JSON_SKELETON_ENFORCER}`;
+      if (iteration === 1) {
+        promptText = `Führe die Elliott-Wellen-Zählung durch. Liefere AUSSCHLIESSLICH ein JSON-Objekt mit dem Array "waves".`;
+      } else {
+        promptText = `🔴 KRITISCHER GEOMETRIE-FEHLER IN DEINEM VORHERIGEN VERSUCH!
 
-      const result = await modelLite.generateContent({
-        contents: [{ role: "user", parts: [{ text: promptText }] }],
-        generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
-      });
+Deine exakte, fehlerhafte Zählung von eben war:
+${lastLlmGeneratedJson}
 
+Der mathematische Veto-Grund der Python-Engine lautet:
+"${pythonVetoReason}"
+
+KORREKTUR-BEFEHL AN DICH:
+1. Analysiere deine fehlerhaften Zahlen oben.
+2. Wenn der Fehler "Welle 2 fällt tiefer als Nullpunkt 0" lautet: Du MÜSST den Startpunkt '0' zeitlich nach rechts auf ein tieferes Chart-Tal verschieben!
+3. Wenn der Fehler "Overlap Tal 4 in Gipfel 1" lautet: Du MÜSST Welle 3 zeitlich verkürzen oder Welle 4 so umlegen, dass das Tal preislich strikt über Gipfel 1 bleibt!
+
+Generiere das korrigierte JSON-Array.`;
+      }
+
+      // Wir schicken es an die ERINNERNDE Chat-Sitzung
+      const result = await chatSession.sendMessage(promptText);
       const rawLlmAnswer = result.response.text();
-      // ROSETTA STONE IN ACTION
-      const normalization = normalizeLlmOutput(rawLlmAnswer, candles);
+      
+      // Wir sichern das rohe JSON für den Erinnerungs-Prompt der Folgerunde
+      lastLlmGeneratedJson = rawLlmAnswer; 
 
+      const normalization = normalizeLlmOutput(rawLlmAnswer, candles);
       if (!normalization.waves) {
-        rejectionReason = normalization.error!;
-        await ctx.reply(`🔄 [Runde ${iteration}] Rosetta-Veto: ${rejectionReason.substring(0, 100)}`);
+        pythonVetoReason = normalization.error!;
+        await ctx.reply(`🔄 [Runde ${iteration}] Rosetta-Veto: ${pythonVetoReason.substring(0, 100)}`);
         continue;
       }
 
@@ -207,15 +195,15 @@ KORRIGIERE DIE ZÄHLUNG. VERWENDE KEINE ERKLÄRUNGEN. ${JSON_SKELETON_ENFORCER}`
         break; 
       }
 
-      rejectionReason = py.errorMessage || "Geometrie-Verstoß";
-      await ctx.reply(`🔄 [Runde ${iteration}] Python-Veto: ${rejectionReason}`);
+      pythonVetoReason = py.errorMessage || "Geometrie-Verstoß";
+      await ctx.reply(`🔄 [Runde ${iteration}] Python-Veto: ${pythonVetoReason}`);
 
     } catch(e: any) {
         await ctx.reply(`⚠️ API-Fehler: ${e.message}`);
     }
   }
 
-  if (!finalPhoto) return ctx.reply(`❌ Abbruch nach 3 Zyklen.\n\nLetzter Stand:\n\`\`\`text\n${rejectionReason}\n\`\`\``);
+  if (!finalPhoto) return ctx.reply(`❌ Abbruch nach 3 Zyklen.\n\nLetzter Veto-Grund:\n\`\`\`text\n${pythonVetoReason}\n\`\`\``);
   await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View: ${cleanSymbol}` });
 });
 
