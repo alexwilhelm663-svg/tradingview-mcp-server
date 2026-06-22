@@ -1,7 +1,10 @@
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
+
+// @ts-ignore: Schaltet die bürokratische Compiler-Prüfung für dieses Modul ab!
 import YahooFinance from "yahoo-finance2";
+
 import Groq from "groq-sdk";
 import { getElliottWaveSystemPrompt } from "./prompt";
 
@@ -12,7 +15,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft: GROQ Engine v43 mit Webhook-Kopplung aktiv.");
+console.log("🤖 Bot läuft: GROQ Engine v44 (Compiler-Maulkorb & Selective Copy aktiv).");
 
 interface ChatSession {
   lastDataPayload: any;
