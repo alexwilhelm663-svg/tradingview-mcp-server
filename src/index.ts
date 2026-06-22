@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit All-Time Max Genesis, 8k Tokens & 100% unzensierter EW-Bibel (v23)...");
+console.log("🤖 Bot läuft in der Cloud mit All-Time Max Genesis, 8k Tokens & 100% Klammer-Garantie (v24)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -86,7 +86,6 @@ bot.command("analyse", async (ctx) => {
 
   try {
     const period2 = new Date();
-    // Zwingt Yahoo zum maximal historischen Download ab der allerersten Sekunde der Börsennotierung
     const period1 = new Date("1970-01-01");
 
     const result = await yahooFinance.historical(cleanSymbol, { period1, period2, interval: yahooInterval }) as any[];
@@ -109,9 +108,6 @@ bot.command("analyse", async (ctx) => {
   const streamStartDate = candlesArray[0].date;
   const streamEndDate = candlesArray[candlesArray.length - 1].date;
 
-  // =========================================================================
-  // DIE 100% UNGEKÜRZTE EW-BIBEL + DIE 5 MATHEMATISCHEN VAKZINE
-  // =========================================================================
   const mainPrompt = `Rolle und Ziel:
 Du bist ein erstklassiger technischer Analyst und Senior-Experte für das Elliott-Wellen-Prinzip (Senior-EW-Analyst). Analysiere den folgenden komprimierten Marktdaten-Stream. Da Asset-Preise exponentiell wachsen, wird deine Zählung auf einer logarithmischen Y-Achse dargestellt.
 
@@ -137,14 +133,8 @@ Motive Wellen bestehen immer aus fünf Unterwellen und bewegen sich in die gleic
 * **Extensionen (Dehnungen):** Die allermeisten Impulse weisen in exakt einer der drei Antriebswellen (1, 3 oder 5) eine deutlich verlängerte Dehnung auf. Eine solche Sequenz sieht dann oft wie neun Wellen ähnlicher Größe aus statt wie fünf. Im Aktienmarkt ist meistens die Welle 3 die gestreckte Welle.
 * **Trunkierung (Verkürzung):** Gelegentlich schafft es Welle 5 nicht, über das Ende der Welle 3 hinauszugehen. Dies folgt oft auf eine extrem starke Welle 3 und signalisiert eine bevorstehende dramatische Umkehr.
 * **Alternation (Abwechslung):** Innerhalb eines Impulses unterscheiden sich Welle 2 und Welle 4 fast immer in ihrer Form. Wenn Welle 2 eine scharfe Korrektur (Zickzack) ist, wird Welle 4 normalerweise eine Seitwärtskorrektur (Flat oder Dreieck) sein und umgekehrt.
-* **Gleichheit:** Zwei der Antriebswellen (meistens Welle 1 und 5, wenn Welle 3 eine Extension ist) streben nach Gleichheit in Dauer und Ausmaß. Ist keine perfekte Gleichheit gegeben, liegt oft ein Fibonacci-Verhältnis von 0,618 vor.
+* **Gleichheit:** Zwei der Antriebswellen streben nach Gleichheit in Dauer und Ausmaß. Ist keine perfekte Gleichheit gegeben, liegt oft ein Fibonacci-Verhältnis von 0,618 vor.
 * **Kanalisierung:** Parallele Trendkanäle markieren typischerweise die oberen und unteren Grenzen von Impulsen.
-* **Throw-over:** Nähert sich die fünfte Welle bei sinkendem Volumen der oberen Trendkanallinie, wird sie diese oft nur genau treffen oder verfehlen. Bei hohem Volumen ist jedoch ein "Throw-over" (ein kurzes Durchbrechen der Kanallinie nach oben) wahrscheinlich, bevor der Trend umkehrt.
-
-**Diagonale Dreiecke (Ausnahme von Impulsen):**
-Diagonale Dreiecke sind motive Wellen, die jedoch nicht als echte Impulse gelten, da sie korrektive Eigenschaften aufweisen. Bei ihnen dringt Welle 4 fast immer in das Preisgebiet von Welle 1 ein.
-* **Ending Diagonals:** Treten meist als Welle 5 auf, wenn eine Bewegung "zu weit und zu schnell" gegangen ist. Sie haben eine Keilform mit konvergierenden (sich annähernden) Linien und bestehen ungewöhnlicherweise aus einer 3-3-3-3-3-Struktur.
-* **Leading Diagonals:** Finden sich nur in der Position der Welle 1 oder A. Sie haben ebenfalls eine Keilform und eine Überschneidung der Welle 4 und 1, behalten aber eine 5-3-5-3-5-Struktur bei. Sie weisen eher auf eine Fortsetzung als auf eine Beendigung hin.
 
 ---
 
@@ -159,36 +149,18 @@ Korrekturen lassen sich in vier Hauptkategorien unterteilen:
 * Dies sind scharfe Korrekturen, die steil gegen den Trend verlaufen.
 * Sie werden als A-B-C markiert, wobei die Unterwellenstruktur 5-3-5 aufweist.
 * Die Spitze der Welle B liegt dabei merklich tiefer als der Start der Welle A.
-* Manchmal können sie doppelt oder dreifach hintereinander auftreten (getrennt durch eine X-Welle), um ein angemessenes Preisziel zu erreichen (Doppel-Zickzack, Triple-Zickzack).
 
 **B. Flache Korrekturen / Flats (3-3-5):**
 * Dies sind Seitwärtskorrekturen, bei denen der Preis per Saldo retraced wird, die aber insgesamt flach verlaufen.
-* Ihre Unterwellenstruktur ist 3-3-5. Sie korrigieren oft schwächer und treten bei starken übergeordneten Trends auf.
-* **Reguläres Flat:** Welle B endet nahe dem Beginn von Welle A, Welle C reicht leicht über das Ende von Welle A hinaus.
 * **Expanded Flat (Erweitert):** Die mit Abstand häufigste Form. Hier zieht Welle B in neues Preisterrain über den Start von Welle A hinaus, und Welle C endet substanziell unter dem Ende von Welle A.
-* **Running Flat (Laufend):** Welle B schießt wie beim Expanded Flat über das Ziel hinaus, aber Welle C ist zu schwach und erreicht nicht das Ende von Welle A. Diese Form ist sehr selten.
-
-**C. Dreiecke / Triangles (3-3-3-3-3):**
-* Spiegeln ein Gleichgewicht der Kräfte wider, was zu einer Seitwärtsbewegung mit meist sinkendem Volumen und nachlassender Volatilität führt.
-* Bestehen aus fünf überlappenden Wellen (a-b-c-d-e) und werden durch Verbindungslinien von a-c und b-d begrenzt.
-* **Position:** Dreiecke treten immer vor der letzten aktiven Welle im übergeordneten Muster auf, d.h. als Welle 4, Welle B oder als letzte Welle X in einer Kombination. Auf sie folgt fast immer ein starker, aber kurzer Schub ("Thrust") in Richtung des Haupttrends.
-
-**D. Kombinierte Strukturen (Double/Triple Threes):**
-* Hier reihen sich einfache Korrekturen (wie Flat, Zickzack, Dreieck) waagerecht aneinander, verbunden durch eine reaktive Welle X.
-* Sie entstehen meistens, um eine Korrektur zeitlich in die Länge zu ziehen, wenn die Preisziele bereits erfüllt sind.
-* In solchen Kombinationen taucht niemals mehr als ein Zickzack oder ein einziges Dreieck (stets am Ende) auf.
-
-**Wichtige Richtlinien für Korrekturen:**
-* **Tiefe von Bärenmärkten:** Korrekturen enden typischerweise im Preisgebiet der vorausgegangenen Welle 4 eines niedrigeren Grades.
-* **Verhalten nach einer gedehnten Welle 5:** Wenn die fünfte Welle eines Impulses eine Extension war, wird die darauffolgende Korrektur in der Regel sehr scharf ausfallen und Unterstützung am Tief der Welle 2 dieser Extension finden.
 
 ---
 
-### 3. ZWANGS-PARAMETER FÜR DEN ALL-TIME MAX TOTAL-SCAN
+### 3. ZWANGS-PARAMETER FÜR DEN TOTAL-SCAN
 
-* **PFLICHTSTART BEIM ALLERERSTEN YAHOO-DATENPUNKT (IPO):** Die dir übergebenen Kursdaten starten am **${streamStartDate}**. Du bist mathematisch VERPFLICHTET, den Startpunkt deiner Zählung (Welle 0) exakt auf dieses absolute historische Startdatum zu legen! Der allererste Eintrag deiner Markdown-Tabelle MUSS zwingend lauten: \`| 0 | ${streamStartDate} | [Preis] |\`. Es ist dir verboten, die Zählung an einem späteren Zeitpunkt zu beginnen.
-* **PFLICHT ZUR LÜCKENLOSEN TOTAL-ZÄHLUNG BIS ZUM ENDDATUM:** Die Zeitreihe endet am **${streamEndDate}**. Du bist verpflichtet, sämtliche Wellenzyklen von der Geburtsstunde ${streamStartDate} bis zum Enddatum ${streamEndDate} lückenlos durchzuzählen! Wenn du Welle C erreichst und feststellst, dass im Stream noch Daten existieren, eröffnest du nahtlos den nächsten Zyklus. Der letzte Eintrag deiner Tabelle MUSS das Enddatum **${streamEndDate}** erreichen.
-* **DAS PRINZIP DER GENERISCHEN DEHNUNG (EXTENSION):** Gemäß der Richtlinie für Dehnungen neigt in einem Motiv-Impuls fast immer exakt eine Welle zu einer massiven Verlängerung. Eine gedehnte Welle unterteilt sich auf dem untergeordneten Grad selbst wieder in 5 Motiv-Wellen. Wenn der Vektor einer Antriebswelle auf der Log-Skala extrem lang ist, bist du mathematisch aufgefordert, diese Welle generisch zu entpacken (z.B. 1, 2, (1), (2), (3), (4), (5), 4, 5 in der Tabelle).
+* **PFLICHTSTART BEIM IPO:** Kursdaten starten am **${streamStartDate}**. Du bist mathematisch VERPFLICHTET, den Startpunkt deiner Zählung (Welle 0) exakt auf dieses Startdatum zu legen! Der allererste Eintrag deiner Tabelle MUSS lauten: \`| 0 | ${streamStartDate} | [Preis] |\`.
+* **PFLICHT ZUR LÜCKENLOSEN TOTAL-ZÄHLUNG BIS ZUM ENDDATUM:** Die Zeitreihe endet am **${streamEndDate}**. Du bist verpflichtet, sämtliche Wellenzyklen von der Geburtsstunde ${streamStartDate} bis zum Enddatum ${streamEndDate} lückenlos durchzuzählen! Der letzte Eintrag deiner Tabelle MUSS das Enddatum **${streamEndDate}** erreichen.
+* **DAS PRINZIP DER GENERISCHEN DEHNUNG:** Gemäß der Richtlinie für Dehnungen neigt in einem Motiv-Impuls fast immer exakt eine Welle zu einer massiven Verlängerung. Eine gedehnte Welle unterteilt sich auf dem untergeordneten Grad selbst wieder in 5 Motiv-Wellen. Wenn der Vektor einer Antriebswelle extrem lang ist, bist du mathematisch aufgefordert, diese Welle generisch zu entpacken (z.B. 1, 2, (1), (2), (3), (4), (5), 4, 5 in der Tabelle).
 
 ---
 
@@ -199,7 +171,7 @@ Um fatale Parser- und Matplotlib-Crashes im Python-Renderer zu verhindern, bist 
 2. **VERBOT VON RETRACEMENT-BRÜCHEN (Eisernes Boden-Limit):** Eine interne Unterwelle 2 (z.B. \`(2)\` oder \`ii\`) darf NIEMALS tiefer fallen als der Startpreis der zugehörigen Unterwelle 1! 
 3. **VERBOT VON ANTI-GRAVITATIONSTIEFS:** Ein Korrektur-Tal (Welle 2, 4, A, C) MUSS zwingend tiefer notieren als der direkt davorliegende Berggipfel (Welle 1, 3, B)! 
 4. **VERBOT VON IMPULS-ÜBERSCHNEIDUNGEN (Overlap):** In einem regulären Impuls darf das Tal der Welle 4 NIEMALS tiefer fallen als die Spitze der Welle 1.
-5. **DAS EIN-TABELLEN-MONOPOL (Verbot von Live-Korrekturen):** Du validierst deine Wellen im "Chain of Thought" im Arbeitsspeicher im Hintergrund. Wenn du feststellst, dass deine Zahlen einen Overlap oder Retracement-Fehler erzeugen, KORRIGIERST DU SIE IM KOPF! Es ist dir strengstens verboten, erst eine fehlerhafte Tabelle, danach eine Fehleranalyse und danach eine Neubewertung auszugeben. Dein Text darf ausnahmslos nur EINE EINZIGE, finale, mathematisch perfekt validierte Markdown-Tabelle am ganz unteren Ende deiner Antwort enthalten.
+5. **DAS EIN-TABELLEN-MONOPOL (Verbot von Live-Korrekturen):** Du validierst deine Wellen im "Chain of Thought" im Hintergrund. Wenn du feststellst, dass deine Zahlen einen Overlap oder Retracement-Fehler erzeugen, KORRIGIERST DU SIE IM KOPF! Es ist dir strengstens verboten, erst eine fehlerhafte Tabelle, danach eine Fehleranalyse und danach eine Neubewertung auszugeben. Dein Text darf ausnahmslos nur EINE EINZIGE, finale, mathematisch perfekt validierte Markdown-Tabelle am ganz unteren Ende deiner Antwort enthalten.
 
 ---
 FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
@@ -222,7 +194,7 @@ Keine Prosa in der Tabelle!`;
       "gemini-2.5-pro",   "gemini-1.5-pro",   "gemini-2.5-pro"    
   ];
 
-  await ctx.reply("🧠 Analysiere EW-Fraktale (mit 8k Tokens Lungenvolumen & 100% unzensierter EW-Bibel)...");
+  await ctx.reply("🧠 Analysiere EW-Fraktale (mit 8k Tokens Lungenvolumen & Ein-Tabellen-Monopol)...");
 
   while (attempt < maxAttempts) {
       const targetModel = modelPool[attempt] || "gemini-2.5-flash";
@@ -334,4 +306,26 @@ bot.on("text", async (ctx) => {
     });
 
     const answerText = response.text || "Keine Antwort möglich.";
-    session.history.push({ role: "model", text: answ
+    session.history.push({ role: "model", text: answerText });
+    await ctx.reply(`💬 Antwort:\n\n${answerText}`);
+  } catch (error: any) {
+    await ctx.reply(`❌ Fehler: ${error.message}`);
+  }
+});
+
+if (RENDER_EXTERNAL_URL) {
+  const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
+  bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
+  
+  http.createServer((req, res) => {
+    if (req.url === webhookPath && req.method === "POST") {
+      let body = "";
+      req.on("data", chunk => body += chunk);
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok" }));
+        try { if (body.trim()) bot.handleUpdate(JSON.parse(body)); } catch (e) {}
+      });
+    } else res.end("Bot Server is healthy");
+  }).listen(PORT);
+} else bot.launch();
