@@ -9,21 +9,88 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import timedelta
 
-# =========================================================================
-# UNIVERSAL ALPHANUMERIC STEM CLASSIFIER
-# =========================================================================
-def resolve_wave_role(raw_label):
+def resolve_stem(raw_label):
     clean = raw_label.replace('(', '').replace(')', '').replace('[', '').replace(']', '').replace('{', '').replace('}', '').strip().upper()
     for separator in ['.', '-', ' ']:
         if separator in clean:
             clean = clean.split(separator)[-1]
-            
+    return clean
+
+def resolve_is_peak(raw_label):
+    clean = resolve_stem(raw_label)
     peaks = ['1', '3', '5', 'B', 'I', 'III', 'V', 'X']
     troughs = ['0', '2', '4', 'A', 'C', 'II', 'IV', 'W', 'Y', 'Z']
-    
     if clean in peaks: return True
     elif clean in troughs: return False
     else: return True 
+
+# =========================================================================
+# STUFE 1: DER MATHEMATISCHE KRITIKER (Deterministische Validierung)
+# =========================================================================
+def validate_ew_semantics(snapped_waves):
+    for i in range(1, len(snapped_waves)):
+        curr = snapped_waves[i]
+        prev = snapped_waves[i-1]
+        
+        # 1. Monotonie der Zeit (Keine Zeitreisen)
+        if curr['date'] < prev['date']:
+            return {
+                "valid": False, 
+                "error_type": "TIME_TRAVEL", 
+                "message": f"Zeitsprung-Verstoß: Welle '{curr['label']}' ({curr['date'].strftime('%Y-%m-%d')}) liegt zeitlich VOR dem Vorgänger '{prev['label']}' ({prev['date'].strftime('%Y-%m-%d')})."
+            }
+        
+        # 2. Anti-Gravitation Gipfel (Gipfel muss über Tal liegen)
+        if curr['is_peak'] and curr['price'] <= prev['price']:
+            return {
+                "valid": False,
+                "error_type": "ANTI_GRAVITY_PEAK",
+                "message": f"Topologie-Verstoß: Gipfel '{curr['label']}' ({curr['price']:.2f} USD) notiert tiefer oder gleich auf wie das davorliegende Tal '{prev['label']}' ({prev['price']:.2f} USD)."
+            }
+            
+        # 3. Anti-Gravitation Tal (Tal muss unter Gipfel liegen)
+        if not curr['is_peak'] and curr['price'] >= prev['price']:
+            return {
+                "valid": False,
+                "error_type": "ANTI_GRAVITY_TROUGH",
+                "message": f"Topologie-Verstoß: Tal '{curr['label']}' ({curr['price']:.2f} USD) notiert höher oder gleich auf wie der davorliegende Gipfel '{prev['label']}' ({prev['price']:.2f} USD)."
+            }
+
+    # 4. Retracement-Boden (Welle 2 vs 0) & Overlap (Welle 4 vs 1)
+    for k in range(2, len(snapped_waves)):
+        curr = snapped_waves[k]
+        stem = resolve_stem(curr['raw_label'])
+
+        if not curr['is_peak'] and stem in ['2', 'II']:
+            p1 = snapped_waves[k-1]
+            p0 = snapped_waves[k-2]
+            if p1['is_peak'] and not p0['is_peak']:
+                if curr['price'] < p0['price']:
+                    return {
+                        "valid": False,
+                        "error_type": "RETRACEMENT_VIOLATION",
+                        "message": f"100%-Retracement-Bruch: Welle '{curr['label']}' ({curr['price']:.2f} USD) fällt tiefer als der Nullpunkt '{p0['label']}' ({p0['price']:.2f} USD)."
+                    }
+
+        elif not curr['is_peak'] and stem in ['4', 'IV']:
+            if k >= 3:
+                p1 = snapped_waves[k-3]
+                if p1['is_peak'] and resolve_stem(p1['raw_label']) in ['1', 'I']:
+                    if curr['price'] <= p1['price']:
+                        return {
+                            "valid": False,
+                            "error_type": "OVERLAP_VIOLATION",
+                            "message": f"Overlap-Verstoß: Tal '{curr['label']}' ({curr['price']:.2f} USD) dringt illegal in das Gebiet von Gipfel '{p1['label']}' ({p1['price']:.2f} USD) ein."
+                        }
+
+    # 5. Parent-Row Integrität (Zielpreis-Gesetz)
+    for w in snapped_waves:
+        stem = resolve_stem(w['raw_label'])
+        if stem in ['I', 'III', 'V'] and w['is_peak'] and w != snapped_waves[-1]:
+            # Wenn es eine Hauptzeile ist, prüfen ob die Folgewelle extrem abweicht
+            pass
+
+    return {"valid": True, "message": "Topologie mathematisch legal."}
 
 def main():
     try:
@@ -49,7 +116,7 @@ def main():
         snapped_waves = []
         for w in waves:
             raw_upper = str(w['label']).upper().strip()
-            is_pk = resolve_wave_role(raw_upper)
+            is_pk = resolve_is_peak(raw_upper)
             
             snapped_waves.append({
                 'label': w['label'],
@@ -111,6 +178,16 @@ def main():
         df = df.loc[context_start:]
         if df.empty: sys.exit(1)
 
+        # =========================================================================
+        # KRITIKER-VETO WEICHE: Prüft das Ergebnis VOR dem Zeichnen!
+        # =========================================================================
+        validation = validate_ew_semantics(snapped_waves)
+        
+        if not validation['valid']:
+            # Schießt das Veto im Silent-Mode an Node.js und bricht ab!
+            print(json.dumps({"validation": validation}), file=sys.stderr)
+            sys.exit(0) # Exit 0, damit Node.js das stderr sauber parst
+
         # --- 3. UNIVERSAL QUANT FIBONACCI ENGINE ---
         c_is_confirmed = True
         price_b_gate = None
@@ -132,9 +209,7 @@ def main():
                     c_is_confirmed = False
                     last_sw['label'] += " ( ? )"
                     
-                    nukleus = last_sw['raw_label'].replace('(', '').replace(')', '').replace('[', '').replace(']', '').strip()
-                    if '.' in nukleus: nukleus = nukleus.split('.')[-1]
-                    elif '-' in nukleus: nukleus = nukleus.split('-')[-1]
+                    nukleus = resolve_stem(last_sw['raw_label'])
 
                     if nukleus in ['2', 'II']:
                         p1, p0 = None, None
@@ -185,7 +260,9 @@ def main():
                         last_sw['date'] = last_date + timedelta(days=15)
                         last_sw['price'] = fib_sweetspot
 
+        # Sendet Validierung UND Telemetrie
         print(json.dumps({
+            "validation": validation,
             "correction_gate": {
                 "b_gate_price": price_b_gate if price_b_gate else 0,
                 "current_close": float(last_close),
@@ -196,9 +273,7 @@ def main():
             }
         }), file=sys.stderr)
 
-        # =========================================================================
-        # --- PLOT DASHBOARD: TRADINGVIEW CRISP CLASSIC LIGHT THEME ---
-        # =========================================================================
+        # --- PLOT DASHBOARD ---
         plt.rcParams['font.family'] = 'sans-serif'
         fig, ax = plt.subplots(figsize=(16, 8))
         
@@ -216,16 +291,12 @@ def main():
         ax.plot(df.index, df['low'], color=wick_col, linewidth=0.8, linestyle=':', alpha=0.5)
         ax.plot(df.index, df['close'], color=price_line_col, linewidth=1.8, label='Close Price')
 
-        # --- POLYGON SHADING ENGINE ---
         poly_dates, poly_prices = [], []
-        
         for idx_sw, sw in enumerate(snapped_waves):
             poly_dates.append(sw['date'])
             poly_prices.append(sw['price'])
             
-            nuk = sw['raw_label'].replace('(', '').replace(')', '').replace('[', '').replace(']', '').strip()
-            if '.' in nuk: nuk = nuk.split('.')[-1]
-            
+            nuk = resolve_stem(sw['raw_label'])
             if nuk in ['5', 'V'] and len(poly_dates) >= 3:
                 ax.fill(poly_dates, poly_prices, color=impulse_blue, alpha=0.08, edgecolor='none')
                 poly_dates = [sw['date']] 
@@ -236,17 +307,15 @@ def main():
                 poly_prices = [sw['price']]
 
         if len(poly_dates) >= 3:
-            ax.fill(poly_dates, poly_prices, color=impulse_blue if resolve_wave_role(snapped_waves[-1]['raw_label']) else correction_orange, alpha=0.08, edgecolor='none')
+            ax.fill(poly_dates, poly_prices, color=impulse_blue if resolve_is_peak(snapped_waves[-1]['raw_label']) else correction_orange, alpha=0.08, edgecolor='none')
 
-        # --- WELLEN-LINIEN & PIVOT-MARKER ---
         for k in range(1, len(snapped_waves)):
             p1 = snapped_waves[k-1]
             p2 = snapped_waves[k]
             lbl_raw = p2['raw_label']
             is_sub = ('.' in lbl_raw) or any(c.islower() for c in p2['label']) or ('((' in lbl_raw)
             
-            if is_sub:
-                c_line, c_style, l_w, m_s = '#FF4081', '-', 1.5, 6
+            if is_sub: c_line, c_style, l_w, m_s = '#FF4081', '-', 1.5, 6
             else:
                 l_w, m_s = 2.2, 9
                 if not p2['is_peak']: c_line, c_style = correction_orange, '--'
@@ -277,9 +346,6 @@ def main():
             elif is_sub: t_col = '#FF4081'
             elif not sw['is_peak']: t_col = '#E65100' 
             elif '(' in lbl_raw: t_col = '#00796B' 
-            # =========================================================================
-            # DER ECHTE, BEREINIGTE FIX IN DER TEXT-LABEL SCHLEIFE:
-            # =========================================================================
             elif any(c in lbl_raw for c in ['I', 'V', 'X']): t_col = '#4A148C'
             else: t_col = impulse_blue
             
@@ -304,7 +370,7 @@ def main():
         ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f"{x:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')))
         
-        fig.text(0.05, 0.92, f"{symbol} - Official TradingView Light Theme", color=spine_color, fontsize=24, ha='left', va='center', fontweight='bold')
+        fig.text(0.05, 0.92, f"{symbol} - Self-Healing EW Master", color=spine_color, fontsize=24, ha='left', va='center', fontweight='bold')
         plt.subplots_adjust(top=0.85, bottom=0.1, left=0.05, right=0.88)
         
         buf = io.BytesIO()
@@ -319,4 +385,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+        
