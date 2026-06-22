@@ -10,15 +10,12 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V62: Structural JSON-Guardrail aktiv...");
+console.log("🚀 Bot V63: Diagnostic Mode (Raw Stderr Dump) aktiv...");
 
 function parseWavesFromJson(text: string) {
   try {
     const jsonStr = text.replace(/```json/g, "").replace(/```/g, "").trim();
-    const parsed = JSON.parse(jsonStr);
-    if (parsed.waves && Array.isArray(parsed.waves)) return parsed.waves;
-    if (Array.isArray(parsed)) return parsed;
-    return null;
+    return JSON.parse(jsonStr).waves || JSON.parse(jsonStr);
   } catch (e) { return null; }
 }
 
@@ -47,7 +44,7 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return rawCandles;
 }
 
-function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, validationData: any | null, rawStderr: string }> {
+function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, error: string | null }> {
   return new Promise((resolve) => {
     const pyProcess = spawn("python3", ["python_service/drawer.py"]);
     let stdoutBufs: Buffer[] = [], stderrStr = "";
@@ -55,67 +52,57 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
     pyProcess.stderr.on("data", c => stderrStr += c.toString());
     pyProcess.stdin.write(JSON.stringify({ symbol, waves, candles }));
     pyProcess.stdin.end();
-    pyProcess.on("close", () => {
-      let val = null;
-      try { val = JSON.parse(stderrStr).validation; } catch(e) {}
-      resolve({ pngBuffer: stdoutBufs.length > 0 ? Buffer.concat(stdoutBufs) : null, validationData: val, rawStderr: stderrStr });
+    pyProcess.on("close", (code) => {
+      if (code !== 0) return resolve({ pngBuffer: null, error: `Python Exit ${code}: ${stderrStr}` });
+      resolve({ pngBuffer: stdoutBufs.length > 0 ? Buffer.concat(stdoutBufs) : null, error: null });
     });
   });
 }
 
 bot.command("analyse", async (ctx) => {
   const symbolArg = ctx.message.text.split(" ")[1];
-  if (!symbolArg) return ctx.reply("❌ Bitte Symbol angeben!");
+  if (!symbolArg) return ctx.reply("❌ Symbol?");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Ziehe Stream: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Stream: ${cleanSymbol}...`);
   let candles: any[] = [];
-  try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Fehler: ${e.message}`); }
+  try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
 
   const minifiedMarketStream = candles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
   const systemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream);
-
   const modelLite = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite", systemInstruction: systemPrompt });
-  const modelPro = genAI.getGenerativeModel({ model: "gemini-3.5-flash", systemInstruction: systemPrompt });
 
   let iteration = 0;
-  let criticRejection = "Start";
+  let lastError = "Keine Details";
   let finalPhoto: Buffer | null = null;
-
-  await ctx.reply(`⚡ Analyse startet...`);
 
   while (iteration < 3) {
     iteration++;
-    let currentModel = modelLite;
     try {
-      const promptText = `Analyseergebnis als JSON. WICHTIG: Jedes Wellen-Objekt MUSS die Keys 'label', 'date' und 'price' enthalten. ${criticRejection}`;
-      const result = await currentModel.generateContent({
-        contents: [{ role: "user", parts: [{ text: promptText }] }],
+      const result = await modelLite.generateContent({
+        contents: [{ role: "user", parts: [{ text: `Analysiere EW. Aktueller Fehler: ${lastError}. JSON mit Key 'waves'.` }] }],
         generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
       });
 
-      const llmRawAnswer = result.response.text();
-      const waves = parseWavesFromJson(llmRawAnswer);
-      
-      // STRUKTUR-WACHE
-      if (!waves || !Array.isArray(waves)) { criticRejection = "JSON ist kein Array"; continue; }
-      const hasLabels = waves.every((w: any) => w.hasOwnProperty('label') && w.hasOwnProperty('date') && w.hasOwnProperty('price'));
-      if (!hasLabels) { criticRejection = "Fehlende Keys ('label', 'date', 'price')"; continue; }
+      const waves = parseWavesFromJson(result.response.text());
+      if (!waves) { lastError = "KI lieferte ungültiges JSON"; continue; }
 
       const py = await runPythonCritic(cleanSymbol, waves, candles);
-      if (py.validationData && py.validationData.valid) {
+      if (!py.error && py.pngBuffer) {
         finalPhoto = py.pngBuffer;
         break;
       }
-      criticRejection = py.validationData?.message || "Topologie-Fehler";
-      await ctx.reply(`🔄 [Runde ${iteration}] Veto: ${criticRejection}`);
+      
+      // HIER KOMMT DIE WAHRHEIT
+      lastError = py.error || "Unbekannter Logik-Fehler in Python";
+      await ctx.reply(`🔄 [Runde ${iteration}] Python sagt: \n\`\`\`text\n${lastError.substring(0, 500)}\n\`\`\``);
     } catch(e: any) {
-        await ctx.reply(`⚠️ Fehler: ${e.message}`);
+        await ctx.reply(`⚠️ API-Fehler: ${e.message}`);
     }
   }
 
-  if (!finalPhoto) return ctx.reply(`❌ Abbruch. Letztes Veto: ${criticRejection}`);
-  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 View: ${cleanSymbol}` });
+  if (!finalPhoto) return ctx.reply(`❌ Abbruch. Letzter Dump:\n${lastError}`);
+  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View: ${cleanSymbol}` });
 });
 
 if (RENDER_EXTERNAL_URL) {
