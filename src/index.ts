@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft: GROQ Engine v42 mit Render-Webhook-Verkabelung aktiv.");
+console.log("🤖 Bot läuft: GROQ Engine v42 mit Webhook-Kopplung aktiv.");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -132,7 +132,6 @@ bot.command("analyse", async (ctx) => {
   }
 });
 
-// NATIVE RENDER CLOUD INTERFACES (Verhindert Deployment-Timeouts)
 if (RENDER_EXTERNAL_URL) {
   const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
   bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
