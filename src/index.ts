@@ -10,22 +10,29 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V67: Adaptive Pivot-Shift Logic aktiv...");
+console.log("🚀 Bot V68: Strict JSON-Schema Enforcement aktiv...");
 
-function validateWaveStructure(waves: any[]) {
-    if (!Array.isArray(waves)) return "Nicht als Array formatiert.";
-    for (let i = 0; i < waves.length; i++) {
-        if (!waves[i].label) return `Welle an Index ${i} hat keinen 'label'-Key!`;
-    }
-    return null;
+// Der Schema-Enforcer: Zwingt die KI zum exakten Format
+const REQUIRED_SCHEMA = `
+Du MÜSST exakt dieses Format verwenden:
+{
+  "waves": [
+    {"label": "0", "date": "YYYY-MM-DD", "price": 0.0},
+    {"label": "1", "date": "YYYY-MM-DD", "price": 0.0},
+    ...
+  ]
 }
+Jedes Objekt muss 'label', 'date' und 'price' haben!`;
 
 function parseWavesFromJson(text: string) {
   try {
     const jsonStr = text.replace(/```json/g, "").replace(/```/g, "").trim();
     const data = JSON.parse(jsonStr);
     return data.waves || data; 
-  } catch (e) { return null; }
+  } catch (e) { 
+    console.log("DEBUG RAW OUTPUT:", text); // Damit wir sehen, was er schickt
+    return null; 
+  }
 }
 
 async function fetchVanillaYahooCandles(symbol: string) {
@@ -73,7 +80,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol?");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Ziehe Historie: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Historie: ${cleanSymbol}...`);
   let candles: any[] = [];
   try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
 
@@ -82,27 +89,28 @@ bot.command("analyse", async (ctx) => {
   const modelLite = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite", systemInstruction: systemPrompt });
 
   let iteration = 0;
-  let lastError = "Start";
+  let lastError = "Keine Details";
   let finalPhoto: Buffer | null = null;
 
   while (iteration < 3) {
     iteration++;
-    // DYNAMIC PIVOT SHIFT INSTRUCTION
-    const pivotInstruction = iteration > 1 
-      ? `\n\nACHTUNG: Dein letzter Versuch schlug fehl (${lastError}). Du musst deinen Startpunkt '0' zeitlich verschieben (nach rechts), um das Retracement-Gesetz zu wahren!` 
-      : "";
-
     try {
+      // Hier injecten wir das Schema ZWINGEND in den User-Prompt
+      const promptText = `Analysiere EW. 
+      FEHLER LETZTES MAL: ${lastError.substring(0, 50)}. 
+      ${REQUIRED_SCHEMA}`;
+
       const result = await modelLite.generateContent({
-        contents: [{ role: "user", parts: [{ text: `Analysiere EW.${pivotInstruction}. JSON mit Key 'waves' zwingend erforderlich!` }] }],
+        contents: [{ role: "user", parts: [{ text: promptText }] }],
         generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
       });
 
-      const waves = parseWavesFromJson(result.response.text());
-      const structuralError = validateWaveStructure(waves);
-      if (structuralError) {
-          lastError = structuralError;
-          await ctx.reply(`🔄 [Runde ${iteration}] Struktur-Fehler: ${lastError}`);
+      const rawText = result.response.text();
+      const waves = parseWavesFromJson(rawText);
+      
+      if (!waves || !Array.isArray(waves) || !waves[0].label) {
+          await ctx.reply(`🔄 [Runde ${iteration}] KI lieferte invalides JSON. Rohdaten: ${rawText.substring(0, 50)}`);
+          lastError = "Ungültige Struktur";
           continue;
       }
 
@@ -113,7 +121,7 @@ bot.command("analyse", async (ctx) => {
       }
       
       lastError = py.error || "Topologie-Fehler";
-      await ctx.reply(`🔄 [Runde ${iteration}] Fehler: ${lastError.substring(0, 80)}`);
+      await ctx.reply(`🔄 [Runde ${iteration}] Python sagt: ${lastError.substring(0, 100)}`);
     } catch(e: any) {
         await ctx.reply(`⚠️ API-Fehler: ${e.message}`);
     }
