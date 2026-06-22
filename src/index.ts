@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V55: Mixtral MoE Engine (mixtral-8x7b-32768) aktiv...");
+console.log("🚀 Bot V56: Full-Service Llama-3.1-8B-Instant Engine aktiv...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -117,27 +117,15 @@ bot.command("analyse", async (ctx) => {
   let finalPhoto: Buffer | null = null;
   let finalResponseText = "";
 
-  // =====================================================================
-  // MODEL SWAP: Frischer Eimer, 32k Context, extrem performant für JSON!
-  // =====================================================================
-  const currentModel = "mixtral-8x7b-32768";
-  await ctx.reply(`⚡ LPU-Engine Bypass aktiv (Modell: ${currentModel})...`);
+  const currentModel = "llama-3.1-8b-instant";
+  await ctx.reply(`⚡ LPU-Engine aktiv (Modell: ${currentModel})...`);
 
   while (iteration < 3) {
     iteration++;
     try {
       let promptText = "Führe die Wellenzählung durch und antworte AUSSCHLIESSLICH als JSON-Objekt mit dem Key 'waves'.";
-      
       if (criticRejection) {
-        promptText = `🔴 KRITISCHER REGELVERSTOSS IM VORHERIGEN VERSUCH:
-"${criticRejection}"
-
-MENTOR-ANWEISUNG FÜR DIE KORREKTUR:
-1. Prüfe auf Overlaps (Welle IV in Welle I).
-2. Prüfe auf Retracement-Brüche.
-3. Vergib zwingend die korrekten Keys ("label", "date", "price").
-
-Liefere das korrigierte JSON-Objekt mit dem Key 'waves'.`;
+        promptText = `🔴 REGELVERSTOSS: "${criticRejection.substring(0, 100)}". Korrigiere die Zählung und liefere das JSON-Objekt mit Key 'waves'.`;
       }
 
       const currentTemp = Math.min(0.1 + ((iteration - 1) * 0.15), 0.4);
@@ -168,25 +156,17 @@ Liefere das korrigierte JSON-Objekt mit dem Key 'waves'.`;
       }
 
       criticRejection = py.validationData?.message || py.rawStderr || "Topologie-Verstoß";
-      await ctx.reply(`🔄 [Runde ${iteration}/3 | Temp: ${currentTemp.toFixed(2)}] Veto: "${criticRejection.substring(0, 150)}"`);
+      await ctx.reply(`🔄 [Runde ${iteration}/3] Veto: "${criticRejection.substring(0, 100)}"`);
       
     } catch(e: any) {
-        await ctx.reply(`⚠️ Groq-API Limit/Fehler: \n\`${e.message || JSON.stringify(e)}\``);
+        await ctx.reply(`⚠️ Groq-API Fehler: \n\`${e.message || "Unbekannt"}\``);
         await new Promise(r => setTimeout(r, 2000));
     }
   }
 
-  if (!finalPhoto) return ctx.reply(`❌ **Abbruch nach 3 Zyklen.**\n\nLetztes Veto:\n\`\`\`text\n${criticRejection.substring(0, 1000)}\n\`\`\``);
+  if (!finalPhoto) return ctx.reply(`❌ **Abbruch.** Letztes Veto:\n\`\`\`text\n${criticRejection.substring(0, 500)}\n\`\`\``);
 
-  chatSessions[chatId] = {
-    lastDataPayload: { candles, waves: parseWavesFromJson(finalResponseText) },
-    history: [{ role: "user", content: "Analysiert." }, { role: "assistant", content: finalResponseText }]
-  };
-
-  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View via Groq: ${cleanSymbol}` });
-  if (finalResponseText.trim()) {
-    await ctx.reply(`💬 Rohes JSON:\n\`\`\`json\n${finalResponseText.substring(0, 3800)}\n\`\`\``);
-  }
+  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View via Groq (${currentModel}): ${cleanSymbol}` });
 });
 
 if (RENDER_EXTERNAL_URL) {
