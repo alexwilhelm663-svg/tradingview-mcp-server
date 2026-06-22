@@ -10,15 +10,14 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V64: Structural Guardrail (Label-Enforcer) aktiv...");
+console.log("🚀 Bot V65: Max-History Mode (Range=max) aktiv...");
 
-// Der Struktur-Wächter: Prüft jedes Wellen-Objekt auf den Key 'label'
 function validateWaveStructure(waves: any[]) {
     if (!Array.isArray(waves)) return "Nicht als Array formatiert.";
     for (let i = 0; i < waves.length; i++) {
         if (!waves[i].label) return `Welle an Index ${i} hat keinen 'label'-Key!`;
     }
-    return null; // Alles okay
+    return null;
 }
 
 function parseWavesFromJson(text: string) {
@@ -31,7 +30,8 @@ function parseWavesFromJson(text: string) {
 
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
-  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=5y`;
+  // RANGE = MAX: Zieht die komplette Historie
+  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=max`;
   const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const raw = await res.json();
@@ -74,7 +74,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol?");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Stream: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Ziehe komplette Historie: ${cleanSymbol}...`);
   let candles: any[] = [];
   try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
 
@@ -90,12 +90,11 @@ bot.command("analyse", async (ctx) => {
     iteration++;
     try {
       const result = await modelLite.generateContent({
-        contents: [{ role: "user", parts: [{ text: `Analysiere EW. FEHLER BEIM LETZTEN MAL: ${lastError}. JSON mit Key 'waves' MUSS zwingend 'label', 'date' und 'price' haben!` }] }],
+        contents: [{ role: "user", parts: [{ text: `Analysiere EW über den gesamten Zeitraum. FEHLER: ${lastError}. JSON mit Key 'waves' MUSS 'label', 'date' und 'price' haben!` }] }],
         generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
       });
 
       const waves = parseWavesFromJson(result.response.text());
-      // WÄCHTER-CHECK
       const structuralError = validateWaveStructure(waves);
       if (structuralError) {
           lastError = structuralError;
@@ -116,7 +115,7 @@ bot.command("analyse", async (ctx) => {
   }
 
   if (!finalPhoto) return ctx.reply(`❌ Abbruch. Letztes Veto: ${lastError}`);
-  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View: ${cleanSymbol}` });
+  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View (Max History): ${cleanSymbol}` });
 });
 
 if (RENDER_EXTERNAL_URL) {
