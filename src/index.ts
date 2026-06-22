@@ -13,7 +13,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit unsterblichem System-Instruction-Kern & Line-Chunker (v30)...");
+console.log("🤖 Bot läuft in der Cloud mit unzerstörbarem Ampel-Lebenszeichen & String-Linter (v31)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -135,10 +135,8 @@ bot.command("analyse", async (ctx) => {
   const streamStartDate = candlesArray[0].date;
   const streamEndDate = candlesArray[candlesArray.length - 1].date;
 
-  // Holt die unantastbare EW-Bibel aus dem Modul
   const immutableSystemRulebook = getElliottWaveSystemPrompt(streamStartDate, streamEndDate, minifiedMarketStream);
 
-  // Der initiale User-Arbeitsauftrag
   let currentActiveTaskPrompt = `Führe die vollständige Elliott-Wellen-Zählung für den Marktdaten-Stream durch und gib unten die finale Markdown-Tabelle aus:\n\n${minifiedMarketStream}`;
   
   let finalResponseText = "";
@@ -150,7 +148,7 @@ bot.command("analyse", async (ctx) => {
   let criticRejectionReason = "";
 
   let apiHiccupCount = 0;
-  const maxApiHiccups = 4;
+  const maxApiHiccups = 5;
 
   const modelPool = [
       "gemini-2.5-flash", 
@@ -165,9 +163,7 @@ bot.command("analyse", async (ctx) => {
 
     if (criticRejectionReason) {
       await ctx.reply(`⚠️ **Python-Kritiker Veto (Runde ${topologyIteration}/${maxTopologyIterations}):** *"${criticRejectionReason}"*\nSperre KI mit Veto-Befund erneut ins Verhörzimmer (Modell: ${activeModel})...`);
-      
-      // Das LLM behält im Hintergrund sein System-Rulebook und bekommt hier nur die gezielte Standpauke!
-      currentActiveTaskPrompt = `🔴 KRITIKER VETO (Korrektur-Runde ${topologyIteration + 1}/${maxTopologyIterations}):\n\nDeine vorherige Markdown-Tabelle enthielt einen fatalen topologischen Verstoß. Der Python-Richter meldet folgendes Veto:\n\n[ "${criticRejectionReason}" ]\n\nDu bist VERPFLICHTET, exakt diesen Fehler in den Werten der Tabelle zu beheben! Verändere nur die betroffenen Wellen-Zeilen, behalte den Startpunkt ${streamStartDate} bei und gib unten erneut die vollständige Markdown-Tabelle im Format '| Welle | Datum | Preis |' aus.`;
+      currentPrompt = `🔴 KRITIKER VETO (Korrektur-Runde ${topologyIteration + 1}/${maxTopologyIterations}):\n\nDeine vorherige Markdown-Tabelle enthielt einen fatalen topologischen Verstoß. Der Python-Richter meldet folgendes Veto:\n\n[ "${criticRejectionReason}" ]\n\nDu bist VERPFLICHTET, exakt diesen Fehler in den Werten der Tabelle zu beheben! Verändere nur die betroffenen Wellen-Zeilen, behalte den Startpunkt ${streamStartDate} bei und gib unten erneut die vollständige Markdown-Tabelle im Format '| Welle | Datum | Preis |' aus.`;
     }
 
     let llmRawAnswer = "";
@@ -176,7 +172,7 @@ bot.command("analyse", async (ctx) => {
         model: activeModel,
         contents: currentActiveTaskPrompt,
         config: { 
-            systemInstruction: immutableSystemRulebook, // <--- DAS UNSTERBLICHE GESETZBUCH!
+            systemInstruction: immutableSystemRulebook,
             maxOutputTokens: 8192, 
             safetySettings: [{ category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }] 
         }
@@ -185,16 +181,28 @@ bot.command("analyse", async (ctx) => {
 
     } catch(apiErr: any) {
       apiHiccupCount++;
-      if (apiHiccupCount > maxApiHiccups) return ctx.reply(`❌ API-Overload Abbruch: ${apiErr.message}`);
+      if (apiHiccupCount > maxApiHiccups) return ctx.reply(`❌ API-Overload Abbruch: ${apiErr.message || apiErr}`);
 
-      const rawErrStr = JSON.stringify(apiErr);
-      let pauseSecs = 15; 
-      const delayMatch = rawErrStr.match(/retryDelay["']?:\s*["']?(\d+)s/);
-      if (delayMatch && delayMatch[1]) pauseSecs = parseInt(delayMatch[1], 10) + 2;
-      else if (rawErrStr.includes("429")) pauseSecs = 45;
+      // FIX: Sicheres Auslesen nativer Error-Strings statt blindem JSON.stringify
+      const errMessage = apiErr.message || String(apiErr);
+      const errStack = apiErr.stack || "";
+      const comprehensiveErrLog = `${errMessage} ${errStack}`;
 
-      await ctx.reply(`⚠️ Google API Stau (429). Bot wartet an der Ampel für ${pauseSecs} Sekunden...`);
-      await new Promise(r => setTimeout(r, pauseSecs * 1000));
+      // Sicherer Standardwert: 50 Sekunden (Garantierter Reset des Quota-Fensters)
+      let pauseSeconds = 50; 
+
+      // Fängt sowohl "retryDelay" als auch "Please retry in 46s" direkt ab!
+      const delayMatch = comprehensiveErrLog.match(/retryDelay["']?:\s*["']?(\d+)/) || comprehensiveErrLog.match(/retry in ([\d.]+)/);
+      if (delayMatch && delayMatch[1]) {
+        pauseSeconds = Math.ceil(parseFloat(delayMatch[1])) + 2;
+      }
+
+      await ctx.reply(`⚠️ **Google API Engpass (${apiErr.status || '429'}):** Server überlastet. Bot wartet vorschriftsmäßig an der Ampel für **${pauseSeconds} Sekunden**... (Event ${apiHiccupCount}/${maxApiHiccups})`);
+      
+      await new Promise(r => setTimeout(r, pauseSeconds * 1000));
+      
+      // EXPLIZITES LEBENSZEICHEN BEIM VERLASSEN DES WARTERAUMS
+      await ctx.reply(`🟢 **Ampel wird GRÜN!** Warteraum verlassen. Starte neuen API-Versuch für Topologie-Runde ${topologyIteration + 1}...`);
       continue;
     }
 
@@ -219,7 +227,7 @@ bot.command("analyse", async (ctx) => {
   }
 
   if (!finalPhotoBuffer) {
-    return ctx.reply(`❌ **Automatischer Self-Healing Abbruch:** Die KI konnte die Chart-Topologie für ${cleanSymbol} nach 3 Iterationen nicht auflösen.\nBefund: "${criticRejectionReason}"`);
+    return ctx.reply(`❌ **Automatischer Self-Healing Abbruch:** Die KI konnte die Chart-Topologie für ${cleanSymbol} nach ${maxTopologyIterations} mathematischen Iterationen nicht fehlerfrei auflösen.\nBefund: "${criticRejectionReason}"`);
   }
 
   chatSessions[chatId] = {
@@ -247,9 +255,6 @@ bot.command("analyse", async (ctx) => {
 
   await ctx.replyWithPhoto({ source: finalPhotoBuffer }, { caption: `📊 EW Self-Healing Master View: ${cleanSymbol} (${finalIntervalLabel}) - Validiert in Runde ${topologyIteration}` });
   
-  // =========================================================================
-  // DER SMARTE LINE-BY-LINE CHUNKER (Verhindert zersägte Markdown-Tabellen)
-  // =========================================================================
   const reportLines = (finalResponseText + statusBadge).split('\n');
   let messageBuffer = "";
 
