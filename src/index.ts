@@ -10,37 +10,24 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V73: The Math-Tutor & Secular Reset Engine aktiv...");
+console.log("🚀 Bot V74: The ATL-Killshot Engine (Absolute Low Enforcer) aktiv...");
 
-const SECULAR_RESET_ADDON = `
-WICHTIGE ZÄHL-REGEL FÜR GROSSE HISTORIEN (Range=max):
-1. Du musst Welle '0' NICHT auf den allerersten Tag des Charts legen! 
-2. Wenn eine Aktie historische Jahrhundert-Crashes hatte (z.B. DotCom 2002, Finanzkrise 2008), lege den Startpunkt '0' auf den tiefsten Boden DES LETZTEN GROSSEN AUFWÄRTSZYKLUS.
-3. Antworte STRIKT als JSON. Keine Erklärungen.`;
-
-// Übersetzt das sture Python-Gemecker in idiotensichere Ungleichungen für das LLM
-function translateErrorToMathConstraint(errStr: string): string {
+// Übersetzt Pythons Veto in brutale, unmissverständliche Zwangsanweisungen
+function translateErrorToMathConstraint(errStr: string, atlDate: string, atlPrice: number): string {
   const s = String(errStr);
   
-  if (s.includes("Overlap-Verstoß")) {
-    const match = s.match(/Gipfel '[^']+' \(([0-9.]+) USD\)/);
-    if (match) {
-      const limit = match[1];
-      return `\n\n🛑 MATHEMATISCHER ZWANGS-BEFEHL FÜR DIESE RUNDE:
-Wegen der Overlap-Regel MUSS der Preis für Welle 4 zwingend EINE ZAHL STRIKT GRÖSSER ALS ${limit} USD SEIN! 
-Suche im Chart das tiefste Zwischentief für Welle 4, dessen Kurs > ${limit} ist! Du darfst mathematisch keine Zahl <= ${limit} hinschreiben.`;
-    }
+  if (s.includes("Overlap-Verstoß") || s.includes("dringt illegal in das Gebiet von Gipfel")) {
+    const match = s.match(/Gipfel '[^']+' \(([0-9.]+) USD\)/) || s.match(/Gipfel '[^']+' \(([0-9.]+)\)/);
+    const limit = match ? match[1] : "den davorliegenden Gipfel";
+    return `\n\n🛑 OVERLAP-ZWANGSBEFEHL: Welle 4 MUSS zwingend preislich STRIKT HÖHER ALS ${limit} sein! Du darfst mathematisch keinen Wert <= ${limit} für Welle 4 generieren. Suche ein höheres Tal!`;
   }
 
-  if (s.includes("Retracement-Bruch")) {
-    return `\n\n🛑 BEFEHL ZUR ZYKLUS-VERSCHIEBUNG:
-Deine Welle 2 ist tiefer gefallen als der Startpunkt 0. Das bedeutet: Dein gewählter Startpunkt '0' war falsch! 
-Verschiebe den Startpunkt '0' zeitlich nach rechts auf das absolute Allzeittief dieses Abverkaufs, damit Welle 2 mathematisch über Welle 0 bleiben kann!`;
+  if (s.includes("Retracement-Bruch") || s.includes("fällt tiefer als der Nullpunkt")) {
+    return `\n\n🛑 RETRACEMENT-ZWANGSBEFEHL: Deine Welle 2 ist tiefer als Welle 0! Setze Welle '0' JETZT ZWINGEND auf das historische Allzeittief am ${atlDate} (${atlPrice} USD)! Dann ist es mathematisch unmöglich, dass Welle 2 tiefer fällt.`;
   }
 
-  if (s.includes("Topologie-Verstoß")) {
-    return `\n\n🛑 LOGIK-ZWANG:
-Ein Korrektur-Tal (Welle 2 oder 4) darf niemals preislich höher oder gleich auf liegen wie der davorliegende Gipfel (Welle 1 oder 3)! Wähle für das Tal zwingend einen tieferen Kurs.`;
+  if (s.includes("Topologie-Verstoß") || s.includes("notiert höher oder gleich")) {
+    return `\n\n🛑 TOPOLOGIE-ZWANGSBEFEHL: Ein Tal (Welle 2 oder 4) darf preislich niemals auf gleicher Höhe oder über seinem Gipfel (Welle 1 oder 3) liegen. Korrigiere die Zahlenwerte!`;
   }
 
   return "";
@@ -74,7 +61,7 @@ function normalizeLlmOutput(rawText: string, candles: any[]): { waves: any[] | n
       }
     }
 
-    if (!rawArray || rawArray.length === 0) return { waves: null, error: `Kein Wellen-Array gefunden.` };
+    if (!rawArray || rawArray.length === 0) return { waves: null, error: `Kein Wellen-Array extrahiert.` };
 
     const normalizedWaves: any[] = [];
     for (const item of rawArray) {
@@ -116,18 +103,32 @@ async function fetchVanillaYahooCandles(symbol: string) {
   
   const timestamps = chartData.timestamp || [];
   const quote = chartData.indicators?.quote?.[0] || {};
+  
   const rawCandles: any[] = [];
+  let atlPrice = Infinity;
+  let atlDate = "";
+
   for (let i = 0; i < timestamps.length; i++) {
-    if (quote.open[i] == null) continue;
+    if (quote.open[i] == null || quote.low[i] == null) continue;
+    const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
+    const currentLow = parseFloat(quote.low[i]);
+
+    // Wir tracken das absolute Allzeittief des gesamten Streams!
+    if (currentLow < atlPrice) {
+      atlPrice = currentLow;
+      atlDate = dateStr;
+    }
+
     rawCandles.push({
-      date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+      date: dateStr,
       open: Number(quote.open[i]).toFixed(4),
       high: Number(quote.high[i]).toFixed(4),
       low: Number(quote.low[i]).toFixed(4),
       close: Number(quote.close[i]).toFixed(4)
     });
   }
-  return rawCandles;
+
+  return { candles: rawCandles, atlDate, atlPrice: Number(atlPrice.toFixed(2)) };
 }
 
 function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, errorMessage: string | null }> {
@@ -164,11 +165,28 @@ bot.command("analyse", async (ctx) => {
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
   await ctx.reply(`⏳ Historie: ${cleanSymbol}...`);
-  let candles: any[] = [];
-  try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
+  let marketData;
+  try { 
+    marketData = await fetchVanillaYahooCandles(cleanSymbol); 
+  } catch (e: any) { 
+    return ctx.reply(`❌ Download: ${e.message}`); 
+  }
 
+  const { candles, atlDate, atlPrice } = marketData;
   const minifiedMarketStream = candles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
-  const fullSystemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream) + SECULAR_RESET_ADDON;
+  
+  // DAS GESETZ DES ALLZEIT-TIEFS
+  const ATL_LAW_PROMPT = `
+\n\n==================================================================
+🔥 DAS GESETZ DES ALLZEITTIEFS (THE ATL-ANCHOR LAW) 🔥
+Das absolute historische Allzeittief dieser Aktie fand am ${atlDate} bei ${atlPrice} USD statt.
+REGELN FÜR DEINE WELLENZÄHLUNG:
+1. Du DARFST Welle '0' niemals zeitlich vor dem ${atlDate} ansetzen!
+2. Wenn die Aktie nach dem Börsengang stark gefallen ist (z.B. Coinbase, Meta, ARM), MUSS Welle '0' zwingend exakt auf dieses Allzeittief (${atlDate} / ${atlPrice}) gelegt werden!
+3. Welle 2 darf mathematisch unter keinen Umständen tiefer sein als ${atlPrice}.
+==================================================================`;
+
+  const fullSystemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream) + ATL_LAW_PROMPT;
   
   const modelLite = genAI.getGenerativeModel({ 
     model: "gemini-3.1-flash-lite", 
@@ -189,14 +207,13 @@ bot.command("analyse", async (ctx) => {
       let promptText = "";
 
       if (iteration === 1) {
-        promptText = `Führe die Elliott-Wellen-Zählung durch. Liefere AUSSCHLIESSLICH ein JSON-Objekt mit dem Array "waves".`;
+        promptText = `Führe die Elliott-Wellen-Zählung durch. Liefere AUSSCHLIESSLICH ein JSON-Objekt mit dem Array "waves". Denke an das ATL-Gesetz (${atlDate} / ${atlPrice} USD)!`;
       } else {
-        // HIER GREIFT DER NACHHILFELEHRER
-        const mathTutorConstraint = translateErrorToMathConstraint(pythonVetoReason);
+        const mathTutorConstraint = translateErrorToMathConstraint(pythonVetoReason, atlDate, atlPrice);
 
-        promptText = `🔴 KRITISCHER GEOMETRIE-FEHLER IN DEINEM VORHERIGEN VERSUCH!
+        promptText = `🔴 GEOMETRIE-FEHLER IN DEINEM VORHERIGEN VERSUCH!
 
-Deine exakte, fehlerhafte Zählung von eben war:
+Deine fehlerhafte Zählung von eben war:
 ${lastLlmGeneratedJson}
 
 Der mathematische Ablehnungs-Grund der Python-Engine lautet:
@@ -207,10 +224,9 @@ Generiere das korrigierte JSON-Array.`;
       }
 
       const result = await chatSession.sendMessage(promptText);
-      const rawLlmAnswer = result.response.text();
-      lastLlmGeneratedJson = rawLlmAnswer; 
+      lastLlmGeneratedJson = result.response.text(); 
 
-      const normalization = normalizeLlmOutput(rawLlmAnswer, candles);
+      const normalization = normalizeLlmOutput(lastLlmGeneratedJson, candles);
       if (!normalization.waves) {
         pythonVetoReason = normalization.error!;
         await ctx.reply(`🔄 [Runde ${iteration}] Rosetta-Veto: ${pythonVetoReason.substring(0, 100)}`);
@@ -231,7 +247,7 @@ Generiere das korrigierte JSON-Array.`;
     }
   }
 
-  if (!finalPhoto) return ctx.reply(`❌ Abbruch nach 3 Zyklen.\n\nLetzter Grund:\n\`\`\`text\n${pythonVetoReason}\n\`\`\``);
+  if (!finalPhoto) return ctx.reply(`❌ Abbruch nach 3 Zyklen.\n\nGrund:\n\`\`\`text\n${pythonVetoReason}\n\`\`\``);
   await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View: ${cleanSymbol}` });
 });
 
@@ -245,3 +261,4 @@ if (RENDER_EXTERNAL_URL) {
     } else res.end("OK");
   }).listen(PORT);
 } else bot.launch();
+  
