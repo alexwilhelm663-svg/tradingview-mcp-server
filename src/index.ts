@@ -10,7 +10,41 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V72: Stateful Memory Loop (Anti-Groundhog-Day Engine) aktiv...");
+console.log("🚀 Bot V73: The Math-Tutor & Secular Reset Engine aktiv...");
+
+const SECULAR_RESET_ADDON = `
+WICHTIGE ZÄHL-REGEL FÜR GROSSE HISTORIEN (Range=max):
+1. Du musst Welle '0' NICHT auf den allerersten Tag des Charts legen! 
+2. Wenn eine Aktie historische Jahrhundert-Crashes hatte (z.B. DotCom 2002, Finanzkrise 2008), lege den Startpunkt '0' auf den tiefsten Boden DES LETZTEN GROSSEN AUFWÄRTSZYKLUS.
+3. Antworte STRIKT als JSON. Keine Erklärungen.`;
+
+// Übersetzt das sture Python-Gemecker in idiotensichere Ungleichungen für das LLM
+function translateErrorToMathConstraint(errStr: string): string {
+  const s = String(errStr);
+  
+  if (s.includes("Overlap-Verstoß")) {
+    const match = s.match(/Gipfel '[^']+' \(([0-9.]+) USD\)/);
+    if (match) {
+      const limit = match[1];
+      return `\n\n🛑 MATHEMATISCHER ZWANGS-BEFEHL FÜR DIESE RUNDE:
+Wegen der Overlap-Regel MUSS der Preis für Welle 4 zwingend EINE ZAHL STRIKT GRÖSSER ALS ${limit} USD SEIN! 
+Suche im Chart das tiefste Zwischentief für Welle 4, dessen Kurs > ${limit} ist! Du darfst mathematisch keine Zahl <= ${limit} hinschreiben.`;
+    }
+  }
+
+  if (s.includes("Retracement-Bruch")) {
+    return `\n\n🛑 BEFEHL ZUR ZYKLUS-VERSCHIEBUNG:
+Deine Welle 2 ist tiefer gefallen als der Startpunkt 0. Das bedeutet: Dein gewählter Startpunkt '0' war falsch! 
+Verschiebe den Startpunkt '0' zeitlich nach rechts auf das absolute Allzeittief dieses Abverkaufs, damit Welle 2 mathematisch über Welle 0 bleiben kann!`;
+  }
+
+  if (s.includes("Topologie-Verstoß")) {
+    return `\n\n🛑 LOGIK-ZWANG:
+Ein Korrektur-Tal (Welle 2 oder 4) darf niemals preislich höher oder gleich auf liegen wie der davorliegende Gipfel (Welle 1 oder 3)! Wähle für das Tal zwingend einen tieferen Kurs.`;
+  }
+
+  return "";
+}
 
 function salvagePriceFromCandles(dateStr: string, candles: any[]): number {
   const target = String(dateStr).substring(0, 10);
@@ -134,16 +168,14 @@ bot.command("analyse", async (ctx) => {
   try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
 
   const minifiedMarketStream = candles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
-  const systemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream);
+  const fullSystemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream) + SECULAR_RESET_ADDON;
   
-  // Wir binden das Modell direkt an den JSON-MimeType
   const modelLite = genAI.getGenerativeModel({ 
     model: "gemini-3.1-flash-lite", 
-    systemInstruction: systemPrompt,
+    systemInstruction: fullSystemPrompt,
     generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
   });
 
-  // BINGO: Wir starten eine zustandsbehaftete Chat-Sitzung!
   const chatSession = modelLite.startChat();
 
   let iteration = 0;
@@ -159,27 +191,23 @@ bot.command("analyse", async (ctx) => {
       if (iteration === 1) {
         promptText = `Führe die Elliott-Wellen-Zählung durch. Liefere AUSSCHLIESSLICH ein JSON-Objekt mit dem Array "waves".`;
       } else {
+        // HIER GREIFT DER NACHHILFELEHRER
+        const mathTutorConstraint = translateErrorToMathConstraint(pythonVetoReason);
+
         promptText = `🔴 KRITISCHER GEOMETRIE-FEHLER IN DEINEM VORHERIGEN VERSUCH!
 
 Deine exakte, fehlerhafte Zählung von eben war:
 ${lastLlmGeneratedJson}
 
-Der mathematische Veto-Grund der Python-Engine lautet:
+Der mathematische Ablehnungs-Grund der Python-Engine lautet:
 "${pythonVetoReason}"
-
-KORREKTUR-BEFEHL AN DICH:
-1. Analysiere deine fehlerhaften Zahlen oben.
-2. Wenn der Fehler "Welle 2 fällt tiefer als Nullpunkt 0" lautet: Du MÜSST den Startpunkt '0' zeitlich nach rechts auf ein tieferes Chart-Tal verschieben!
-3. Wenn der Fehler "Overlap Tal 4 in Gipfel 1" lautet: Du MÜSST Welle 3 zeitlich verkürzen oder Welle 4 so umlegen, dass das Tal preislich strikt über Gipfel 1 bleibt!
+${mathTutorConstraint}
 
 Generiere das korrigierte JSON-Array.`;
       }
 
-      // Wir schicken es an die ERINNERNDE Chat-Sitzung
       const result = await chatSession.sendMessage(promptText);
       const rawLlmAnswer = result.response.text();
-      
-      // Wir sichern das rohe JSON für den Erinnerungs-Prompt der Folgerunde
       lastLlmGeneratedJson = rawLlmAnswer; 
 
       const normalization = normalizeLlmOutput(rawLlmAnswer, candles);
@@ -203,7 +231,7 @@ Generiere das korrigierte JSON-Array.`;
     }
   }
 
-  if (!finalPhoto) return ctx.reply(`❌ Abbruch nach 3 Zyklen.\n\nLetzter Veto-Grund:\n\`\`\`text\n${pythonVetoReason}\n\`\`\``);
+  if (!finalPhoto) return ctx.reply(`❌ Abbruch nach 3 Zyklen.\n\nLetzter Grund:\n\`\`\`text\n${pythonVetoReason}\n\`\`\``);
   await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View: ${cleanSymbol}` });
 });
 
