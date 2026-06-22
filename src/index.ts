@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V53: Groq JSON-Keyword Mandatory Inject aktiv...");
+console.log("🚀 Bot V54: Model Swap Bypass (llama3-70b-8192) & Pre-Validation aktiv...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -117,24 +117,25 @@ bot.command("analyse", async (ctx) => {
   let finalPhoto: Buffer | null = null;
   let finalResponseText = "";
 
-  await ctx.reply(`⚡ LPU-Engine aktiv (Modell: llama-3.3-70b-versatile)...`);
+  // =====================================================================
+  // MODEL SWAP: Wir umgehen das 100k Limit, indem wir auf das Llama 3 70B ausweichen
+  // =====================================================================
+  const currentModel = "llama3-70b-8192";
+  await ctx.reply(`⚡ LPU-Engine Bypass aktiv (Modell: ${currentModel})...`);
 
   while (iteration < 3) {
     iteration++;
     try {
-      // =====================================================================
-      // DER GROQ-SCHLÜSSEL: Das Wort "JSON" MUSS im Prompt-String stehen!
-      // =====================================================================
       let promptText = "Führe die Wellenzählung durch und antworte AUSSCHLIESSLICH als JSON-Objekt mit dem Key 'waves'.";
       
       if (criticRejection) {
         promptText = `🔴 KRITISCHER REGELVERSTOSS IM VORHERIGEN VERSUCH:
 "${criticRejection}"
 
-MENTOR-ANWEISUNG FÜR DIE KORREKTUR (Cognitive Re-Anchoring):
-1. Falls ein 'Overlap-Verstoß' (Tal IV dringt in Gipfel I ein) vorliegt: Du hast die Wellengrade verwechselt! Das tiefe Tal, das du fälschlicherweise als 'IV' markiert hast, ist in Wahrheit der große Makro-Rücksetzer Welle 'II' (oder das Ende einer Makro-Korrektur Welle '0'). Benenne dieses tiefe Tal in 'II' oder '0' um und suche die Gipfel III, IV und V erst im Chartverlauf rechts davon!
-2. Falls ein 'Retracement-Bruch' vorliegt: Schiebe den Startpunkt '0' zeitlich weiter nach rechts auf das absolut tiefste Tal des Bärenmarktes!
-3. Nutze deine Generalvollmacht aus Klausel 3.
+MENTOR-ANWEISUNG FÜR DIE KORREKTUR:
+1. Prüfe auf Overlaps (Welle IV in Welle I).
+2. Prüfe auf Retracement-Brüche.
+3. Vergib zwingend die korrekten Keys ("label", "date", "price").
 
 Liefere das korrigierte JSON-Objekt mit dem Key 'waves'.`;
       }
@@ -142,7 +143,7 @@ Liefere das korrigierte JSON-Objekt mit dem Key 'waves'.`;
       const currentTemp = Math.min(0.1 + ((iteration - 1) * 0.15), 0.4);
 
       const res = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: currentModel,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: promptText }
@@ -154,8 +155,11 @@ Liefere das korrigierte JSON-Objekt mit dem Key 'waves'.`;
       const llmRawAnswer = res.choices[0]?.message?.content || "";
       const waves = parseWavesFromJson(llmRawAnswer);
       
-      if (!waves) { 
-        criticRejection = "KI lieferte kein auslesbares 'waves'-Array"; 
+      // =====================================================================
+      // PRE-VALIDATION: Sichert ab, dass der KeyError in Python nicht mehr auftritt
+      // =====================================================================
+      if (!waves || !Array.isArray(waves) || waves.length === 0 || !waves[0].label) { 
+        criticRejection = "Struktur-Fehler: JSON enthält keine korrekten 'label'-Keys."; 
         continue; 
       }
 
@@ -170,7 +174,7 @@ Liefere das korrigierte JSON-Objekt mit dem Key 'waves'.`;
       await ctx.reply(`🔄 [Runde ${iteration}/3 | Temp: ${currentTemp.toFixed(2)}] Veto: "${criticRejection.substring(0, 150)}"`);
       
     } catch(e: any) {
-        await ctx.reply(`⚠️ Groq-API Fehler: \n\`${e.message || JSON.stringify(e)}\``);
+        await ctx.reply(`⚠️ Groq-API Limit/Fehler: \n\`${e.message || JSON.stringify(e)}\``);
         await new Promise(r => setTimeout(r, 2000));
     }
   }
