@@ -2,10 +2,10 @@ name: ⚡ Quant Radar (3-of-3 Screener)
 
 on:
   schedule:
-    # Jeden Mo-Fr um 21:30 UTC (22:30 CET / 23:30 CEST -> Wall Street ist zu)
+    # Jeden Mo-Fr um 21:30 UTC (22:30 CET / 23:30 CEST -> Wall Street & Xetra sind zu)
     - cron: '30 21 * * 1-5'
   
-  workflow_dispatch: # WICHTIG: Erlaubt dir, den Scan JEDERZEIT per Button manuell zu testen!
+  workflow_dispatch: # Erlaubt den manuellen Start per Button im GitHub UI
 
 jobs:
   night-shift:
@@ -15,17 +15,16 @@ jobs:
       - name: 📥 Repository auschecken
         uses: actions/checkout@v4
 
-      - name: ⚙️ Node.js 20 einrichten
+      - name: ⚙️ Node.js 24 einrichten
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: 📦 Packages installieren
         run: npm install
 
-      - name: 🎯 Screener abfeuern
+      - name: 🎯 Screener abfeuern & Telegram Push
         env:
-          # Wir übergeben die Telegram-Secrets, falls du den Pro-Move (unten) nutzt
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: npx ts-node src/radar.ts
