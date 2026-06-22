@@ -13,7 +13,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit Modul-Prompt, Actor-Critic Loop & 8k Tokens (v27)...");
+console.log("🤖 Bot läuft in der Cloud mit 4-Dezimalen-Quant-Präzision & GenAI 2.0 Pool (v28)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -119,12 +119,13 @@ bot.command("analyse", async (ctx) => {
     const result = await yahooFinance.historical(cleanSymbol, { period1, period2, interval: yahooInterval }) as any[];
     if (!result || result.length === 0) throw new Error("Yahoo lieferte ein leeres Array.");
 
+    // FIX: 4 Nachkommastellen für historische Penny-Stock-Fraktale (NVDA 1999)
     candlesArray = result.map(c => ({
       date: c.date.toISOString().split('T')[0],
-      open: Number(c.open).toFixed(2),
-      high: Number(c.high).toFixed(2),
-      low: Number(c.low).toFixed(2),
-      close: Number(c.close).toFixed(2)
+      open: Number(c.open).toFixed(4),
+      high: Number(c.high).toFixed(4),
+      low: Number(c.low).toFixed(4),
+      close: Number(c.close).toFixed(4)
     })).filter(c => Number(c.open) > 0);
 
   } catch (dataError: any) {
@@ -135,7 +136,6 @@ bot.command("analyse", async (ctx) => {
   const streamStartDate = candlesArray[0].date;
   const streamEndDate = candlesArray[candlesArray.length - 1].date;
 
-  // Importiert den gigantischen System-Prompt dynamisch zur Laufzeit aus dem Modul!
   const basePrompt = getElliottWaveSystemPrompt(streamStartDate, streamEndDate, minifiedMarketStream);
 
   let currentPrompt = basePrompt;
@@ -147,9 +147,10 @@ bot.command("analyse", async (ctx) => {
   const maxIterations = 3;
   let criticRejectionReason = "";
 
+  // FIX: Saubere GenAI v1beta Model-Pool Kaskade
   const modelPool = [
-      "gemini-2.5-flash", "gemini-2.5-flash", 
-      "gemini-1.5-flash", "gemini-1.5-flash", 
+      "gemini-2.5-flash", 
+      "gemini-2.0-flash", 
       "gemini-2.5-pro"
   ];
 
