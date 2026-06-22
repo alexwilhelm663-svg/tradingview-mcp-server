@@ -10,18 +10,44 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V75: The Left-Wall Amputation Engine (Dual-Stream Setup) aktiv...");
+console.log("🚀 Bot V76: The Thermal-Jiggle & Wick-Snap Apex Engine aktiv...");
 
-function salvagePriceFromCandles(dateStr: string, candles: any[]): number {
-  const target = String(dateStr).substring(0, 10);
-  const match = candles.find(c => c.date === target);
-  if (match && !isNaN(parseFloat(match.close))) return parseFloat(match.close);
-  for (const c of candles) {
-    if (c.date >= target) return parseFloat(c.close);
+function translateErrorToMathConstraint(errStr: string, atlDate: string, atlPrice: number): string {
+  const s = String(errStr);
+  
+  if (s.includes("Overlap-Verstoß") || s.includes("dringt illegal in das Gebiet von Gipfel")) {
+    const match = s.match(/Gipfel '[^']+' \(([0-9.]+) USD\)/) || s.match(/Gipfel '[^']+' \(([0-9.]+)\)/);
+    const limit = match ? match[1] : "den davorliegenden Gipfel";
+    return `\n🛑 OVERLAP-REGEL: Welle 4 MUSS zwingend EINE ZAHL STRIKT GRÖSSER ALS ${limit} sein! Wähle ein höheres Chart-Tal!`;
   }
-  return 0.0;
+
+  if (s.includes("Retracement-Bruch") || s.includes("fällt tiefer als der Nullpunkt")) {
+    return `\n🛑 RETRACEMENT-REGEL: Welle 2 darf niemals tiefer fallen als Welle 0 (${atlPrice}). Setze Welle '0' zwingend auf den ${atlDate}!`;
+  }
+
+  if (s.includes("Topologie-Verstoß") || s.includes("notiert höher oder gleich")) {
+    return `\n🛑 TOPOLOGIE-REGEL: Ein Korrektur-Tal (Welle 2 oder 4) MUSS zwingend einen TIEFEREN Kurs haben als der Gipfel davor (Welle 1 oder 3)! Du hast ein Tal über einen Gipfel gelegt. Wähle für das Tal einen kleineren Zahlenwert!`;
+  }
+
+  return "";
 }
 
+// WICK-SNAP SALVAGER: Greift bei Gipfeln das High, bei Tälern das Low!
+function salvagePriceFromCandles(dateStr: string, waveLabel: string, candles: any[]): number {
+  const target = String(dateStr).substring(0, 10);
+  const match = candles.find(c => c.date === target);
+  if (!match) return 0.0;
+
+  const cleanL = String(waveLabel).trim().toLowerCase();
+  const isPeak = ["1", "3", "5", "b"].includes(cleanL);
+  const isValley = ["0", "2", "4", "a", "c"].includes(cleanL);
+
+  if (isPeak && match.high !== undefined) return parseFloat(match.high);
+  if (isValley && match.low !== undefined) return parseFloat(match.low);
+  return parseFloat(match.close);
+}
+
+// KORREKTUR DES DATENLECKS: Normalisiert jetzt NUR noch gegen die amputierten Kerzen!
 function normalizeLlmOutput(rawText: string, candles: any[]): { waves: any[] | null, error: string | null } {
   try {
     const clean = rawText.replace(/^```json\s*/g, "").replace(/```\s*$/g, "").trim();
@@ -57,9 +83,12 @@ function normalizeLlmOutput(rawText: string, candles: any[]): { waves: any[] | n
       let rawPrice = item.price || item.Kurs || item.kurs || item.value || item.end_price;
       let cleanPrice = parseFloat(rawPrice);
       
-      if (isNaN(cleanPrice) || cleanPrice === 0) cleanPrice = salvagePriceFromCandles(cleanDate, candles);
+      if (isNaN(cleanPrice) || cleanPrice === 0) {
+        // HIER GREIFT DER DOCHT-SNAP
+        cleanPrice = salvagePriceFromCandles(cleanDate, cleanLabel, candles);
+      }
 
-      if (cleanDate && !isNaN(cleanPrice)) {
+      if (cleanDate && !isNaN(cleanPrice) && cleanPrice > 0) {
         normalizedWaves.push({ label: cleanLabel, date: cleanDate, price: Number(cleanPrice.toFixed(2)) });
       }
     }
@@ -71,7 +100,6 @@ function normalizeLlmOutput(rawText: string, candles: any[]): { waves: any[] | n
   }
 }
 
-// DUAL STREAM FETCHER: Trennt die optische Historie von der mathematischen Bullen-Realität
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
   const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=max`;
@@ -95,7 +123,7 @@ async function fetchVanillaYahooCandles(symbol: string) {
 
     if (currentLow < minLow) {
       minLow = currentLow;
-      atlIndex = rawCandles.length; // Index im sauberen Array sichern
+      atlIndex = rawCandles.length; 
     }
 
     rawCandles.push({
@@ -107,12 +135,11 @@ async function fetchVanillaYahooCandles(symbol: string) {
     });
   }
 
-  // DIE AMPUTATION: Wir schneiden alles links vom Allzeittief ab!
   const bullCycleCandles = rawCandles.slice(atlIndex);
 
   return { 
-    fullCandles: rawCandles,       // Stream A: Für das Python-Rendering (Optik)
-    analysisCandles: bullCycleCandles, // Stream B: Für die KI (Lobotomie)
+    fullCandles: rawCandles,       
+    analysisCandles: bullCycleCandles, 
     atlDate: rawCandles[atlIndex]?.date || "", 
     atlPrice: Number(minLow.toFixed(2))
   };
@@ -151,7 +178,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Stream-Amputation: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Stream-Amputation & Docht-Kalibrierung: ${cleanSymbol}...`);
   let marketData;
   try { 
     marketData = await fetchVanillaYahooCandles(cleanSymbol); 
@@ -161,64 +188,75 @@ bot.command("analyse", async (ctx) => {
 
   const { fullCandles, analysisCandles, atlDate, atlPrice } = marketData;
 
-  // DER HOCHPROFESSIONELLE BÄRENMARKT-SCHUTZ
-  // Wenn nach dem Abschneiden des Allzeittiefs weniger als 26 Wochen (ein halbes Jahr) übrig bleiben:
   if (analysisCandles.length < 26) {
     return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${atlPrice} USD) erst am ${atlDate}. Das verbleibende Zeitfenster ist mathematisch zu kurz, um darin einen validen 5-Wellen-Superzyklus zu formen. Warten Sie auf Bodenbildung.`);
   }
 
-  // Die KI bekommt AUSSCHLIESSLICH die amputierten Kerzen ab dem Allzeittief!
   const minifiedMarketStream = analysisCandles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
   
-  const LOBOTOMY_PROMPT = `
-\n\n==================================================================
-🔥 DAS GESETZ DES NULLPUNKTS 🔥
-Dein Datensatz beginnt exakt am historischen Boden (${atlDate} bei ${atlPrice} USD).
-1. Du BIST GEZWUNGEN, Welle '0' auf das allererste Element dieses Datensatzes (${atlDate}) zu legen!
-2. Jedes Zwischentief, das du für Welle 2 wählst, liegt mathematisch über ${atlPrice}.
+  const TOPOLOGY_LAW_PROMPT = `
+\n==================================================================
+🔥 DIE EISERNEN GESETZE DER GEOMETRIE 🔥
+1. Welle 0 MUSS der ${atlDate} (${atlPrice}) sein!
+2. Welle 1, 3 und 5 sind GIPFEL (Highs). Ihr Kurs MUSS markant hoch sein!
+3. Welle 2 und 4 sind TÄLER (Lows). Ihr Kurs MUSS zwingend tiefer liegen als der Gipfel davor!
+Es ist mathematisch STRICT VERBOTEN, dass ein Tal (2 oder 4) preislich >= seinem Gipfel (1 oder 3) ist.
 ==================================================================`;
 
-  const fullSystemPrompt = getElliottWaveSystemPrompt(analysisCandles[0].date, analysisCandles[analysisCandles.length-1].date, minifiedMarketStream) + LOBOTOMY_PROMPT;
+  const fullSystemPrompt = getElliottWaveSystemPrompt(analysisCandles[0].date, analysisCandles[analysisCandles.length-1].date, minifiedMarketStream) + TOPOLOGY_LAW_PROMPT;
   
-  const modelLite = genAI.getGenerativeModel({ 
-    model: "gemini-3.1-flash-lite", 
-    systemInstruction: fullSystemPrompt,
-    generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
-  });
-
-  const chatSession = modelLite.startChat();
-
+  // Wir steuern die History manuell, um die Temperatur pro Runde hochzuschrauben!
+  const manualChatHistory: any[] = [];
   let iteration = 0;
   let pythonVetoReason = "";
-  let lastLlmGeneratedJson = "";
   let finalPhoto: Buffer | null = null;
 
   while (iteration < 3) {
     iteration++;
     try {
-      let promptText = iteration === 1 
-        ? `Führe die Elliott-Wellen-Zählung durch. Liefere AUSSCHLIESSLICH ein JSON-Objekt mit dem Array "waves".`
-        : `🔴 GEOMETRIE-FEHLER IN DEINEM VORHERIGEN VERSUCH!\nFehlerhafte Zählung von eben:\n${lastLlmGeneratedJson}\n\nPython-Ablehnungsgrund:\n"${pythonVetoReason}"\n\nGeneriere das korrigierte JSON-Array.`;
+      // THERMAL JIGGLE: Wir erhöhen die thermische Unruhe pro Veto!
+      const currentTemp = iteration === 1 ? 0.1 : (iteration === 2 ? 0.35 : 0.65);
+      
+      const dynamicModel = genAI.getGenerativeModel({ 
+        model: "gemini-3.1-flash-lite", 
+        systemInstruction: fullSystemPrompt,
+        generationConfig: { responseMimeType: "application/json", temperature: currentTemp }
+      });
 
-      const result = await chatSession.sendMessage(promptText);
-      lastLlmGeneratedJson = result.response.text(); 
+      let promptText = "";
+      if (iteration === 1) {
+        promptText = `Generiere die Elliott-Wellen-Zählung als JSON mit dem Array "waves". Denke an die Topologie (Tal < Gipfel)!`;
+      } else {
+        const mathTutorConstraint = translateErrorToMathConstraint(pythonVetoReason, atlDate, atlPrice);
+        promptText = `🔴 REGEL-VETO DER PYTHON-ENGINE!\n\nGrund der Ablehnung:\n"${pythonVetoReason}"\n${mathTutorConstraint}\n\nGeneriere ein NEUES, zwingend korrigiertes JSON.`;
+      }
 
-      // Wir normalisieren gegen die VOLLSTÄNDIGEN Kerzen, damit er die echten Kurse findet
-      const normalization = normalizeLlmOutput(lastLlmGeneratedJson, fullCandles);
+      const response = await dynamicModel.generateContent({
+        contents: [...manualChatHistory, { role: "user", parts: [{ text: promptText }] }]
+      });
+
+      const rawLlmAnswer = response.response.text();
+      
+      manualChatHistory.push({ role: "user", parts: [{ text: promptText }] });
+      manualChatHistory.push({ role: "model", parts: [{ text: rawLlmAnswer }] });
+
+      // KORREKTUR: Wir normalisieren strikt gegen die amputierten analysisCandles!
+      const normalization = normalizeLlmOutput(rawLlmAnswer, analysisCandles);
+      
       if (!normalization.waves) {
         pythonVetoReason = normalization.error!;
         continue;
       }
 
-      // BINGO: Python kriegt die Wellen der KI, aber den VOLLSTÄNDIGEN Chart zum Zeichnen!
+      // Python bekommt die sauberen Wellen, aber die FULL CANDLES zum Zeichnen
       const py = await runPythonCritic(cleanSymbol, normalization.waves, fullCandles);
       if (py.pngBuffer) {
         finalPhoto = py.pngBuffer;
         break; 
       }
 
-      pythonVetoReason = py.errorMessage || "Geometrie-Verstoß";
-      await ctx.reply(`🔄 [Runde ${iteration}] Python-Veto: ${pythonVetoReason}`);
+      pythonVetoReason = py.errorMessage || "Topologie-Verstoß";
+      await ctx.reply(`🔄 [Runde ${iteration} | Temp ${currentTemp}] Python sagt: ${pythonVetoReason.substring(0, 100)}`);
 
     } catch(e: any) {
         await ctx.reply(`⚠️ API-Fehler: ${e.message}`);
