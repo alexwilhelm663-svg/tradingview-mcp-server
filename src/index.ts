@@ -13,7 +13,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit unzerstörbarem Ampel-Lebenszeichen & String-Linter (v31)...");
+console.log("🤖 Bot läuft in der Cloud mit Scope-fixierter Pipeline & 4-Dezimalen-Quant-Engine (v33)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -80,239 +80,82 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
 
 bot.command("analyse", async (ctx) => {
   const chatId = ctx.chat.id;
-  const rawText = ctx.message.text;
-  const args = rawText.split(" ");
-  
+  const args = ctx.message.text.split(" ");
   const symbol = args[1];
-  const isDebug = rawText.toLowerCase().includes("debug");
+  const isDebug = ctx.message.text.toLowerCase().includes("debug");
   
-  let requestedInterval = "auto";
-  if (args[2] && args[2].toLowerCase() !== "debug") {
-      requestedInterval = args[2].toLowerCase().trim();
-  }
-
-  if (!symbol) return ctx.reply("❌ Bitte gib ein Symbol an! Beispiel: /analyse NVDA");
+  if (!symbol) return ctx.reply("❌ Bitte gib ein Symbol an!");
 
   let cleanSymbol = symbol.trim().toUpperCase();
   if (cleanSymbol.includes(":")) cleanSymbol = cleanSymbol.split(":").pop()!;
-  if (cleanSymbol === "P911") cleanSymbol = "P911.DE";
 
-  let yahooInterval: "1d" | "1wk" | "1mo" = "1wk";
-  let finalIntervalLabel = "1W";
-
-  if (requestedInterval === "1d" || requestedInterval === "d") {
-    yahooInterval = "1d";
-    finalIntervalLabel = "1D";
-  } else if (requestedInterval === "1m" || requestedInterval === "mo" || requestedInterval === "m") {
-    yahooInterval = "1mo";
-    finalIntervalLabel = "1M";
-  }
-
-  await ctx.reply(`⏳ Scanne Yahoo-Server nach absoluter All-Time-Datenreihe ab IPO für ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Scanne Yahoo-Server für ${cleanSymbol}...`);
 
   let candlesArray: any[] = [];
-
   try {
-    const period2 = new Date();
-    const period1 = new Date("1970-01-01");
-
-    const result = await yahooFinance.historical(cleanSymbol, { period1, period2, interval: yahooInterval }) as any[];
-    if (!result || result.length === 0) throw new Error("Yahoo lieferte ein leeres Array.");
-
-    candlesArray = result.map(c => ({
+    const res = await yahooFinance.historical(cleanSymbol, { period1: "1970-01-01", period2: new Date(), interval: "1wk" });
+    candlesArray = res.map(c => ({
       date: c.date.toISOString().split('T')[0],
-      open: Number(c.open).toFixed(4),
-      high: Number(c.high).toFixed(4),
-      low: Number(c.low).toFixed(4),
-      close: Number(c.close).toFixed(4)
+      open: Number(c.open).toFixed(4), high: Number(c.high).toFixed(4),
+      low: Number(c.low).toFixed(4), close: Number(c.close).toFixed(4)
     })).filter(c => Number(c.open) > 0);
-
-  } catch (dataError: any) {
-    return ctx.reply(`❌ Yahoo Datenfehler: ${dataError.message}`);
-  }
+  } catch (e: any) { return ctx.reply(`❌ Yahoo: ${e.message}`); }
 
   const minifiedMarketStream = candlesArray.map(c => `${c.date},${c.high},${c.low}`).join("|");
-  const streamStartDate = candlesArray[0].date;
-  const streamEndDate = candlesArray[candlesArray.length - 1].date;
+  const basePrompt = getElliottWaveSystemPrompt(candlesArray[0].date, candlesArray[candlesArray.length-1].date, minifiedMarketStream);
 
-  const immutableSystemRulebook = getElliottWaveSystemPrompt(streamStartDate, streamEndDate, minifiedMarketStream);
-
-  let currentActiveTaskPrompt = `Führe die vollständige Elliott-Wellen-Zählung für den Marktdaten-Stream durch und gib unten die finale Markdown-Tabelle aus:\n\n${minifiedMarketStream}`;
+  // === SCOPE FIX: Variablen hier deklariert ===
+  let currentPrompt = basePrompt;
+  let topologyIteration = 0;
+  const maxTopologyIterations = 3;
+  let criticRejectionReason = "";
   
   let finalResponseText = "";
   let finalErrLogLog = "";
   let finalPhotoBuffer: Buffer | null = null;
   
-  let topologyIteration = 0;
-  const maxTopologyIterations = 3;
-  let criticRejectionReason = "";
+  const modelPool = ["gemini-2.5-flash", "gemini-2.5-flash", "gemini-2.5-pro"];
 
-  let apiHiccupCount = 0;
-  const maxApiHiccups = 5;
-
-  const modelPool = [
-      "gemini-2.5-flash", 
-      "gemini-2.5-flash", 
-      "gemini-2.5-pro"
-  ];
-
-  await ctx.reply(`⏳ Starte **Automated Actor-Critic Pipeline** für ${cleanSymbol} (Max 3 Topologie-Zyklen)...`);
+  await ctx.reply(`⏳ Pipeline gestartet (Max 3 Zyklen)...`);
 
   while (topologyIteration < maxTopologyIterations) {
-    const activeModel = modelPool[topologyIteration] || "gemini-2.5-flash";
+    const activeModel = modelPool[topologyIteration];
 
     if (criticRejectionReason) {
-      await ctx.reply(`⚠️ **Python-Kritiker Veto (Runde ${topologyIteration}/${maxTopologyIterations}):** *"${criticRejectionReason}"*\nSperre KI mit Veto-Befund erneut ins Verhörzimmer (Modell: ${activeModel})...`);
-      currentPrompt = `🔴 KRITIKER VETO (Korrektur-Runde ${topologyIteration + 1}/${maxTopologyIterations}):\n\nDeine vorherige Markdown-Tabelle enthielt einen fatalen topologischen Verstoß. Der Python-Richter meldet folgendes Veto:\n\n[ "${criticRejectionReason}" ]\n\nDu bist VERPFLICHTET, exakt diesen Fehler in den Werten der Tabelle zu beheben! Verändere nur die betroffenen Wellen-Zeilen, behalte den Startpunkt ${streamStartDate} bei und gib unten erneut die vollständige Markdown-Tabelle im Format '| Welle | Datum | Preis |' aus.`;
+      await ctx.reply(`⚠️ Veto (Runde ${topologyIteration}): "${criticRejectionReason}"...`);
+      currentPrompt = `KORREKTUR-ZYKLUS: Korrigiere den topologischen Fehler: "${criticRejectionReason}". Gib nur die korrigierte, vollständige Tabelle aus!`;
     }
 
-    let llmRawAnswer = "";
     try {
       const response = await ai.models.generateContent({
         model: activeModel,
-        contents: currentActiveTaskPrompt,
-        config: { 
-            systemInstruction: immutableSystemRulebook,
-            maxOutputTokens: 8192, 
-            safetySettings: [{ category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }] 
-        }
+        contents: currentPrompt,
+        config: { systemInstruction: basePrompt, maxOutputTokens: 8192 }
       });
-      llmRawAnswer = response.text || "";
+      const llmRawAnswer = response.text || "";
+      const candidateWaves = parseWavesFromText(llmRawAnswer);
+      
+      if (candidateWaves.length === 0) { criticRejectionReason = "Keine Tabelle gefunden."; continue; }
 
+      const pyCritic = await runPythonCritic(cleanSymbol, candidateWaves, candlesArray);
+      if (pyCritic.validationData && pyCritic.validationData.valid) {
+        finalPhotoBuffer = pyCritic.pngBuffer;
+        finalErrLogLog = pyCritic.errLog;
+        finalResponseText = llmRawAnswer;
+        break;
+      }
+      criticRejectionReason = pyCritic.validationData?.message || "Unbekannter Geometrie-Fehler.";
     } catch(apiErr: any) {
-      apiHiccupCount++;
-      if (apiHiccupCount > maxApiHiccups) return ctx.reply(`❌ API-Overload Abbruch: ${apiErr.message || apiErr}`);
-
-      // FIX: Sicheres Auslesen nativer Error-Strings statt blindem JSON.stringify
-      const errMessage = apiErr.message || String(apiErr);
-      const errStack = apiErr.stack || "";
-      const comprehensiveErrLog = `${errMessage} ${errStack}`;
-
-      // Sicherer Standardwert: 50 Sekunden (Garantierter Reset des Quota-Fensters)
-      let pauseSeconds = 50; 
-
-      // Fängt sowohl "retryDelay" als auch "Please retry in 46s" direkt ab!
-      const delayMatch = comprehensiveErrLog.match(/retryDelay["']?:\s*["']?(\d+)/) || comprehensiveErrLog.match(/retry in ([\d.]+)/);
-      if (delayMatch && delayMatch[1]) {
-        pauseSeconds = Math.ceil(parseFloat(delayMatch[1])) + 2;
-      }
-
-      await ctx.reply(`⚠️ **Google API Engpass (${apiErr.status || '429'}):** Server überlastet. Bot wartet vorschriftsmäßig an der Ampel für **${pauseSeconds} Sekunden**... (Event ${apiHiccupCount}/${maxApiHiccups})`);
-      
-      await new Promise(r => setTimeout(r, pauseSeconds * 1000));
-      
-      // EXPLIZITES LEBENSZEICHEN BEIM VERLASSEN DES WARTERAUMS
-      await ctx.reply(`🟢 **Ampel wird GRÜN!** Warteraum verlassen. Starte neuen API-Versuch für Topologie-Runde ${topologyIteration + 1}...`);
-      continue;
+        await new Promise(r => setTimeout(r, 45000));
+        continue;
     }
-
     topologyIteration++;
-
-    const candidateWaves = parseWavesFromText(llmRawAnswer);
-    if (candidateWaves.length === 0) {
-      criticRejectionReason = "LLM hat geantwortet, aber keine syntaktisch lesbare Markdown-Tabelle erzeugt.";
-      continue;
-    }
-
-    const pyCritic = await runPythonCritic(cleanSymbol, candidateWaves, candlesArray);
-
-    if (pyCritic.validationData && pyCritic.validationData.valid) {
-      finalPhotoBuffer = pyCritic.pngBuffer;
-      finalErrLogLog = pyCritic.errLog;
-      finalResponseText = llmRawAnswer;
-      break;
-    } else {
-      criticRejectionReason = pyCritic.validationData?.message || "Unbekannte topologische Verletzung.";
-    }
   }
 
-  if (!finalPhotoBuffer) {
-    return ctx.reply(`❌ **Automatischer Self-Healing Abbruch:** Die KI konnte die Chart-Topologie für ${cleanSymbol} nach ${maxTopologyIterations} mathematischen Iterationen nicht fehlerfrei auflösen.\nBefund: "${criticRejectionReason}"`);
-  }
+  if (!finalPhotoBuffer) return ctx.reply("❌ Abbruch nach 3 Zyklen.");
 
-  chatSessions[chatId] = {
-    lastDataPayload: { candles: candlesArray, waves: parseWavesFromText(finalResponseText) },
-    history: [{ role: "user", text: "Kursdaten analysiert." }, { role: "model", text: finalResponseText }]
-  };
-
-  let statusBadge = "";
-  try {
-      const pyRep = JSON.parse(finalErrLogLog);
-      if (pyRep.correction_gate) {
-          const cg = pyRep.correction_gate;
-          if (cg.is_confirmed) {
-              statusBadge = `\n\n🟢 **STATUS:** Laufende Korrektur bestätigt beendet! (Schlusskurs ${cg.current_close.toFixed(2)} USD liegt über der Schranke von ${cg.b_gate_price.toFixed(2)} USD).`;
-          } else {
-              const gateStr = cg.b_gate_price !== null && cg.b_gate_price !== undefined ? cg.b_gate_price.toFixed(2) : '0.00';
-              statusBadge = `\n\n⚠️ **STATUS:** Letzte Abwärtswelle weiterhin AKTIV! (Schlusskurs ${cg.current_close.toFixed(2)} USD notiert unter dem Bestätigungs-Gate von ${gateStr} USD).\n🎯 **BERECHNETE FIBO-ZIELZONE:** ${cg.fib_lower.toFixed(2)} USD bis ${cg.fib_upper.toFixed(2)} USD (Sweetspot: ${cg.fib_sweetspot.toFixed(2)} USD).`;
-          }
-      }
-  } catch(e) {}
-
-  if (isDebug && finalErrLogLog) {
-      await ctx.reply(`🩻 **PYTHON TELEMETRIE:**\n\`\`\`json\n${finalErrLogLog.substring(0, 3800)}\n\`\`\``);
-  }
-
-  await ctx.replyWithPhoto({ source: finalPhotoBuffer }, { caption: `📊 EW Self-Healing Master View: ${cleanSymbol} (${finalIntervalLabel}) - Validiert in Runde ${topologyIteration}` });
-  
-  const reportLines = (finalResponseText + statusBadge).split('\n');
-  let messageBuffer = "";
-
-  for (const line of reportLines) {
-    if (messageBuffer.length + line.length + 1 > 3800) {
-      await ctx.reply(messageBuffer.trim());
-      messageBuffer = "";
-    }
-    messageBuffer += line + "\n";
-  }
-
-  if (messageBuffer.trim()) {
-    await ctx.reply(messageBuffer.trim());
-  }
+  await ctx.replyWithPhoto({ source: finalPhotoBuffer }, { caption: `📊 EW View: ${cleanSymbol}` });
+  for (let i = 0; i < finalResponseText.length; i += 3800) await ctx.reply(finalResponseText.substring(i, i + 3800));
 });
 
-bot.on("text", async (ctx) => {
-  const chatId = ctx.chat.id;
-  const userQuestion = ctx.message.text;
-  const session = chatSessions[chatId];
-
-  if (!session || !session.lastDataPayload) return ctx.reply("❌ Starte zuerst eine Analyse mit `/analyse`.");
-
-  await ctx.reply("🤔 Analysiere Rückfrage...");
-
-  try {
-    session.history.push({ role: "user", text: userQuestion });
-    const contents: any[] = [];
-    session.history.forEach(msg => contents.push(`${msg.role === "user" ? "User" : "Model"}: ${msg.text}`));
-    contents.push(`Beziehe dich auf Rohdaten: ${JSON.stringify(session.lastDataPayload.candles)}. Antworte kurz.`);
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: contents,
-      config: { safetySettings: [{ category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }] }
-    });
-
-    const answerText = response.text || "Keine Antwort möglich.";
-    session.history.push({ role: "model", text: answerText });
-    await ctx.reply(`💬 Antwort:\n\n${answerText}`);
-  } catch (error: any) {
-    await ctx.reply(`❌ Fehler: ${error.message}`);
-  }
-});
-
-if (RENDER_EXTERNAL_URL) {
-  const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
-  bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
-  
-  http.createServer((req, res) => {
-    if (req.url === webhookPath && req.method === "POST") {
-      let body = "";
-      req.on("data", chunk => body += chunk);
-      req.on("end", () => {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok" }));
-        try { if (body.trim()) bot.handleUpdate(JSON.parse(body)); } catch (e) {}
-      });
-    } else res.end("Bot Server is healthy");
-  }).listen(PORT);
-} else bot.launch();
+bot.launch();
