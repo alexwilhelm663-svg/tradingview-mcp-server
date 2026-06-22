@@ -10,28 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V74: The ATL-Killshot Engine (Absolute Low Enforcer) aktiv...");
-
-// Übersetzt Pythons Veto in brutale, unmissverständliche Zwangsanweisungen
-function translateErrorToMathConstraint(errStr: string, atlDate: string, atlPrice: number): string {
-  const s = String(errStr);
-  
-  if (s.includes("Overlap-Verstoß") || s.includes("dringt illegal in das Gebiet von Gipfel")) {
-    const match = s.match(/Gipfel '[^']+' \(([0-9.]+) USD\)/) || s.match(/Gipfel '[^']+' \(([0-9.]+)\)/);
-    const limit = match ? match[1] : "den davorliegenden Gipfel";
-    return `\n\n🛑 OVERLAP-ZWANGSBEFEHL: Welle 4 MUSS zwingend preislich STRIKT HÖHER ALS ${limit} sein! Du darfst mathematisch keinen Wert <= ${limit} für Welle 4 generieren. Suche ein höheres Tal!`;
-  }
-
-  if (s.includes("Retracement-Bruch") || s.includes("fällt tiefer als der Nullpunkt")) {
-    return `\n\n🛑 RETRACEMENT-ZWANGSBEFEHL: Deine Welle 2 ist tiefer als Welle 0! Setze Welle '0' JETZT ZWINGEND auf das historische Allzeittief am ${atlDate} (${atlPrice} USD)! Dann ist es mathematisch unmöglich, dass Welle 2 tiefer fällt.`;
-  }
-
-  if (s.includes("Topologie-Verstoß") || s.includes("notiert höher oder gleich")) {
-    return `\n\n🛑 TOPOLOGIE-ZWANGSBEFEHL: Ein Tal (Welle 2 oder 4) darf preislich niemals auf gleicher Höhe oder über seinem Gipfel (Welle 1 oder 3) liegen. Korrigiere die Zahlenwerte!`;
-  }
-
-  return "";
-}
+console.log("🚀 Bot V75: The Left-Wall Amputation Engine (Dual-Stream Setup) aktiv...");
 
 function salvagePriceFromCandles(dateStr: string, candles: any[]): number {
   const target = String(dateStr).substring(0, 10);
@@ -92,6 +71,7 @@ function normalizeLlmOutput(rawText: string, candles: any[]): { waves: any[] | n
   }
 }
 
+// DUAL STREAM FETCHER: Trennt die optische Historie von der mathematischen Bullen-Realität
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
   const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=max`;
@@ -105,18 +85,17 @@ async function fetchVanillaYahooCandles(symbol: string) {
   const quote = chartData.indicators?.quote?.[0] || {};
   
   const rawCandles: any[] = [];
-  let atlPrice = Infinity;
-  let atlDate = "";
+  let minLow = Infinity;
+  let atlIndex = 0;
 
   for (let i = 0; i < timestamps.length; i++) {
     if (quote.open[i] == null || quote.low[i] == null) continue;
     const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
     const currentLow = parseFloat(quote.low[i]);
 
-    // Wir tracken das absolute Allzeittief des gesamten Streams!
-    if (currentLow < atlPrice) {
-      atlPrice = currentLow;
-      atlDate = dateStr;
+    if (currentLow < minLow) {
+      minLow = currentLow;
+      atlIndex = rawCandles.length; // Index im sauberen Array sichern
     }
 
     rawCandles.push({
@@ -128,7 +107,15 @@ async function fetchVanillaYahooCandles(symbol: string) {
     });
   }
 
-  return { candles: rawCandles, atlDate, atlPrice: Number(atlPrice.toFixed(2)) };
+  // DIE AMPUTATION: Wir schneiden alles links vom Allzeittief ab!
+  const bullCycleCandles = rawCandles.slice(atlIndex);
+
+  return { 
+    fullCandles: rawCandles,       // Stream A: Für das Python-Rendering (Optik)
+    analysisCandles: bullCycleCandles, // Stream B: Für die KI (Lobotomie)
+    atlDate: rawCandles[atlIndex]?.date || "", 
+    atlPrice: Number(minLow.toFixed(2))
+  };
 }
 
 function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, errorMessage: string | null }> {
@@ -164,7 +151,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Historie: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Stream-Amputation: ${cleanSymbol}...`);
   let marketData;
   try { 
     marketData = await fetchVanillaYahooCandles(cleanSymbol); 
@@ -172,21 +159,26 @@ bot.command("analyse", async (ctx) => {
     return ctx.reply(`❌ Download: ${e.message}`); 
   }
 
-  const { candles, atlDate, atlPrice } = marketData;
-  const minifiedMarketStream = candles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
+  const { fullCandles, analysisCandles, atlDate, atlPrice } = marketData;
+
+  // DER HOCHPROFESSIONELLE BÄRENMARKT-SCHUTZ
+  // Wenn nach dem Abschneiden des Allzeittiefs weniger als 26 Wochen (ein halbes Jahr) übrig bleiben:
+  if (analysisCandles.length < 26) {
+    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${atlPrice} USD) erst am ${atlDate}. Das verbleibende Zeitfenster ist mathematisch zu kurz, um darin einen validen 5-Wellen-Superzyklus zu formen. Warten Sie auf Bodenbildung.`);
+  }
+
+  // Die KI bekommt AUSSCHLIESSLICH die amputierten Kerzen ab dem Allzeittief!
+  const minifiedMarketStream = analysisCandles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
   
-  // DAS GESETZ DES ALLZEIT-TIEFS
-  const ATL_LAW_PROMPT = `
+  const LOBOTOMY_PROMPT = `
 \n\n==================================================================
-🔥 DAS GESETZ DES ALLZEITTIEFS (THE ATL-ANCHOR LAW) 🔥
-Das absolute historische Allzeittief dieser Aktie fand am ${atlDate} bei ${atlPrice} USD statt.
-REGELN FÜR DEINE WELLENZÄHLUNG:
-1. Du DARFST Welle '0' niemals zeitlich vor dem ${atlDate} ansetzen!
-2. Wenn die Aktie nach dem Börsengang stark gefallen ist (z.B. Coinbase, Meta, ARM), MUSS Welle '0' zwingend exakt auf dieses Allzeittief (${atlDate} / ${atlPrice}) gelegt werden!
-3. Welle 2 darf mathematisch unter keinen Umständen tiefer sein als ${atlPrice}.
+🔥 DAS GESETZ DES NULLPUNKTS 🔥
+Dein Datensatz beginnt exakt am historischen Boden (${atlDate} bei ${atlPrice} USD).
+1. Du BIST GEZWUNGEN, Welle '0' auf das allererste Element dieses Datensatzes (${atlDate}) zu legen!
+2. Jedes Zwischentief, das du für Welle 2 wählst, liegt mathematisch über ${atlPrice}.
 ==================================================================`;
 
-  const fullSystemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream) + ATL_LAW_PROMPT;
+  const fullSystemPrompt = getElliottWaveSystemPrompt(analysisCandles[0].date, analysisCandles[analysisCandles.length-1].date, minifiedMarketStream) + LOBOTOMY_PROMPT;
   
   const modelLite = genAI.getGenerativeModel({ 
     model: "gemini-3.1-flash-lite", 
@@ -204,36 +196,22 @@ REGELN FÜR DEINE WELLENZÄHLUNG:
   while (iteration < 3) {
     iteration++;
     try {
-      let promptText = "";
-
-      if (iteration === 1) {
-        promptText = `Führe die Elliott-Wellen-Zählung durch. Liefere AUSSCHLIESSLICH ein JSON-Objekt mit dem Array "waves". Denke an das ATL-Gesetz (${atlDate} / ${atlPrice} USD)!`;
-      } else {
-        const mathTutorConstraint = translateErrorToMathConstraint(pythonVetoReason, atlDate, atlPrice);
-
-        promptText = `🔴 GEOMETRIE-FEHLER IN DEINEM VORHERIGEN VERSUCH!
-
-Deine fehlerhafte Zählung von eben war:
-${lastLlmGeneratedJson}
-
-Der mathematische Ablehnungs-Grund der Python-Engine lautet:
-"${pythonVetoReason}"
-${mathTutorConstraint}
-
-Generiere das korrigierte JSON-Array.`;
-      }
+      let promptText = iteration === 1 
+        ? `Führe die Elliott-Wellen-Zählung durch. Liefere AUSSCHLIESSLICH ein JSON-Objekt mit dem Array "waves".`
+        : `🔴 GEOMETRIE-FEHLER IN DEINEM VORHERIGEN VERSUCH!\nFehlerhafte Zählung von eben:\n${lastLlmGeneratedJson}\n\nPython-Ablehnungsgrund:\n"${pythonVetoReason}"\n\nGeneriere das korrigierte JSON-Array.`;
 
       const result = await chatSession.sendMessage(promptText);
       lastLlmGeneratedJson = result.response.text(); 
 
-      const normalization = normalizeLlmOutput(lastLlmGeneratedJson, candles);
+      // Wir normalisieren gegen die VOLLSTÄNDIGEN Kerzen, damit er die echten Kurse findet
+      const normalization = normalizeLlmOutput(lastLlmGeneratedJson, fullCandles);
       if (!normalization.waves) {
         pythonVetoReason = normalization.error!;
-        await ctx.reply(`🔄 [Runde ${iteration}] Rosetta-Veto: ${pythonVetoReason.substring(0, 100)}`);
         continue;
       }
 
-      const py = await runPythonCritic(cleanSymbol, normalization.waves, candles);
+      // BINGO: Python kriegt die Wellen der KI, aber den VOLLSTÄNDIGEN Chart zum Zeichnen!
+      const py = await runPythonCritic(cleanSymbol, normalization.waves, fullCandles);
       if (py.pngBuffer) {
         finalPhoto = py.pngBuffer;
         break; 
@@ -261,4 +239,3 @@ if (RENDER_EXTERNAL_URL) {
     } else res.end("OK");
   }).listen(PORT);
 } else bot.launch();
-  
