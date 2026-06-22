@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot startet: Nativer V8-Fetch Modus aktiv (v45) - Ohne NPM Yahoo-Ballast...");
+console.log("🚀 Bot V46: Groq JSON-Object Fix & Error-Unmasking aktiv...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -19,31 +19,32 @@ interface ChatSession {
 
 const chatSessions: Record<number, ChatSession> = {};
 
+// Extrahiert das Array sicher aus dem JSON-Object { "waves": [ ... ] }
 function parseWavesFromJson(text: string) {
   try {
+    const parsed = JSON.parse(text);
+    if (parsed.waves && Array.isArray(parsed.waves)) return parsed.waves;
+    if (Array.isArray(parsed)) return parsed;
+    return null;
+  } catch (e) { 
     const match = text.match(/\[.*\]/s);
-    const jsonStr = match ? match[0] : text;
-    return JSON.parse(jsonStr);
-  } catch (e) { return null; }
+    try { return match ? JSON.parse(match[0]) : null; } catch(err) { return null; }
+  }
 }
 
-// =========================================================================
-// DER EIGENE, UNZERSTÖRBARE YAHOO-CLIENT (0% NPM-Abhängigkeiten!)
-// =========================================================================
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
-  // Offener Yahoo V8 Chart-Endpoint (5 Jahre, Wochenkerzen)
   const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=5y`;
   
   const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
   });
   
-  if (!res.ok) throw new Error(`HTTP Error ${res.status} bei Yahoo-Anfrage`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const raw = await res.json();
   
   const chartData = raw.chart?.result?.[0];
-  if (!chartData) throw new Error("Keine Kursdaten im Yahoo-JSON gefunden.");
+  if (!chartData) throw new Error("Keine Kursdaten im Yahoo-JSON.");
 
   const timestamps = chartData.timestamp || [];
   const quote = chartData.indicators?.quote?.[0] || {};
@@ -88,16 +89,15 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
 bot.command("analyse", async (ctx) => {
   const chatId = ctx.chat.id;
   const symbolArg = ctx.message.text.split(" ")[1];
-  if (!symbolArg) return ctx.reply("❌ Bitte Symbol angeben! Beispiel: /analyse NVDA");
+  if (!symbolArg) return ctx.reply("❌ Bitte Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Ziehe Kursdaten via nativer V8-Engine: ${cleanSymbol} (5 Jahre)...`);
+  await ctx.reply(`⏳ Ziehe V8-Kurse: ${cleanSymbol}...`);
 
   let candles: any[] = [];
   try {
     candles = await fetchVanillaYahooCandles(cleanSymbol);
-    if (candles.length === 0) throw new Error("Leeres Kerzen-Array empfangen.");
-  } catch (e: any) { return ctx.reply(`❌ Kurs-Download fehlgeschlagen: ${e.message}`); }
+  } catch (e: any) { return ctx.reply(`❌ Download-Fehler: ${e.message}`); }
 
   const minifiedMarketStream = candles.map(c => `${c.date},${c.high},${c.low}`).join("|");
   const systemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream);
@@ -107,19 +107,23 @@ bot.command("analyse", async (ctx) => {
   let finalPhoto: Buffer | null = null;
   let finalResponseText = "";
 
-  await ctx.reply(`⚡ LPU Quanten-Pipeline aktiv via Groq (llama3-70b-8192)...`);
+  // Update auf das modernste, pfeilschnelle Groq-Modell
+  await ctx.reply(`⚡ Starte Groq LPU (Modell: llama-3.3-70b-versatile)...`);
 
   while (iteration < 3) {
     iteration++;
     try {
       const promptText = criticRejection 
-        ? `Fehler: ${criticRejection}. Korrigiere das JSON-Array.` 
+        ? `Fehler: ${criticRejection}. Gib das JSON-Objekt korrigiert zurück.` 
         : `Analysiere den Kurs-Stream.`;
 
       const res = await groq.chat.completions.create({
-        model: "llama3-70b-8192",
+        model: "llama-3.3-70b-versatile",
         messages: [
-          { role: "system", content: systemPrompt + "\n\nAUSGABE: JSON-Array: [{\"label\": \"Welle\", \"date\": \"YYYY-MM-DD\", \"price\": 0.0000}]" },
+          { 
+            role: "system", 
+            content: systemPrompt + "\n\nZWANGS-FORMAT: Du MUSST ein JSON-Objekt mit dem Key 'waves' liefern!\nBeispiel: { \"waves\": [ {\"label\": \"I\", \"date\": \"2024-01-01\", \"price\": 100.0} ] }" 
+          },
           { role: "user", content: promptText }
         ],
         response_format: { type: "json_object" },
@@ -129,7 +133,7 @@ bot.command("analyse", async (ctx) => {
       const llmRawAnswer = res.choices[0]?.message?.content || "";
       const waves = parseWavesFromJson(llmRawAnswer);
       
-      if (!waves) { criticRejection = "Kein syntaktisch valides JSON"; continue; }
+      if (!waves) { criticRejection = "KI lieferte kein auslesbares 'waves'-Array"; continue; }
 
       const py = await runPythonCritic(cleanSymbol, waves, candles);
       if (py.validationData && py.validationData.valid) {
@@ -139,8 +143,12 @@ bot.command("analyse", async (ctx) => {
       }
       criticRejection = py.validationData?.message || "Topologie-Fehler.";
     } catch(e: any) {
-        await ctx.reply(`⚠️ Groq-API Stau. Warte 5s...`);
-        await new Promise(r => setTimeout(r, 5000));
+        // =================================================================
+        // MASKE RUNTER: Schreibt den echten API-Fehler direkt ins Telegram!
+        // =================================================================
+        console.error("Groq API Error:", e);
+        await ctx.reply(`⚠️ Groq-Fehler (Runde ${iteration}): \n\`${e.message || JSON.stringify(e)}\``);
+        await new Promise(r => setTimeout(r, 3000));
     }
   }
 
@@ -148,31 +156,23 @@ bot.command("analyse", async (ctx) => {
 
   chatSessions[chatId] = {
     lastDataPayload: { candles, waves: parseWavesFromJson(finalResponseText) },
-    history: [{ role: "user", content: "Kursdaten analysiert." }, { role: "assistant", content: finalResponseText }]
+    history: [{ role: "user", content: "Analysiert." }, { role: "assistant", content: finalResponseText }]
   };
 
   await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View via Groq: ${cleanSymbol}` });
-  
-  if (finalResponseText.trim()) {
-    await ctx.reply(`💬 Validiertes Wellen-JSON:\n\`\`\`json\n${finalResponseText.substring(0, 3800)}\n\`\`\``);
-  }
 });
 
 if (RENDER_EXTERNAL_URL) {
   const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
   bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
-  
   http.createServer((req, res) => {
     if (req.url === webhookPath && req.method === "POST") {
       let body = "";
       req.on("data", chunk => body += chunk);
       req.on("end", () => {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok" }));
-        try { if (body.trim()) bot.handleUpdate(JSON.parse(body)); } catch (e) {}
+        res.writeHead(200); res.end("ok");
+        try { bot.handleUpdate(JSON.parse(body)); } catch (e) {}
       });
-    } else res.end("Bot Server is healthy");
+    } else res.end("OK");
   }).listen(PORT);
-} else {
-  bot.launch();
-}
+} else bot.launch();
