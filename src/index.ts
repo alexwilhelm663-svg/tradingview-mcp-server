@@ -10,14 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V56: Full-Service Llama-3.1-8B-Instant Engine aktiv...");
-
-interface ChatSession {
-  lastDataPayload: any;
-  history: Array<{ role: "user" | "assistant"; content: string }>;
-}
-
-const chatSessions: Record<number, ChatSession> = {};
+console.log("🚀 Bot V57: Token-Optimized Mode (2y Data) aktiv...");
 
 function parseWavesFromJson(text: string) {
   try {
@@ -31,9 +24,13 @@ function parseWavesFromJson(text: string) {
   }
 }
 
+// =========================================================================
+// OPTIMIERTER DATEN-ABRUF: Reduziert auf 2 Jahre, um das 6k-Token-Limit zu unterbieten
+// =========================================================================
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
-  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=5y`;
+  // range=2y reduziert den Token-Footprint um >50% und hält uns unter dem 6k TPM Limit
+  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=2y`;
   
   const res = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
@@ -41,13 +38,11 @@ async function fetchVanillaYahooCandles(symbol: string) {
   
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const raw = await res.json();
-  
   const chartData = raw.chart?.result?.[0];
-  if (!chartData) throw new Error("Keine Kursdaten im Yahoo-JSON.");
+  if (!chartData) throw new Error("Keine Kursdaten gefunden.");
 
   const timestamps = chartData.timestamp || [];
   const quote = chartData.indicators?.quote?.[0] || {};
-  
   const opens = quote.open || [];
   const highs = quote.high || [];
   const lows = quote.low || [];
@@ -56,9 +51,8 @@ async function fetchVanillaYahooCandles(symbol: string) {
   const rawCandles: any[] = [];
   for (let i = 0; i < timestamps.length; i++) {
     if (opens[i] == null || highs[i] == null || lows[i] == null) continue;
-    const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
     rawCandles.push({
-      date: dateStr,
+      date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
       open: Number(opens[i]).toFixed(4),
       high: Number(highs[i]).toFixed(4),
       low: Number(lows[i]).toFixed(4),
@@ -68,30 +62,19 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return rawCandles;
 }
 
-function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ 
-  pngBuffer: Buffer | null, 
-  validationData: { valid: boolean, message: string } | null,
-  rawStderr: string 
-}> {
+function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, validationData: { valid: boolean, message: string } | null, rawStderr: string }> {
   return new Promise((resolve) => {
     const pythonCommand = process.platform === "win32" ? "python" : "python3";
     const pyProcess = spawn(pythonCommand, ["python_service/drawer.py"]);
     let stdoutBufs: Buffer[] = [], stderrStr = "";
-
     pyProcess.stdout.on("data", c => stdoutBufs.push(c));
     pyProcess.stderr.on("data", c => stderrStr += c.toString());
-
     pyProcess.stdin.write(JSON.stringify({ symbol, waves, candles }));
     pyProcess.stdin.end();
-
     pyProcess.on("close", () => {
       let val = null;
       try { val = JSON.parse(stderrStr).validation; } catch(e) {}
-      resolve({ 
-        pngBuffer: stdoutBufs.length > 0 ? Buffer.concat(stdoutBufs) : null, 
-        validationData: val,
-        rawStderr: stderrStr
-      });
+      resolve({ pngBuffer: stdoutBufs.length > 0 ? Buffer.concat(stdoutBufs) : null, validationData: val, rawStderr: stderrStr });
     });
   });
 }
@@ -102,12 +85,10 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Bitte Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Ziehe 5-Jahres-Stream: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Ziehe 2-Jahres-Stream (Token-Optimized): ${cleanSymbol}...`);
 
   let candles: any[] = [];
-  try {
-    candles = await fetchVanillaYahooCandles(cleanSymbol);
-  } catch (e: any) { return ctx.reply(`❌ Download-Fehler: ${e.message}`); }
+  try { candles = await fetchVanillaYahooCandles(cleanSymbol); } catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
 
   const minifiedMarketStream = candles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
   const systemPrompt = getElliottWaveSystemPrompt(candles[0].date, candles[candles.length-1].date, minifiedMarketStream);
@@ -116,19 +97,15 @@ bot.command("analyse", async (ctx) => {
   let criticRejection = "";
   let finalPhoto: Buffer | null = null;
   let finalResponseText = "";
-
   const currentModel = "llama-3.1-8b-instant";
-  await ctx.reply(`⚡ LPU-Engine aktiv (Modell: ${currentModel})...`);
+
+  await ctx.reply(`⚡ LPU-Engine (${currentModel}) feuert...`);
 
   while (iteration < 3) {
     iteration++;
     try {
       let promptText = "Führe die Wellenzählung durch und antworte AUSSCHLIESSLICH als JSON-Objekt mit dem Key 'waves'.";
-      if (criticRejection) {
-        promptText = `🔴 REGELVERSTOSS: "${criticRejection.substring(0, 100)}". Korrigiere die Zählung und liefere das JSON-Objekt mit Key 'waves'.`;
-      }
-
-      const currentTemp = Math.min(0.1 + ((iteration - 1) * 0.15), 0.4);
+      if (criticRejection) promptText = `KORREKTUR: "${criticRejection.substring(0, 50)}". Liefert JSON-Objekt mit Key 'waves'.`;
 
       const res = await groq.chat.completions.create({
         model: currentModel,
@@ -137,15 +114,14 @@ bot.command("analyse", async (ctx) => {
           { role: "user", content: promptText }
         ],
         response_format: { type: "json_object" },
-        temperature: currentTemp
+        temperature: 0.1
       });
 
       const llmRawAnswer = res.choices[0]?.message?.content || "";
       const waves = parseWavesFromJson(llmRawAnswer);
       
       if (!waves || !Array.isArray(waves) || waves.length === 0 || !waves[0].label) { 
-        criticRejection = "Struktur-Fehler: JSON enthält keine korrekten 'label'-Keys."; 
-        continue; 
+        criticRejection = "Struktur-Fehler"; continue; 
       }
 
       const py = await runPythonCritic(cleanSymbol, waves, candles);
@@ -154,19 +130,17 @@ bot.command("analyse", async (ctx) => {
         finalResponseText = llmRawAnswer;
         break;
       }
-
-      criticRejection = py.validationData?.message || py.rawStderr || "Topologie-Verstoß";
+      criticRejection = py.validationData?.message || py.rawStderr || "Topologie-Fehler";
       await ctx.reply(`🔄 [Runde ${iteration}/3] Veto: "${criticRejection.substring(0, 100)}"`);
-      
     } catch(e: any) {
-        await ctx.reply(`⚠️ Groq-API Fehler: \n\`${e.message || "Unbekannt"}\``);
+        await ctx.reply(`⚠️ Groq-Fehler: \n\`${e.message || "Timeout"}\``);
         await new Promise(r => setTimeout(r, 2000));
     }
   }
 
   if (!finalPhoto) return ctx.reply(`❌ **Abbruch.** Letztes Veto:\n\`\`\`text\n${criticRejection.substring(0, 500)}\n\`\`\``);
 
-  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View via Groq (${currentModel}): ${cleanSymbol}` });
+  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View (${currentModel}): ${cleanSymbol}` });
 });
 
 if (RENDER_EXTERNAL_URL) {
