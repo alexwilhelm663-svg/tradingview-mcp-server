@@ -1,6 +1,5 @@
 FROM node:20-bookworm
 
-# 1. Python & Matplotlib C-Core
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -16,14 +15,16 @@ RUN if [ -f requirements.txt ]; then \
     fi
 
 COPY package*.json ./
-
-# =========================================================================
-# DIE NUKLEAR-WEICHE: 
-# Befehelt NPM, die Pakete stur zu saugen, selbst wenn GitHub sie löscht!
-# =========================================================================
 RUN npm install groq-sdk telegraf yahoo-finance2
 
-COPY . .
+# =========================================================================
+# DER CHIRURGISCHE SCHUTZSCHILD: 
+# Verhindert, dass Git-Leichen den node_modules Ordner überschreiben!
+# =========================================================================
+COPY tsconfig.json ./
+COPY src ./src
+COPY python_service ./python_service
+
 RUN npm run build
 
 ENV PORT=10000
