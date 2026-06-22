@@ -1,22 +1,22 @@
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
-import YahooFinance from "yahoo-finance2"; // DIE VOM COMPILER GEFORDERTE DEFAULT-KLASSE
+import YahooFinance from "yahoo-finance2";
+import Groq from "groq-sdk";
 import { getElliottWaveSystemPrompt } from "./prompt";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const yahooFinance = new YahooFinance(); // REKORREKTE INSTANZIERUNG DES DEFAULT-EXPORTS
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const yahooFinance = new YahooFinance();
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
 
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft: Default Import-Fix & JSON-Pipeline (v39)...");
+console.log("🤖 Bot läuft: GROQ Engine v42 mit Render-Webhook-Verkabelung aktiv.");
 
 interface ChatSession {
   lastDataPayload: any;
-  history: Array<{ role: "user" | "model"; text: string }>;
+  history: Array<{ role: "user" | "assistant"; content: string }>;
 }
 
 const chatSessions: Record<number, ChatSession> = {};
@@ -50,8 +50,9 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
 }
 
 bot.command("analyse", async (ctx) => {
+  const chatId = ctx.chat.id;
   const symbol = ctx.message.text.split(" ")[1]?.toUpperCase();
-  if (!symbol) return ctx.reply("❌ Bitte Symbol angeben!");
+  if (!symbol) return ctx.reply("❌ Bitte Symbol angeben! Beispiel: /analyse NVDA");
   const cleanSymbol = symbol.trim().split(":").pop()!;
 
   await ctx.reply(`⏳ Scanne Yahoo: ${cleanSymbol} (Letzte 5 Jahre)...`);
@@ -80,43 +81,73 @@ bot.command("analyse", async (ctx) => {
   let finalPhoto: Buffer | null = null;
   let finalResponseText = "";
 
-  await ctx.reply(`⏳ Actor-Critic JSON-Pipeline aktiv...`);
+  await ctx.reply(`⚡ Pipeline aktiv via Groq LPU (llama3-70b-8192)...`);
 
   while (iteration < 3) {
     iteration++;
     try {
-      const promptText = criticRejection ? `Fehler: ${criticRejection}. Korrigiere das JSON-Array.` : "Analysiere den Kurs-Stream.";
-      const res = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: promptText,
-        config: { 
-            systemInstruction: systemPrompt + "\n\nAUSGABE: Gib AUSSCHLIESSLICH ein sauberes JSON-Array zurück: [{\"label\": \"I\", \"date\": \"YYYY-MM-DD\", \"price\": 123.45}, ...]",
-            maxOutputTokens: 8192 
-        }
+      const promptText = criticRejection 
+        ? `Fehler: ${criticRejection}. Korrigiere das JSON-Array.` 
+        : `Analysiere den Kurs-Stream.`;
+
+      const res = await groq.chat.completions.create({
+        model: "llama3-70b-8192",
+        messages: [
+          { role: "system", content: systemPrompt + "\n\nAUSGABE: JSON-Array: [{\"label\": \"Welle\", \"date\": \"YYYY-MM-DD\", \"price\": 0.0000}]" },
+          { role: "user", content: promptText }
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.2
       });
 
-      const waves = parseWavesFromJson(res.text || "");
+      const llmRawAnswer = res.choices[0]?.message?.content || "";
+      const waves = parseWavesFromJson(llmRawAnswer);
+      
       if (!waves) { criticRejection = "Kein syntaktisch valides JSON"; continue; }
 
       const py = await runPythonCritic(cleanSymbol, waves, candles);
       if (py.validationData && py.validationData.valid) {
         finalPhoto = py.pngBuffer;
-        finalResponseText = res.text || "";
+        finalResponseText = llmRawAnswer;
         break;
       }
       criticRejection = py.validationData?.message || "Topologie-Fehler.";
     } catch(e: any) {
-        await ctx.reply(`⚠️ API-Stau. Warte 60s...`);
-        await new Promise(r => setTimeout(r, 60000));
+        await ctx.reply(`⚠️ Groq Stau. Warte 10s...`);
+        await new Promise(r => setTimeout(r, 10000));
     }
   }
 
-  if (!finalPhoto) return ctx.reply("❌ Abbruch. KI konnte die Chart-Topologie nicht in 3 Versuchen auflösen.");
-  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View: ${cleanSymbol}` });
+  if (!finalPhoto) return ctx.reply(`❌ Abbruch. Letzter Befund: "${criticRejection}"`);
+
+  chatSessions[chatId] = {
+    lastDataPayload: { candles, waves: parseWavesFromJson(finalResponseText) },
+    history: [{ role: "user", content: "Kursdaten analysiert." }, { role: "assistant", content: finalResponseText }]
+  };
+
+  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View via Groq: ${cleanSymbol}` });
   
   if (finalResponseText.trim()) {
-    await ctx.reply(`💬 Rohes Wellen-JSON:\n\`\`\`json\n${finalResponseText.substring(0, 3800)}\n\`\`\``);
+    await ctx.reply(`💬 Validiertes Wellen-JSON:\n\`\`\`json\n${finalResponseText.substring(0, 3800)}\n\`\`\``);
   }
 });
 
-bot.launch();
+// NATIVE RENDER CLOUD INTERFACES (Verhindert Deployment-Timeouts)
+if (RENDER_EXTERNAL_URL) {
+  const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
+  bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
+  
+  http.createServer((req, res) => {
+    if (req.url === webhookPath && req.method === "POST") {
+      let body = "";
+      req.on("data", chunk => body += chunk);
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok" }));
+        try { if (body.trim()) bot.handleUpdate(JSON.parse(body)); } catch (e) {}
+      });
+    } else res.end("Bot Server is healthy");
+  }).listen(PORT);
+} else {
+  bot.launch();
+}
