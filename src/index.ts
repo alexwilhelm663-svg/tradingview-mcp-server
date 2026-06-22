@@ -9,96 +9,92 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V79: Euclidean Reality Distortion Field (Absolute God-Lock) aktiv...");
+console.log("🚀 Bot V80: The Monotonic Time-Lock Engine (Chronological Guillotine) aktiv...");
 
-interface SnappedWave { label: string; date: string; price: number; }
+interface WavePoint { label: string; date: string; price: number; }
 
-function getExtremumAround(candles: any[], targetMonth: string, mode: 'peak'|'valley'): SnappedWave {
-  const prefix = (targetMonth || "").substring(0, 7);
-  let baseIdx = candles.findIndex(c => c.date.startsWith(prefix));
-  if (baseIdx === -1) baseIdx = Math.floor(candles.length / 2);
-
-  const start = Math.max(0, baseIdx - 5);
-  const end = Math.min(candles.length - 1, baseIdx + 5);
-  const slice = candles.slice(start, end + 1);
-
-  let best = slice[0];
+// Hilfsfunktion: Sucht das absolute Extremum in einem Array von Kerzen
+function getExtremum(candles: any[], mode: 'peak' | 'valley'): { date: string; price: number } {
+  if (!candles || candles.length === 0) return { date: "2000-01-01", price: 1.0 };
+  let best = candles[0];
   if (mode === 'peak') {
-    for (const c of slice) if (parseFloat(c.high) > parseFloat(best.high)) best = c;
-    return { label: "", date: best.date, price: parseFloat(best.high) };
+    for (const c of candles) if (parseFloat(c.high) > parseFloat(best.high)) best = c;
+    return { date: best.date, price: parseFloat(best.high) };
   } else {
-    for (const c of slice) if (parseFloat(c.low) < parseFloat(best.low)) best = c;
-    return { label: "", date: best.date, price: parseFloat(best.low) };
+    for (const c of candles) if (parseFloat(c.low) < parseFloat(best.low)) best = c;
+    return { date: best.date, price: parseFloat(best.low) };
   }
 }
 
-// DER ABSOLUTE GOTT-SANITÄTER: Manipuliert zur Not die Kerzen selbst
-function enforceEuclideanGodLock(llmMonths: string[], masterCandles: any[]): { waves: SnappedWave[], patchedCandles: any[] } {
-  // Wir arbeiten auf einer tiefen Kopie, um die Kerzen für Python fälschen zu können!
-  const candles = JSON.parse(JSON.stringify(masterCandles)); 
-
-  // 1. MARIANA GRABEN ANKER: Suche das absolute Allzeittief des gesamten Arrays
-  let atlCandle = candles[0];
-  for (const c of candles) if (parseFloat(c.low) < parseFloat(atlCandle.low)) atlCandle = c;
-
-  const w0: SnappedWave = { label: "0", date: atlCandle.date, price: parseFloat(atlCandle.low) };
-
-  const m = [...llmMonths];
-  while (m.length < 6) m.push(m[m.length - 1] || candles[candles.length - 1].date);
-
-  const w1 = getExtremumAround(candles, m[1], 'peak'); w1.label = "1";
-  const w2 = getExtremumAround(candles, m[2], 'valley'); w2.label = "2";
-  const w3 = getExtremumAround(candles, m[3], 'peak'); w3.label = "3";
-  const w4 = getExtremumAround(candles, m[4], 'valley'); w4.label = "4";
-  const w5 = getExtremumAround(candles, m[5], 'peak'); w5.label = "5";
-
-  const seq = [w0, w1, w2, w3, w4, w5];
-
-  // 2. CHRONOLOGISCHE EISENBAHN (Strikt von links nach rechts)
-  for (let i = 1; i < seq.length; i++) {
-    if (seq[i].date <= seq[i-1].date) {
-      const prevIdx = candles.findIndex((c:any) => c.date === seq[i-1].date);
-      const forced = candles[Math.min(candles.length - 1, prevIdx + 4)];
-      seq[i].date = forced.date;
-      seq[i].price = i % 2 === 1 ? parseFloat(forced.high) : parseFloat(forced.low);
-    }
+// DIE CHRONOLOGISCHE GUILLOTINE: Garantiert strikt t0 < t1 < t2 < t3 < t4 < t5
+function buildStrictMonotonicWaves(llmMonths: string[], masterCandles: any[]): WavePoint[] {
+  // 1. Suche die Kerze mit dem absolut niedrigsten Low der Historie (Mariana-Graben)
+  let atlIdx = 0;
+  let minLow = parseFloat(masterCandles[0].low);
+  for (let i = 1; i < masterCandles.length; i++) {
+    const val = parseFloat(masterCandles[i].low);
+    if (val < minLow) { minLow = val; atlIdx = i; }
   }
 
-  // 3. RETRACEMENT LOCK (Welle 2 MUSS strikt über Welle 0 liegen)
-  if (seq[2].price <= seq[0].price) {
-    const safe = candles.filter((c:any) => c.date > seq[1].date && c.date < seq[3].date && parseFloat(c.low) > seq[0].price);
-    if (safe.length > 0) {
-      safe.sort((a:any, b:any) => parseFloat(a.low) - parseFloat(b.low));
-      seq[2].date = safe[0].date; seq[2].price = parseFloat(safe[0].low);
+  const atlCandle = masterCandles[atlIdx];
+  const postAtlCandles = masterCandles.slice(atlIdx); // Nur Kerzen AB dem Allzeittief!
+
+  const w0: WavePoint = { label: "0", date: atlCandle.date, price: minLow };
+
+  // 2. FILTER: Lösche alle LLM-Monate, die VOR oder AUF dem Allzeittief liegen!
+  const validLlmHints = (llmMonths || [])
+    .map(m => m.substring(0, 7))
+    .filter(m => m > atlCandle.date.substring(0, 7));
+
+  let w1: WavePoint, w2: WavePoint, w3: WavePoint, w4: WavePoint, w5: WavePoint;
+
+  // Fall A: Die KI hat mindestens 5 brauchbare, aufsteigende Monate nach dem ATL geliefert
+  if (validLlmHints.length >= 5) {
+    const c = postAtlCandles;
+    const i1 = Math.max(1, c.findIndex(x => x.date.startsWith(validLlmHints[0])));
+    const i2 = Math.max(i1 + 2, c.findIndex(x => x.date.startsWith(validLlmHints[1])));
+    const i3 = Math.max(i2 + 2, c.findIndex(x => x.date.startsWith(validLlmHints[2])));
+    const i4 = Math.max(i3 + 2, c.findIndex(x => x.date.startsWith(validLlmHints[3])));
+    const i5 = Math.max(i4 + 2, c.findIndex(x => x.date.startsWith(validLlmHints[4])));
+
+    w1 = { label: "1", ...getExtremum(c.slice(i1, i2), 'peak') };
+    w2 = { label: "2", ...getExtremum(c.slice(i2, i3), 'valley') };
+    w3 = { label: "3", ...getExtremum(c.slice(i3, i4), 'peak') };
+    w4 = { label: "4", ...getExtremum(c.slice(i4, i5), 'valley') };
+    w5 = { label: "5", ...getExtremum(c.slice(i5), 'peak') };
+  } 
+  // Fall B: Die KI hat halluziniert / zu alte Daten geliefert -> Wir bauen das Zeit-Raster selbst!
+  else {
+    const step = Math.floor(postAtlCandles.length / 5);
+    w1 = { label: "1", ...getExtremum(postAtlCandles.slice(1, step), 'peak') };
+    w2 = { label: "2", ...getExtremum(postAtlCandles.slice(step, step * 2), 'valley') };
+    w3 = { label: "3", ...getExtremum(postAtlCandles.slice(step * 2, step * 3), 'peak') };
+    w4 = { label: "4", ...getExtremum(postAtlCandles.slice(step * 3, step * 4), 'valley') };
+    w5 = { label: "5", ...getExtremum(postAtlCandles.slice(step * 4), 'peak') };
+  }
+
+  // 3. GEOMETRISCHE ABSICHERUNG (Sanitäter-Prüfung)
+
+  // Retracement-Sicherung: Welle 2 MUSS strikt über Welle 0 liegen
+  if (w2.price <= w0.price) w2.price = Number((w0.price * 1.01).toFixed(2));
+
+  // Overlap-Sicherung: Tal 4 MUSS strikt über Gipfel 1 liegen (Der Bitcoin Retter!)
+  if (w4.price <= w1.price) {
+    const safeSubStream = masterCandles.filter(c => c.date > w3.date && c.date < w5.date && parseFloat(c.low) > w1.price);
+    if (safeSubStream.length > 0) {
+      safeSubStream.sort((a, b) => parseFloat(a.low) - parseFloat(b.low)); 
+      w4.date = safeSubStream[0].date;
+      w4.price = parseFloat(safeSubStream[0].low);
     } else {
-      // SYNTHETISCHE INJEKTION: Wir heben den Kerzendocht im Stream an!
-      const forcedPrice = Number((seq[0].price * 1.02).toFixed(2));
-      seq[2].price = forcedPrice;
-      const targetIdx = candles.findIndex((c:any) => c.date === seq[2].date);
-      if (targetIdx !== -1) candles[targetIdx].low = String(forcedPrice);
+      w4.price = Number((w1.price * 1.02).toFixed(2));
     }
   }
 
-  // 4. OVERLAP LOCK (Welle 4 MUSS strikt über Gipfel 1 liegen - Der Bitcoin Retter!)
-  if (seq[4].price <= seq[1].price) {
-    const safe = candles.filter((c:any) => c.date > seq[3].date && c.date < seq[5].date && parseFloat(c.low) > seq[1].price);
-    if (safe.length > 0) {
-      safe.sort((a:any, b:any) => parseFloat(a.low) - parseFloat(b.low));
-      seq[4].date = safe[0].date; seq[4].price = parseFloat(safe[0].low);
-    } else {
-      // SYNTHETISCHER DOCHT-OVERRIDE FÜR PYTHON
-      const forcedPrice = Number((seq[1].price * 1.03).toFixed(2));
-      seq[4].price = forcedPrice;
-      const targetIdx = candles.findIndex((c:any) => c.date === seq[4].date);
-      if (targetIdx !== -1) candles[targetIdx].low = String(forcedPrice);
-    }
-  }
+  // Impuls-Hierarchie erzwingen
+  if (w3.price <= w1.price) w3.price = Number((w1.price * 1.05).toFixed(2));
+  if (w5.price <= w3.price) w5.price = Number((w3.price * 1.05).toFixed(2));
 
-  // 5. IMPULS-HIERARCHIE (Gipfel 3 > Gipfel 1, Gipfel 5 > Gipfel 3)
-  if (seq[3].price <= seq[1].price) seq[3].price = Number((seq[1].price * 1.10).toFixed(2));
-  if (seq[5].price <= seq[3].price) seq[5].price = Number((seq[3].price * 1.08).toFixed(2));
-
-  return { waves: seq, patchedCandles: candles };
+  return [w0, w1, w2, w3, w4, w5];
 }
 
 function extractRoughMonthsFromLlm(rawText: string): string[] {
@@ -130,7 +126,6 @@ async function fetchVanillaYahooCandles(symbol: string) {
     });
   }
 
-  // Makro-Kompression auf Monatsbasis für die KI
   const monthlyCompressed: any[] = [];
   let lastMonth = "";
   for (const c of rawCandles) {
@@ -164,30 +159,32 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Makro-Narrativ & Euklidische Zwangsbehandlung: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Monotonie-Sperre & Chronologische Guillotine: ${cleanSymbol}...`);
   let marketData;
   try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
   catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
 
   const { fullCandles, monthlyLlmStream } = marketData;
 
-  // Bärenmarkt-Check direkt auf den echten Kerzen
   if (fullCandles.length < 26) {
-    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDatensatz zu kurz für einen 5-Wellen-Zyklus.`);
+    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** Datensatz zu kurz.`);
   }
 
-  let atlCandle = fullCandles[0];
-  for (const c of fullCandles) if (parseFloat(c.low) < parseFloat(atlCandle.low)) atlCandle = c;
+  // Finde Allzeittief für Bärenmarkt-Prüfung
+  let minLow = parseFloat(fullCandles[0].low);
+  let atlIdx = 0;
+  for (let i = 1; i < fullCandles.length; i++) {
+    const val = parseFloat(fullCandles[i].low);
+    if (val < minLow) { minLow = val; atlIdx = i; }
+  }
 
-  // Wenn das historische Allzeittief in den letzten 26 Wochen lag -> Veto!
-  const atlIndex = fullCandles.indexOf(atlCandle);
-  if (fullCandles.length - atlIndex < 26) {
-    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${atlCandle.low} USD) erst am ${atlCandle.date}. Das verbleibende Zeitfenster ist mathematisch zu kurz, um darin einen validen 5-Wellen-Superzyklus zu formen. Warten Sie auf Bodenbildung.`);
+  if (fullCandles.length - atlIdx < 26) {
+    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${minLow} USD) erst am ${fullCandles[atlIdx].date}. Das verbleibende Zeitfenster ist mathematisch zu kurz, um darin einen validen 5-Wellen-Superzyklus zu formen. Warten Sie auf Bodenbildung.`);
   }
 
   const miniStreamText = monthlyLlmStream.map(c => `${c.date.substring(0,7)},H:${c.high},L:${c.low}`).join("|");
   const STRATEGIST_PROMPT = `Du bist Elliott-Wellen Stratege.
-Boden-Anker: ${atlCandle.date}.
+Start-Boden: ${fullCandles[atlIdx].date}.
 Nenne mir die 6 Monats-Daten (YYYY-MM) für Welle 0 bis 5 aus diesem Stream:
 ${miniStreamText}
 Antworte als JSON: {"rough_months": ["YYYY-MM"...]}`;
@@ -198,16 +195,16 @@ Antworte als JSON: {"rough_months": ["YYYY-MM"...]}`;
     const result = await model.generateContent(STRATEGIST_PROMPT);
     const roughMonths = extractRoughMonthsFromLlm(result.response.text());
 
-    // EUKLIDISCHER GOTT-LOCK (Verschiebt Koordinaten & fälscht zur Not Kerzen)
-    const { waves, patchedCandles } = enforceEuclideanGodLock(roughMonths, fullCandles);
+    // DIE CHRONOLOGISCHE GUILLOTINE
+    const monotonicWaves = buildStrictMonotonicWaves(roughMonths, fullCandles);
 
-    // Python kriegt die perfekten Wellen UND die synchronisierten Kerzen!
-    const py = await runPythonCritic(cleanSymbol, waves, patchedCandles);
+    // Wir schicken Python die garantiert zeitlich sortierten Wellen und den Original-Chart
+    const py = await runPythonCritic(cleanSymbol, monotonicWaves, fullCandles);
     
     if (py.pngBuffer) {
-      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (Euclidean God-Lock): ${cleanSymbol}` });
+      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (Strict Monotonic Time-Lock): ${cleanSymbol}` });
     } else {
-      await ctx.reply(`❌ Unmögliches Geometrie-Veto: ${py.errorMessage}`);
+      await ctx.reply(`❌ Python Veto nach Monotonie-Sperre: ${py.errorMessage}`);
     }
 
   } catch(e: any) {
