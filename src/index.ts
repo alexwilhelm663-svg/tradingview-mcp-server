@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🤖 Bot läuft in der Cloud mit All-Time Max Genesis & Tabellen-Semantik-Schutz (v19)...");
+console.log("🤖 Bot läuft in der Cloud mit All-Time Max Genesis & 5-Tier Tabellen-Vakzin (v20)...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -86,6 +86,7 @@ bot.command("analyse", async (ctx) => {
 
   try {
     const period2 = new Date();
+    // Zwingt Yahoo zum maximal historischen Download ab der allerersten Sekunde der Börsennotierung
     const period1 = new Date("1970-01-01");
 
     const result = await yahooFinance.historical(cleanSymbol, { period1, period2, interval: yahooInterval }) as any[];
@@ -108,6 +109,9 @@ bot.command("analyse", async (ctx) => {
   const streamStartDate = candlesArray[0].date;
   const streamEndDate = candlesArray[candlesArray.length - 1].date;
 
+  // =========================================================================
+  // DAS KOMPLETTE ORIGINAL-REGELWERK + DIE EISERNEN MATHEMATISCHEN VAKZINE
+  // =========================================================================
   const mainPrompt = `Rolle und Ziel:
 Du bist ein erstklassiger technischer Analyst und Senior-Experte für das Elliott-Wellen-Prinzip (Senior-EW-Analyst). Analysiere den folgenden komprimierten Marktdaten-Stream. Da Asset-Preise exponentiell wachsen, wird deine Zählung auf einer logarithmischen Y-Achse dargestellt.
 
@@ -188,13 +192,20 @@ Korrekturen lassen sich in vier Hauptkategorien unterteilen:
 
 ---
 
-### 4. EISERNE TABELLEN-SEMANTIK & FEHLER-PRÄVENTION
-Um mathematische Kollisionen im nachfolgenden Python-Renderer zu verhindern, hältst du dich beim Ausfüllen der Markdown-Tabelle an folgende Gesetze:
+### 4. EISERNE TABELLEN-SEMANTIK & FEHLER-PRÄVENTION (MANDATORY MATHEMATICAL GUARDRAILS)
+Um fatale Parser- und Matplotlib-Crashes im Python-Renderer zu verhindern, bist du UNTER ANDROHUNG DES ABBRUCHS VERPFLICHTET, deine generierte Markdown-Tabelle vor der Ausgabe Zeile für Zeile auf folgende 5 Gesetze zu validieren:
 
-1. **Das Endpunkt-Gesetz für Eltern-Zeilen:** Zeilen eines übergeordneten Grades (z.B. [I], [II], [III], (3), W, Y) deklarieren in der Spalte "Preis" und "Datum" IMMER das exakte ZIEL bzw. das ENDE dieser Bewegung, NIEMALS den Startpunkt! Der Preis von [I] muss exakt identisch mit dem Endpreis seiner Unterwelle (5) sein.
-2. **Verbot von Amputationen:** Du darfst einen Primärgrad erst dann abschließen, wenn alle seine Untergrade in der Tabelle stehen! Nach Welle 3.5 folgt zwingend Welle (4) und (5), bevor der Hauptimpuls beendet ist.
-3. **Absolutes Klon-Verbot:** Es ist dir verboten, exakt denselben Fließkommapreis für zwei unterschiedliche historische Extreme zu recyceln.
-4. **Echte Regular Flats:** Ein Regular Flat verlangt, dass Welle C auf das nahezu exakt gleiche Preisniveau wie Welle A fällt.
+1. **VERBOT VON ZEITSPRÜNGEN (Monotonie der Zeit):** Die Datumsangaben in der Tabelle MÜSSEN zwingend chronologisch vorwärts marschieren oder gleich bleiben: \`Datum(Zeile i) <= Datum(Zeile i+1)\`. 
+   * *Negativ-Beispiel eines Verstoßes:* Es ist physikalisch illegal, dass eine Unterwelle \`3\` am \`2008-06-11\` gipfelt, wenn das davorliegende Korrekturtief der Welle \`2\` erst am \`2008-06-16\` markiert wurde. Das Datum einer Folgewelle darf niemals in der Vergangenheit liegen.
+2. **VERBOT VON RETRACEMENT-BRÜCHEN (Eisernes Boden-Limit):** Eine interne Unterwelle 2 (z.B. \`(2)\` oder \`ii\`) darf NIEMALS tiefer fallen als der Startpreis der zugehörigen Unterwelle 1! 
+   * *Negativ-Beispiel eines Verstoßes:* Wenn Welle \`(1)\` bei Preis \`0.13\` startet, darf Welle \`(2)\` niemals auf \`0.08\` fallen (\`0.08 < 0.13\` ist mathematisch illegal). Welle \`(2)\` muss zwingend über \`0.13\` bleiben.
+3. **VERBOT VON ANTI-GRAVITATIONSTIEFS:** Ein Korrektur-Tal (Welle 2, 4, A, C) MUSS zwingend tiefer notieren als der direkt davorliegende Berggipfel (Welle 1, 3, B)! 
+   * *Negativ-Beispiel eines Verstoßes:* Wenn Welle \`3\` bei Preis \`9.09\` gipfelt, darf das Korrekturtief Welle \`4\` niemals mit \`11.70\` deklariert werden (\`11.70 > 9.09\` ist absurd). Ein Tal ist ein Tiefpunkt.
+4. **VERBOT VON IMPULS-ÜBERSCHNEIDUNGEN (Overlap):** In einem regulären Impuls darf das Tal der Welle 4 (oder \`(4)\` / \`iv\`) NIEMALS tiefer fallen als die Spitze der Welle 1 (oder \`(1)\` / \`i\`). 
+   * *Negativ-Beispiel eines Verstoßes:* Spitze \`(1)\` = \`0.31\`, Tal \`(4)\` = \`0.30\` (\`0.30 < 0.31\` ist illegal).
+5. **ELTERN-ZEILEN KONSISTENZ & KLON-VERBOT:**
+   * *Das Endpunkt-Gesetz:* Eine übergeordnete Zeile (z.B. \`[I]\`, \`[III]\`, \`(3)\`) trägt als Datum und Preis IMMER den exakten Ziel-Gipfel ihrer allerletzten Sub-Welle, niemals den Boden-Startpreis! (\`Preis von [III] == Preis von [III].5\`).
+   * *Klon-Verbot:* Du darfst niemals zwei aufeinanderfolgende Hauptzyklen stumpf duplizieren (z.B. Zeile 4 und 5 direkt darunter identisch als \`[4]\` und \`[5]\` auszugeben ist verboten).
 
 ---
 FORMATIERUNGS-GESETZE FÜR DIE AUSGABE:
@@ -208,28 +219,42 @@ Erstelle am Ende deiner Analyse ZWINGEND eine Markdown-Tabelle exakt nach diesem
 Keine Prosa in der Tabelle!`;
 
   let responseText = "";
-  let attempts = 5; 
-  let backoffDelay = 2000; 
+  let attempt = 0;
+  const maxAttempts = 8;
+  
+  // Die eiserne High-Availability Kaskade der Google-Server:
+  const modelPool = [
+      "gemini-2.5-flash", "gemini-2.5-flash", // 1-2: Prime Target
+      "gemini-1.5-flash", "gemini-1.5-flash", "gemini-1.5-flash", // 3-5: High-Capacity Fallback
+      "gemini-2.5-pro",   "gemini-1.5-pro",   "gemini-2.5-pro"    // 6-8: Enterprise Pool
+  ];
 
-  await ctx.reply(`🧠 Analysiere maximale Yahoo-Historie ab IPO (${streamStartDate} bis ${streamEndDate})...`);
+  await ctx.reply("🧠 Analysiere EW-Fraktale (mit 5-Tier Tabellen-Vakzin & Server-Fallback Panzerung)...");
 
-  while (attempts > 0) {
-    try {
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: mainPrompt,
-        config: { safetySettings: [{ category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }] }
-      });
-      responseText = response.text || "";
-      if (responseText) break;
-    } catch (e: any) {
-      attempts--;
-      if (attempts === 0) {
-          return ctx.reply(`❌ **KI-Analyse abgebrochen:** Google Gemini API Timeout nach 5 Versuchen.\nGrund: ${e.message}`);
+  while (attempt < maxAttempts) {
+      const targetModel = modelPool[attempt] || "gemini-2.5-flash";
+      try {
+          if (attempt > 0) {
+              await ctx.reply(`⚠️ Google 503 Stau. Schalte API-Routen um auf Fallback-Pool: **${targetModel}** (Versuch ${attempt + 1}/${maxAttempts})...`);
+          }
+          const response = await ai.models.generateContent({
+              model: targetModel,
+              contents: mainPrompt,
+              config: { safetySettings: [{ category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }] }
+          });
+          responseText = response.text || "";
+          if (responseText) break;
+      } catch (e: any) {
+          attempt++;
+          if (attempt >= maxAttempts) {
+              return ctx.reply(`❌ **KI-Analyse endgültig gescheitert:** Alle 8 Server-Pools nach 3.5 Minuten erschöpft.\nLetzter Fehler: ${e.message}`);
+          }
+          const jitter = Math.floor(Math.random() * 1500);
+          const baseDelay = Math.pow(2, attempt) * 1800;
+          const finalDelay = Math.min(baseDelay + jitter, 25000); 
+          
+          await new Promise(r => setTimeout(r, finalDelay));
       }
-      await new Promise(r => setTimeout(r, backoffDelay));
-      backoffDelay *= 2;
-    }
   }
 
   const wavesData = parseWavesFromText(responseText);
@@ -266,7 +291,9 @@ Keine Prosa in der Tabelle!`;
             if (cg.is_confirmed) {
                 statusBadge = `\n\n🟢 **STATUS:** Laufende Korrektur bestätigt beendet! (Schlusskurs ${cg.current_close.toFixed(2)} USD liegt über der Schranke von ${cg.b_gate_price.toFixed(2)} USD).`;
             } else {
-                statusBadge = `\n\n⚠️ **STATUS:** Letzte Abwärtswelle weiterhin AKTIV! (Schlusskurs ${cg.current_close.toFixed(2)} USD notiert unter dem Bestätigungs-Gate von ${cg.b_gate_price.toFixed(2)} USD).\n🎯 **BERECHNETE FIBO-ZIELZONE:** ${cg.fib_lower.toFixed(2)} USD bis ${cg.fib_upper.toFixed(2)} USD (Sweetspot: ${cg.fib_sweetspot.toFixed(2)} USD).`;
+                // FIX: Saubere Prüfung auf null/undefined statt Falsy-Falle!
+                const gateStr = cg.b_gate_price !== null && cg.b_gate_price !== undefined ? cg.b_gate_price.toFixed(2) : '0.00';
+                statusBadge = `\n\n⚠️ **STATUS:** Letzte Abwärtswelle weiterhin AKTIV! (Schlusskurs ${cg.current_close.toFixed(2)} USD notiert unter dem Bestätigungs-Gate von ${gateStr} USD).\n🎯 **BERECHNETE FIBO-ZIELZONE:** ${cg.fib_lower.toFixed(2)} USD bis ${cg.fib_upper.toFixed(2)} USD (Sweetspot: ${cg.fib_sweetspot.toFixed(2)} USD).`;
             }
         }
     } catch(e) {}
@@ -293,45 +320,4 @@ Keine Prosa in der Tabelle!`;
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const userQuestion = ctx.message.text;
-  const session = chatSessions[chatId];
-
-  if (!session || !session.lastDataPayload) return ctx.reply("❌ Starte zuerst eine Analyse mit `/analyse`.");
-
-  await ctx.reply("🤔 Analysiere Rückfrage...");
-
-  try {
-    session.history.push({ role: "user", text: userQuestion });
-    const contents: any[] = [];
-    session.history.forEach(msg => contents.push(`${msg.role === "user" ? "User" : "Model"}: ${msg.text}`));
-    contents.push(`Beziehe dich auf Rohdaten: ${JSON.stringify(session.lastDataPayload.candles)}. Antworte kurz.`);
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: contents,
-      config: { safetySettings: [{ category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }] }
-    });
-
-    const answerText = response.text || "Keine Antwort möglich.";
-    session.history.push({ role: "model", text: answerText });
-    await ctx.reply(`💬 Antwort:\n\n${answerText}`);
-  } catch (error: any) {
-    await ctx.reply(`❌ Fehler: ${error.message}`);
-  }
-});
-
-if (RENDER_EXTERNAL_URL) {
-  const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
-  bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
   
-  http.createServer((req, res) => {
-    if (req.url === webhookPath && req.method === "POST") {
-      let body = "";
-      req.on("data", chunk => body += chunk);
-      req.on("end", () => {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok" }));
-        try { if (body.trim()) bot.handleUpdate(JSON.parse(body)); } catch (e) {}
-      });
-    } else res.end("Bot Server is healthy");
-  }).listen(PORT);
-} else bot.launch();
