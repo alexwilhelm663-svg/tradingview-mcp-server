@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V54: Model Swap Bypass (llama3-70b-8192) & Pre-Validation aktiv...");
+console.log("🚀 Bot V55: Mixtral MoE Engine (mixtral-8x7b-32768) aktiv...");
 
 interface ChatSession {
   lastDataPayload: any;
@@ -118,9 +118,9 @@ bot.command("analyse", async (ctx) => {
   let finalResponseText = "";
 
   // =====================================================================
-  // MODEL SWAP: Wir umgehen das 100k Limit, indem wir auf das Llama 3 70B ausweichen
+  // MODEL SWAP: Frischer Eimer, 32k Context, extrem performant für JSON!
   // =====================================================================
-  const currentModel = "llama3-70b-8192";
+  const currentModel = "mixtral-8x7b-32768";
   await ctx.reply(`⚡ LPU-Engine Bypass aktiv (Modell: ${currentModel})...`);
 
   while (iteration < 3) {
@@ -155,9 +155,6 @@ Liefere das korrigierte JSON-Objekt mit dem Key 'waves'.`;
       const llmRawAnswer = res.choices[0]?.message?.content || "";
       const waves = parseWavesFromJson(llmRawAnswer);
       
-      // =====================================================================
-      // PRE-VALIDATION: Sichert ab, dass der KeyError in Python nicht mehr auftritt
-      // =====================================================================
       if (!waves || !Array.isArray(waves) || waves.length === 0 || !waves[0].label) { 
         criticRejection = "Struktur-Fehler: JSON enthält keine korrekten 'label'-Keys."; 
         continue; 
