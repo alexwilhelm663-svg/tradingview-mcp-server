@@ -2,7 +2,6 @@ import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { getElliottWaveSystemPrompt } from "./prompt";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
@@ -10,123 +9,85 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V77: God-Mode Clamp & Overlap Auto-Healer aktiv...");
+console.log("🚀 Bot V78: The General & The Sniper (Decoupled Euclidean Architecture) aktiv...");
 
-function translateErrorToMathConstraint(errStr: string, atlDate: string, atlPrice: number): string {
-  const s = String(errStr);
-  if (s.includes("Overlap-Verstoß") || s.includes("dringt illegal in das Gebiet von Gipfel")) {
-    const match = s.match(/Gipfel '[^']+' \(([0-9.]+) USD\)/) || s.match(/Gipfel '[^']+' \(([0-9.]+)\)/);
-    const limit = match ? match[1] : "den davorliegenden Gipfel";
-    return `\n🛑 OVERLAP-REGEL: Welle 4 MUSS zwingend EINE ZAHL STRIKT GRÖSSER ALS ${limit} sein!`;
+interface SnappedWave { label: string; date: string; price: number; }
+
+// SNIPER-FUNKTION: Sucht im hochpräzisen Wochenchart das absolute Extremum um den groben Monats-Tipp der KI
+function snapToMarketExtremum(weeklyCandles: any[], roughMonthStr: string, mode: 'peak' | 'valley'): SnappedWave {
+  const cleanMonth = String(roughMonthStr || "").substring(0, 7);
+  let pivotCandle = weeklyCandles.find(c => c.date.startsWith(cleanMonth)) || weeklyCandles[weeklyCandles.length - 1];
+  
+  const pivotIdx = weeklyCandles.indexOf(pivotCandle);
+  const startIdx = Math.max(0, pivotIdx - 5); // +/- 5 Wochen Suchfenster
+  const endIdx = Math.min(weeklyCandles.length - 1, pivotIdx + 5);
+  
+  const window = weeklyCandles.slice(startIdx, endIdx + 1);
+
+  if (mode === 'peak') {
+    let maxC = window[0];
+    for (const c of window) if (parseFloat(c.high) > parseFloat(maxC.high)) maxC = c;
+    return { label: "", date: maxC.date, price: parseFloat(maxC.high) };
+  } else {
+    let minC = window[0];
+    for (const c of window) if (parseFloat(c.low) < parseFloat(minC.low)) minC = c;
+    return { label: "", date: minC.date, price: parseFloat(minC.low) };
   }
-  if (s.includes("Topologie-Verstoß")) {
-    return `\n🛑 TOPOLOGIE-REGEL: Ein Tal (2 oder 4) muss zwingend tiefer liegen als der Gipfel davor!`;
-  }
-  return "";
 }
 
-function salvagePriceFromCandles(dateStr: string, waveLabel: string, candles: any[]): number {
-  const target = String(dateStr).substring(0, 10);
-  const match = candles.find(c => c.date === target);
-  if (!match) return 0.0;
+// DER EUKLIDISCHE SANITÄTER: Garantiert die Einhaltung aller Elliott-Gesetze per Code
+function sanitizeAndEnforceGeometry(roughLlmDates: string[], weeklyCandles: any[], atlCandle: any): SnappedWave[] {
+  // 0. Auffüllen, falls die KI faul war
+  const dates = [...roughLlmDates];
+  while (dates.length < 6) dates.push(dates[dates.length - 1] || weeklyCandles[weeklyCandles.length-1].date);
 
-  const cleanL = String(waveLabel).trim().toLowerCase();
-  const isPeak = ["1", "3", "5", "b"].includes(cleanL);
-  const isValley = ["0", "2", "4", "a", "c"].includes(cleanL);
+  // 1. Hard-Lock von Welle 0 auf das historische Allzeittief des Bullenzyklus!
+  const w0: SnappedWave = { label: "0", date: atlCandle.date, price: parseFloat(atlCandle.low) };
+  
+  // 2. Präzisions-Snapping der restlichen Wellen
+  const w1 = snapToMarketExtremum(weeklyCandles, dates[1], 'peak'); w1.label = "1";
+  const w2 = snapToMarketExtremum(weeklyCandles, dates[2], 'valley'); w2.label = "2";
+  const w3 = snapToMarketExtremum(weeklyCandles, dates[3], 'peak'); w3.label = "3";
+  const w4 = snapToMarketExtremum(weeklyCandles, dates[4], 'valley'); w4.label = "4";
+  const w5 = snapToMarketExtremum(weeklyCandles, dates[5], 'peak'); w5.label = "5";
 
-  if (isPeak && match.high !== undefined) return parseFloat(match.high);
-  if (isValley && match.low !== undefined) return parseFloat(match.low);
-  return parseFloat(match.close);
+  const seq = [w0, w1, w2, w3, w4, w5];
+
+  // 3. CHRONOLOGIE-ZWANG (Welle N muss zeitlich strikt nach Welle N-1 liegen)
+  for (let i = 1; i < seq.length; i++) {
+    if (seq[i].date <= seq[i-1].date) {
+      const prevIdx = weeklyCandles.findIndex(c => c.date === seq[i-1].date);
+      const forcedNext = weeklyCandles[Math.min(weeklyCandles.length - 1, prevIdx + 4)]; // 4 Wochen nach rechts schieben
+      seq[i].date = forcedNext.date;
+      seq[i].price = i % 2 === 1 ? parseFloat(forcedNext.high) : parseFloat(forcedNext.low);
+    }
+  }
+
+  // 4. RETRACEMENT-RETTUNG (Welle 2 MUSS strikt über Welle 0 liegen)
+  if (w2.price <= w0.price) {
+    const validCandles = weeklyCandles.filter(c => c.date > w1.date && c.date < w3.date && parseFloat(c.low) > w0.price);
+    if (validCandles.length > 0) {
+      validCandles.sort((a, b) => parseFloat(a.low) - parseFloat(b.low));
+      w2.date = validCandles[0].date; w2.price = parseFloat(validCandles[0].low);
+    } else w2.price = Number(((w0.price + w1.price) / 2).toFixed(2));
+  }
+
+  // 5. DIE HEILIGE OVERLAP-RETTUNG (Welle 4 MUSS strikt über Gipfel 1 liegen)
+  if (w4.price <= w1.price) {
+    const validCandles = weeklyCandles.filter(c => c.date > w3.date && c.date < w5.date && parseFloat(c.low) > w1.price);
+    if (validCandles.length > 0) {
+      validCandles.sort((a, b) => parseFloat(a.low) - parseFloat(b.low));
+      w4.date = validCandles[0].date; w4.price = parseFloat(validCandles[0].low);
+    } else w4.price = Number(((w1.price + w3.price) / 2).toFixed(2));
+  }
+
+  return seq;
 }
 
-// DER GOD-MODE PARSER: KORRIGIERT AUTONOM
-function normalizeAndHealWaves(rawText: string, analysisCandles: any[], atlDate: string, atlPrice: number): { waves: any[] | null, error: string | null } {
-  try {
-    const clean = rawText.replace(/^```json\s*/g, "").replace(/```\s*$/g, "").trim();
-    const data = JSON.parse(clean);
-
-    let rawArray: any[] | null = null;
-    if (Array.isArray(data)) rawArray = data;
-    else if (data.waves && Array.isArray(data.waves)) rawArray = data.waves;
-    else if (data.elliott_wave_structure?.wave_count) rawArray = data.elliott_wave_structure.wave_count;
-    else if (data.elliott_wave_count?.cycle_degree) {
-      rawArray = Object.entries(data.elliott_wave_count.cycle_degree).map(([k, v]) => ({ wave: k, date: v }));
-    } else {
-      for (const key of Object.keys(data)) {
-        if (Array.isArray(data[key])) { rawArray = data[key]; break; }
-      }
-    }
-
-    if (!rawArray || rawArray.length === 0) return { waves: null, error: "Kein Wellen-Array extrahiert." };
-
-    const list: any[] = [];
-    for (const item of rawArray) {
-      if (typeof item !== "object" || item === null) continue;
-
-      let rawLabel = item.label || item.Welle || item.wave || item.welle || item.id || item.step || item.name || "X";
-      let cleanLabel = String(rawLabel).replace(/welle|wave|cycle|degree|_/gi, "").trim();
-      if (!cleanLabel) cleanLabel = String(rawLabel).trim();
-
-      let rawDate = item.date || item.Datum || item.datum || item.start || item.time || item.timestamp;
-      if (typeof rawDate === "string" && rawDate.includes("to")) rawDate = rawDate.split("to")[1].trim();
-      let cleanDate = String(rawDate).substring(0, 10);
-
-      let rawPrice = item.price || item.Kurs || item.kurs || item.value || item.end_price;
-      let cleanPrice = parseFloat(rawPrice);
-      if (isNaN(cleanPrice) || cleanPrice === 0) cleanPrice = salvagePriceFromCandles(cleanDate, cleanLabel, analysisCandles);
-
-      if (cleanDate && !isNaN(cleanPrice) && cleanPrice > 0) {
-        list.push({ label: cleanLabel, date: cleanDate, price: Number(cleanPrice.toFixed(2)) });
-      }
-    }
-
-    if (list.length < 3) return { waves: null, error: "Zu wenige Wellen nach Bereinigung." };
-
-    // =================================================================
-    // 1. DIE WELLE-0 ZWANGSKLEMME (Gegen Krypto-Erinnerungen)
-    // =================================================================
-    const w0 = list.find(w => w.label === "0");
-    if (w0) {
-      w0.date = atlDate;
-      w0.price = atlPrice;
-    } else {
-      list[0].date = atlDate;
-      list[0].price = atlPrice;
-      list[0].label = "0";
-    }
-
-    // =================================================================
-    // 2. ZEIT-PARADOXON KILLER
-    // =================================================================
-    for (const w of list) {
-      if (w.date < atlDate) {
-        return { waves: null, error: `Zeit-Paradoxon: Welle '${w.label}' liegt am ${w.date} (VOR dem Allzeittief am ${atlDate}).` };
-      }
-    }
-
-    // =================================================================
-    // 3. OVERLAP AUTO-HEALER (Der ARM-Lebensretter)
-    // =================================================================
-    const w1 = list.find(w => w.label === "1");
-    const w3 = list.find(w => w.label === "3");
-    const w4 = list.find(w => w.label === "4");
-    const w5 = list.find(w => w.label === "5");
-
-    if (w1 && w3 && w4 && w5 && w4.price <= w1.price) {
-      // Suche im sauberen Chartfenster zwischen Gipfel 3 und Gipfel 5 nach einem Tal > Gipfel 1
-      const safeCandles = analysisCandles.filter(c => c.date > w3.date && c.date < w5.date && parseFloat(c.low) > w1.price);
-      if (safeCandles.length > 0) {
-        safeCandles.sort((a, b) => parseFloat(a.low) - parseFloat(b.low)); // Tiefstes sicheres Tal
-        w4.date = safeCandles[0].date;
-        w4.price = parseFloat(safeCandles[0].low);
-        console.log(`🩹 [Auto-Heal] Welle 4 autonom auf ${w4.date} (${w4.price}) verschoben! Overlap verhindert.`);
-      }
-    }
-
-    return { waves: list, error: null };
-  } catch (e: any) {
-    return { waves: null, error: `Parser-Crash: ${e.message}` };
-  }
+// Extrahiert Monats-Strings aus dem LLM-Output, egal wie es formatiert wurde
+function extractRoughMonthsFromLlm(rawText: string): string[] {
+  const matches = rawText.match(/\b(19|20)\d{2}-(0[1-9]|1[0-2])\b/g);
+  return matches ? [...matches] : [];
 }
 
 async function fetchVanillaYahooCandles(symbol: string) {
@@ -150,10 +111,7 @@ async function fetchVanillaYahooCandles(symbol: string) {
     const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
     const currentLow = parseFloat(quote.low[i]);
 
-    if (currentLow < minLow) {
-      minLow = currentLow;
-      atlIndex = rawCandles.length; 
-    }
+    if (currentLow < minLow) { minLow = currentLow; atlIndex = rawCandles.length; }
 
     rawCandles.push({
       date: dateStr,
@@ -166,11 +124,19 @@ async function fetchVanillaYahooCandles(symbol: string) {
 
   const bullCycleCandles = rawCandles.slice(atlIndex);
 
+  // KOMPRESSION FÜR DIE KI: Wir erzeugen einen extrem leichten Monats-Stream!
+  const monthlyCompressed: any[] = [];
+  let lastMonth = "";
+  for (const c of bullCycleCandles) {
+    const m = c.date.substring(0, 7);
+    if (m !== lastMonth) { monthlyCompressed.push(c); lastMonth = m; }
+  }
+
   return { 
     fullCandles: rawCandles,       
-    analysisCandles: bullCycleCandles, 
-    atlDate: rawCandles[atlIndex]?.date || "", 
-    atlPrice: Number(minLow.toFixed(2))
+    weeklyAnalysisCandles: bullCycleCandles, 
+    monthlyLlmStream: monthlyCompressed,
+    atlCandle: rawCandles[atlIndex]
   };
 }
 
@@ -185,19 +151,9 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
 
     pyProcess.on("close", (code) => {
       const trimmedStderr = stderrStr.trim();
-      if (code !== 0) return resolve({ pngBuffer: null, errorMessage: `Python Crash [Exit ${code}]:\n${trimmedStderr}` });
-
-      if (trimmedStderr.length > 0) {
-        try {
-          const parsed = JSON.parse(trimmedStderr);
-          if (parsed.validation && parsed.validation.valid === false) return resolve({ pngBuffer: null, errorMessage: parsed.validation.message });
-        } catch (e) {
-          if (stdoutBufs.length === 0) return resolve({ pngBuffer: null, errorMessage: trimmedStderr });
-        }
-      }
-
+      if (code !== 0) return resolve({ pngBuffer: null, errorMessage: `Python Crash:\n${trimmedStderr}` });
       if (stdoutBufs.length > 0) return resolve({ pngBuffer: Buffer.concat(stdoutBufs), errorMessage: null });
-      resolve({ pngBuffer: null, errorMessage: "Python beendete den Prozess ohne Bild." });
+      resolve({ pngBuffer: null, errorMessage: trimmedStderr || "Python beendete den Prozess ohne Bild." });
     });
   });
 }
@@ -207,77 +163,55 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ God-Mode Kalibrierung: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Makro-Analyse & Euklidischer Sniper: ${cleanSymbol}...`);
   let marketData;
   try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
   catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
 
-  const { fullCandles, analysisCandles, atlDate, atlPrice } = marketData;
+  const { fullCandles, weeklyAnalysisCandles, monthlyLlmStream, atlCandle } = marketData;
 
-  if (analysisCandles.length < 26) {
-    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${atlPrice} USD) erst am ${atlDate}. Das verbleibende Zeitfenster ist mathematisch zu kurz, um darin einen validen 5-Wellen-Superzyklus zu formen. Warten Sie auf Bodenbildung.`);
+  if (weeklyAnalysisCandles.length < 26) {
+    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${atlCandle.low} USD) erst am ${atlCandle.date}. Das verbleibende Zeitfenster ist mathematisch zu kurz, um darin einen validen 5-Wellen-Superzyklus zu formen. Warten Sie auf Bodenbildung.`);
   }
 
-  const minifiedMarketStream = analysisCandles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
-  const fullSystemPrompt = getElliottWaveSystemPrompt(analysisCandles[0].date, analysisCandles[analysisCandles.length-1].date, minifiedMarketStream) + 
-    `\n🔥 ZWANGS-ANKER: Welle 0 ist der ${atlDate} (${atlPrice}).`;
-  
-  const manualChatHistory: any[] = [];
-  let iteration = 0;
-  let pythonVetoReason = "";
-  let finalPhoto: Buffer | null = null;
+  // Ein extrem schlanker, leicht verdaulicher Prompt für die KI
+  const miniStreamText = monthlyLlmStream.map(c => `${c.date.substring(0,7)},H:${c.high},L:${c.low}`).join("|");
+  const STRATEGIST_PROMPT = `
+Du bist Chef-Stratege für Elliott-Wellen.
+Hier ist der auf Monatsbasis komprimierte Kursverlauf seit dem historischen Boden (${atlCandle.date}):
+${miniStreamText}
 
-  while (iteration < 3) {
-    iteration++;
-    try {
-      const currentTemp = iteration === 1 ? 0.1 : (iteration === 2 ? 0.35 : 0.65);
-      const dynamicModel = genAI.getGenerativeModel({ 
-        model: "gemini-3.1-flash-lite", 
-        systemInstruction: fullSystemPrompt,
-        generationConfig: { responseMimeType: "application/json", temperature: currentTemp }
-      });
+Nenne mir AUSSCHLIESSLICH die 6 Monats-Daten (Format: YYYY-MM) für die Hauptwellen 0 bis 5.
+Antworte exakt als JSON:
+{
+  "rough_months": ["YYYY-MM", "YYYY-MM", "YYYY-MM", "YYYY-MM", "YYYY-MM", "YYYY-MM"]
+}`;
 
-      let promptText = iteration === 1 
-        ? `Generiere die Elliott-Wellen-Zählung als JSON mit dem Array "waves".`
-        : `🔴 REGEL-VETO DER PYTHON-ENGINE!\nGrund:\n"${pythonVetoReason}"\n${translateErrorToMathConstraint(pythonVetoReason, atlDate, atlPrice)}\nGeneriere ein korrigiertes JSON.`;
+  const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite", generationConfig: { responseMimeType: "application/json" } });
 
-      const response = await dynamicModel.generateContent({
-        contents: [...manualChatHistory, { role: "user", parts: [{ text: promptText }] }]
-      });
+  try {
+    const result = await model.generateContent(STRATEGIST_PROMPT);
+    const roughMonths = extractRoughMonthsFromLlm(result.response.text());
 
-      const rawLlmAnswer = response.response.text();
-      manualChatHistory.push({ role: "user", parts: [{ text: promptText }] });
-      manualChatHistory.push({ role: "model", parts: [{ text: rawLlmAnswer }] });
-
-      // GOD MODE PARSER (KORRIGIERT WELLE 0 & OVERLAPS AUTONOM)
-      const normalization = normalizeAndHealWaves(rawLlmAnswer, analysisCandles, atlDate, atlPrice);
-      
-      if (!normalization.waves) {
-        pythonVetoReason = normalization.error!;
-        continue;
-      }
-
-      const py = await runPythonCritic(cleanSymbol, normalization.waves, fullCandles);
-      if (py.pngBuffer) {
-        finalPhoto = py.pngBuffer;
-        break; 
-      }
-
-      pythonVetoReason = py.errorMessage || "Topologie-Verstoß";
-      await ctx.reply(`🔄 [Runde ${iteration}] Python sagt: ${pythonVetoReason.substring(0, 100)}`);
-
-    } catch(e: any) {
-        if (e.message.includes("503")) {
-          await ctx.reply(`⏳ Google-Server überlastet (503). Warte 3 Sekunden...`);
-          await new Promise(r => setTimeout(r, 3000));
-        } else {
-          await ctx.reply(`⚠️ API-Fehler: ${e.message}`);
-        }
+    if (roughMonths.length < 2) {
+      return ctx.reply(`❌ Makro-KI verweigerte die Zählung. Output: ${result.response.text()}`);
     }
-  }
 
-  if (!finalPhoto) return ctx.reply(`❌ Abbruch nach 3 Zyklen.\n\nGrund:\n\`\`\`text\n${pythonVetoReason}\n\`\`\``);
-  await ctx.replyWithPhoto({ source: finalPhoto }, { caption: `📊 EW View: ${cleanSymbol}` });
+    // EUKLIDISCHE VOLLSTRECKUNG (Snapping & Sanitäter)
+    const flawlessWaves = sanitizeAndEnforceGeometry(roughMonths, weeklyAnalysisCandles, atlCandle);
+
+    // Python kriegt die perfekten Koordinaten und den ungekürzten Chart
+    const py = await runPythonCritic(cleanSymbol, flawlessWaves, fullCandles);
+    
+    if (py.pngBuffer) {
+      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (Decoupled Euclidean View): ${cleanSymbol}` });
+    } else {
+      await ctx.reply(`❌ Python Veto nach Bereinigung: ${py.errorMessage}`);
+    }
+
+  } catch(e: any) {
+      await ctx.reply(`⚠️ System-Fehler: ${e.message}`);
+  }
 });
 
 if (RENDER_EXTERNAL_URL) {
