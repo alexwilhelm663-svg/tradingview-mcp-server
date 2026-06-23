@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V94: Pure Reality mit Auto-Veto (Overlap Protection) aktiv...");
+console.log("🚀 Bot V95: Pure Reality (Auto-Veto & Zero Temp Sniper) aktiv...");
 
 interface WaveNode { label: string; date: string; price: number; }
 
@@ -185,7 +185,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ V94 Auto-Veto Kernel: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ V95 Zero Temp Sniper: ${cleanSymbol}...`);
   let marketData;
   try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
   catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
@@ -202,7 +202,14 @@ bot.command("analyse", async (ctx) => {
 
   const STRATEGIST_PROMPT = `Analysiere die Daten, entscheide den macro_trend und liefere das JSON.`;
 
-  const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite", generationConfig: { responseMimeType: "application/json" } });
+  // 🔥 V95 ZERO TEMPERATURE SNIPER
+  const model = genAI.getGenerativeModel({ 
+    model: "gemini-3.1-flash-lite", 
+    generationConfig: { 
+      responseMimeType: "application/json",
+      temperature: 0.0
+    } 
+  });
 
   try {
     const result = await model.generateContent({
