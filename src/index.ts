@@ -10,11 +10,10 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V96: Zero Temp Sniper mit echtem Self-Healing Loop aktiv...");
+console.log("🚀 Bot V97: Dynamic Temp Annealing & Memory Loop aktiv...");
 
 interface WaveNode { label: string; date: string; price: number; }
 
-// GLOBALE EPOCHEN-SUCHE
 function getGlobalExtremum(candles: any[], startDate: string, endDate: string, mode: 'peak'|'valley'): WaveNode {
   const window = candles.filter(c => c.date > startDate && c.date <= endDate);
   if (window.length === 0) return { label: "", date: endDate, price: 0 };
@@ -29,7 +28,6 @@ function getGlobalExtremum(candles: any[], startDate: string, endDate: string, m
   }
 }
 
-// CORE 1: DIE IMPULS-ZWANGSJACKE (Szenario A - Bullenmarkt)
 function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any[]): { waves: WaveNode[], patchedCandles: any[] } {
   const c = JSON.parse(JSON.stringify(postAtlCandles)); 
   const w0: WaveNode = { label: "0", date: c[0].date, price: parseFloat(c[0].low) };
@@ -83,7 +81,6 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
   return { waves: finalWaves, patchedCandles: c };
 }
 
-// CORE 2: DIE KORREKTUR-ZWANGSJACKE (Szenario B - Aufwärts-Rally / Dead Cat Bounce)
 function buildUpwardCorrectionSequence(llmMonths: string[], postAtlCandles: any[]): { waves: WaveNode[], patchedCandles: any[] } {
   const c = JSON.parse(JSON.stringify(postAtlCandles)); 
   const w0: WaveNode = { label: "0", date: c[0].date, price: parseFloat(c[0].low) };
@@ -177,7 +174,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ V96 Zero Temp & Self-Healing: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ V97 Dynamic Annealing: ${cleanSymbol}...`);
   let marketData;
   try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
   catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
@@ -185,7 +182,7 @@ bot.command("analyse", async (ctx) => {
   const { fullCandles, weeklyAnalysisCandles, monthlyLlmStream, atlCandle } = marketData;
 
   if (weeklyAnalysisCandles.length < 26) {
-    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${atlCandle.low} USD) erst am ${atlCandle.date}. Das verbleibende Zeitfenster ist zu kurz.`);
+    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${atlCandle.low} USD) erst am ${atlCandle.date}.`);
   }
 
   const minifiedMarketStream = weeklyAnalysisCandles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
@@ -195,25 +192,22 @@ bot.command("analyse", async (ctx) => {
   let basePrompt = `Analysiere die Daten, entscheide den macro_trend und liefere das JSON.`;
   let currentPrompt = basePrompt;
 
-  const model = genAI.getGenerativeModel({ 
-    model: "gemini-3.1-flash-lite", 
-    generationConfig: { 
-      responseMimeType: "application/json",
-      temperature: 0.0
-    } 
-  });
-
   try {
     let attempts = 0;
     const maxAttempts = 3;
     let waves, patchedCandles;
     let finalTrend = "IMPULSE_UP";
+    let currentTemp = 0.0; // Startet deterministisch
 
-    // ====================================================================
-    // 🔥 THE SELF-HEALING LOOP
-    // ====================================================================
     while (attempts < maxAttempts) {
       attempts++;
+      
+      // 🔥 Dynamische Modell-Initialisierung im Loop
+      const model = genAI.getGenerativeModel({ 
+        model: "gemini-3.1-flash-lite", 
+        generationConfig: { responseMimeType: "application/json", temperature: currentTemp } 
+      });
+
       const result = await model.generateContent({
         contents: [{ role: "user", parts: [{ text: currentPrompt }] }],
         systemInstruction: { role: "system", parts: [{ text: fullSystemPrompt }] }
@@ -227,44 +221,42 @@ bot.command("analyse", async (ctx) => {
       finalTrend = parsed.macro_trend;
 
       if (finalTrend === "CORRECTION_UP") {
-          // Bärenrally direkt akzeptieren (kein Overlap-Risiko)
           if (attempts === 1) await ctx.reply(`🚨 BÄRENMARKTRALLY ERKANNT: Aufwärtsbewegung ist ein massives A-B-C Fraktal!`);
           const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
           waves = res.waves; patchedCandles = res.patchedCandles;
-          break; // Loop erfolgreich verlassen
+          break;
       } else {
           try {
-              // Versuche, den Impuls durch die euklidische Zwangsjacke zu pressen
               const res = buildIroncladEuclideanSequence(parsed.rough_months, weeklyAnalysisCandles);
               waves = res.waves; patchedCandles = res.patchedCandles;
-              if (attempts > 1) await ctx.reply(`✅ Self-Healing erfolgreich! Die KI hat den Chart repariert.`);
-              break; // Loop erfolgreich verlassen (Kein Fehler geworfen!)
+              if (attempts > 1) await ctx.reply(`✅ Self-Healing erfolgreich bei Temperatur ${currentTemp}! Chart repariert.`);
+              break; 
               
           } catch (e: any) {
               if (e.message === "OVERLAP_VIOLATION" || e.message === "RETRACEMENT_VIOLATION") {
                   const fehlerText = e.message === "OVERLAP_VIOLATION" 
-                      ? "OVERLAP_VIOLATION: Welle 4 ist tiefer gefallen als die Spitze von Welle 1! Das ist in einem Impuls absolut verboten." 
-                      : "RETRACEMENT_VIOLATION: Welle 2 ist tiefer gefallen als der Start von Welle 0! Das ist verboten.";
+                      ? "OVERLAP_VIOLATION: Welle 4 ist in das Preisgebiet von Welle 1 eingedrungen!" 
+                      : "RETRACEMENT_VIOLATION: Welle 2 ist tiefer gefallen als Welle 0!";
                   
                   if (attempts < maxAttempts) {
-                      await ctx.reply(`⚠️ Self-Healing Loop (Versuch ${attempts}): ${e.message} erkannt. KI wird zur Korrektur gezwungen...`);
-                      // Prompt anpassen, um die KI im nächsten Durchlauf zu belehren
-                      currentPrompt = `${basePrompt}\n\nACHTUNG, FEHLER BEI DEINEM LETZTEN VERSUCH:\n${fehlerText}\nBitte analysiere den Chart erneut und wähle zwingend andere Monate für deine Wellen, um diesen mathematischen Fehler zu vermeiden!`;
+                      currentTemp += 0.35; // Erhöht die Kreativität/Chaos für den nächsten Versuch
+                      await ctx.reply(`⚠️ Self-Healing Loop (Versuch ${attempts}): ${e.message}. Erhöhe Temperatur auf ${currentTemp}...`);
+                      
+                      // Wirft der KI ihr altes JSON gnadenlos zurück!
+                      currentPrompt = `${basePrompt}\n\nACHTUNG! DEIN VORHERIGES JSON WAR FALSCH:\n${rawText}\n\nGRUND FÜR DEN ABBRUCH:\n${fehlerText}\n\nDU MUSST ZWINGEND ANDERE MONATE ALS IM VORHERIGEN JSON WÄHLEN! VERÄNDERE DIE POSITION VON WELLE 1 ODER WELLE 4!`;
                   } else {
-                      // Wenn es nach 3 Versuchen immer noch scheitert -> Fallback auf A-B-C
-                      await ctx.reply(`🚨 AUTO-VETO KERNEL: Die KI konnte den Chart in 3 Versuchen nicht reparieren. Zählung wird als ungültig (A-B-C Korrektur) deklariert!`);
+                      await ctx.reply(`🚨 AUTO-VETO KERNEL: Die KI konnte den Chart in 3 Versuchen nicht reparieren. Zählung wird als A-B-C Korrektur deklariert!`);
                       finalTrend = "CORRECTION_UP";
                       const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
                       waves = res.waves; patchedCandles = res.patchedCandles;
                       break;
                   }
               } else {
-                  throw e; // Andere unerwartete Code-Fehler normal werfen
+                  throw e; 
               }
           }
       }
     }
-    // ====================================================================
 
     const py = await runPythonCritic(cleanSymbol, waves, patchedCandles);
     
