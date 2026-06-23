@@ -18,10 +18,10 @@ Gemäß dem Elliott-Wellen-Prinzip werden alle Marktbewegungen in zwei grundlege
 Motive Wellen bestehen immer aus fünf Unterwellen und bewegen sich in die gleiche Richtung wie der Trend des nächstgrößeren Grades. Sie haben die Aufgabe, den Markt kraftvoll voranzutreiben.
 
 **Harte Regeln für Motive Wellen (Impulse):**
-* **Welle 2** darf Welle 1 niemals zu mehr als 100 % korrigieren (sie darf nicht über den Startpunkt von Welle 1 hinausgehen).
-* **Welle 4** darf Welle 3 niemals zu 100 % korrigieren und darf nicht in das Preisgebiet von Welle 1 eindringen (Überschneidungsverbot). Ausnahmen bilden hierbei nur diagonale Dreiecke.
-* **Welle 3** wandert immer über das Ende von Welle 1 hinaus.
-* **Welle 3 ist nie die kürzeste** unter den drei Antriebswellen (1, 3 und 5).
+* Welle 2 darf Welle 1 niemals zu mehr als 100 % korrigieren (sie darf nicht über den Startpunkt von Welle 1 hinausgehen).
+* Welle 4 darf Welle 3 niemals zu 100 % korrigieren und darf nicht in das Preisgebiet von Welle 1 eindringen (Überschneidungsverbot). Ausnahmen bilden hierbei nur diagonale Dreiecke.
+* Welle 3 wandert immer über das Ende von Welle 1 hinaus.
+* Welle 3 ist nie die kürzeste unter den drei Antriebswellen (1, 3 und 5).
 * Die Antriebswellen 1, 3 und 5 sind selbst motive Wellen, und Unterwelle 3 ist immer zwingend ein Impuls.
 
 **Richtlinien für Motive Wellen:**
@@ -84,15 +84,33 @@ Korrekturen lassen sich in vier Hauptkategorien unterteilen:
 ### 5. FIBONACCI-EXTENSIONEN & BEZIEHUNGEN (MATHEMATISCHER KOMPASS)
 
 **Motive Wellen (Antriebswellen)**
-* Grundsätzlich neigen alle drei Antriebswellen (Wellen 1, 3 und 5) dazu, durch Fibonacci-Mathematik miteinander in Beziehung zu stehen, meist durch **Gleichheit (1.00), 1.618 oder 2.618** (sowie deren Kehrwerte **0.618 und 0.382**) [1].
-* Wenn Welle 3 eine Extension (Verlängerung) ist, tendieren die Wellen 1 und 5 oft zur **Gleichheit oder zu einem Verhältnis von 0.618** zueinander [1, 2].
-* Die Länge von Welle 5 steht manchmal in einem Fibonacci-Verhältnis zur **kombinierten Länge der Wellen 1 bis 3** [3].
-* Sofern Welle 1 nicht verlängert ist, teilt Welle 4 die Preisspanne der gesamten Impulswelle oft in den Goldenen Schnitt auf, sodass der letzte Teil (Welle 5) entweder **0.382 oder 0.618** der Gesamtdistanz ausmacht [3].
+* Grundsätzlich neigen alle drei Antriebswellen (Wellen 1, 3 und 5) dazu, durch Fibonacci-Mathematik miteinander in Beziehung zu stehen, meist durch **Gleichheit (1.00), 1.618 oder 2.618** (sowie deren Kehrwerte **0.618 und 0.382**).
+* Wenn Welle 3 eine Extension (Verlängerung) ist, tendieren die Wellen 1 und 5 oft zur **Gleichheit oder zu einem Verhältnis von 0.618** zueinander.
+* Die Länge von Welle 5 steht manchmal in einem Fibonacci-Verhältnis zur **kombinierten Länge der Wellen 1 bis 3**.
+* Sofern Welle 1 nicht verlängert ist, teilt Welle 4 die Preisspanne der gesamten Impulswelle oft in den Goldenen Schnitt auf, sodass der letzte Teil (Welle 5) entweder **0.382 oder 0.618** der Gesamtdistanz ausmacht.
 
 **Korrektive Wellen (Korrekturwellen)**
-* **Zickzack-Muster (Zigzags):** Die Länge von Welle C ist in der Regel **gleich lang** wie Welle A, sie ist jedoch nicht selten auch **1.618- oder 0.618-mal so lang** wie Welle A [4]. Dasselbe Verhältnis findet man oft auch zwischen zwei Zickzack-Mustern innerhalb eines Doppel-Zickzacks [4].
-* **Flache Korrekturen (Flats):** In einem regulären Flat sind die Wellen A, B und C ungefähr **gleich lang (1.00)** [4]. Bei einem erweiterten Flat (Expanded Flat) ist Welle C hingegen oft **1.618-mal so lang** wie Welle A, in seltenen Fällen sogar **2.618-mal so lang** [4]. Es kommt auch vor, dass Welle C um exakt das **0.618-Fache** der Länge von Welle A über deren Endpunkt hinausreicht [4]. Die Welle B eines erweiterten Flats ist manchmal **1.236- oder 1.382-mal so lang** wie Welle A [4].
-* **Dreiecke (Triangles):** In kontrahierenden (zusammenziehenden), aufsteigenden oder absteigenden Dreiecken stehen mindestens zwei alternierende Wellen typischerweise im Verhältnis von **0.618** zueinander (z. B. e = 0.618c, c = 0.618a, oder d = 0.618b) [5]. Bei expandierenden Dreiecken beträgt dieser Multiplikator stattdessen **1.618** [5].
-* **Doppelte und dreifache Korrekturen:** Die Nettodistanz eines einfachen Musters innerhalb einer Kombination steht oft im Verhältnis der **Gleichheit oder 0.618** zu einem anderen Muster, insbesondere wenn eines davon ein Dreieck ist [5]. 
-* **Verhältnis von Welle 4 zu 2:** Welle 4 umfasst sehr häufig eine Preisspanne, die in einer **Gleichheits- oder Fibonacci-Beziehung** zu der entsprechenden Welle 2 steht (meist in prozentualer Hinsicht) [6].`;
+* **Zickzack-Muster (Zigzags):** Die Länge von Welle C ist in der Regel **gleich lang** wie Welle A, sie ist jedoch nicht selten auch **1.618- oder 0.618-mal so lang** wie Welle A. Dasselbe Verhältnis findet man oft auch zwischen zwei Zickzack-Mustern innerhalb eines Doppel-Zickzacks.
+* **Flache Korrekturen (Flats):** In einem regulären Flat sind die Wellen A, B und C ungefähr **gleich lang (1.00)**. Bei einem erweiterten Flat (Expanded Flat) ist Welle C hingegen oft **1.618-mal so lang** wie Welle A, in seltenen Fällen sogar **2.618-mal so lang**. Es kommt auch vor, dass Welle C um exakt das **0.618-Fache** der Länge von Welle A über deren Endpunkt hinausreicht. Die Welle B eines erweiterten Flats ist manchmal **1.236- oder 1.382-mal so lang** wie Welle A.
+* **Dreiecke (Triangles):** In kontrahierenden (zusammenziehenden), aufsteigenden oder absteigenden Dreiecken stehen mindestens zwei alternierende Wellen typischerweise im Verhältnis von **0.618** zueinander (z. B. e = 0.618c, c = 0.618a, oder d = 0.618b). Bei expandierenden Dreiecken beträgt dieser Multiplikator stattdessen **1.618**.
+* **Doppelte und dreifache Korrekturen:** Die Nettodistanz eines einfachen Musters innerhalb einer Kombination steht oft im Verhältnis der **Gleichheit oder 0.618** zu einem anderen Muster, insbesondere wenn eines davon ein Dreieck ist.
+* **Verhältnis von Welle 4 zu 2:** Welle 4 umfasst sehr häufig eine Preisspanne, die in einer **Gleichheits- oder Fibonacci-Beziehung** zu der entsprechenden Welle 2 steht (meist in prozentualer Hinsicht).
+
+==================================================================
+
+OUTPUT-FORMAT:
+Analysiere die Daten und entscheide zwingend, ob die Aufwärtsbewegung ein echter Bullenmarkt (Motive Welle) oder nur eine gigantische Bärenmarktrally / Aufwärtskorrektur (A-B-C) ist.
+Antworte STRIKT als valides JSON-Objekt. Keine Erklärungen außerhalb des JSON.
+
+Szenario A (Echter Bullenmarkt):
+{
+  "macro_trend": "IMPULSE_UP",
+  "rough_months": ["YYYY-MM", "YYYY-MM", "YYYY-MM", "YYYY-MM", "YYYY-MM", "YYYY-MM"]
+}
+
+Szenario B (Aufwärtskorrektur / Dead Cat Bounce):
+{
+  "macro_trend": "CORRECTION_UP",
+  "rough_months": ["YYYY-MM", "YYYY-MM", "YYYY-MM", "YYYY-MM"]
+}`;
 }
