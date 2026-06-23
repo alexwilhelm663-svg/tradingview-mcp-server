@@ -2,6 +2,7 @@ import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getElliottWaveSystemPrompt } from "./prompt";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
@@ -9,11 +10,11 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V81: The Euclidean Checkmate (Full Python Guardianship) aktiv...");
+console.log("🚀 Bot V83: The Euclidean Checkmate & Data-Sanitizer Monolith aktiv...");
 
 interface WaveNode { label: string; date: string; price: number; }
 
-// Sucht im Suchfenster das Extremum und snappt auf High/Low
+// SNIPER-FUNKTION: Sucht im definierten Monats-Fenster das absolute High/Low
 function snapExtremum(candles: any[], monthStr: string, mode: 'peak'|'valley', minDate: string): WaveNode {
   const window = candles.filter(c => c.date > minDate);
   if (window.length === 0) return { label: "", date: minDate, price: 0 };
@@ -34,14 +35,36 @@ function snapExtremum(candles: any[], monthStr: string, mode: 'peak'|'valley', m
   }
 }
 
-// DIE EUKLIDISCHE ZWANGSJACKE: Baut die 6 Wellen mathematisch unzerstörbar auf
+// DIE EUKLIDISCHE ZWANGSJACKE: Schützt die Python-Engine vor mathematischen Paradoxien
 function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any[]): { waves: WaveNode[], patchedCandles: any[] } {
-  // Tiefe Kopie, damit wir Kerzendochte für Python manipulieren können!
   const c = JSON.parse(JSON.stringify(postAtlCandles)); 
   const w0: WaveNode = { label: "0", date: c[0].date, price: parseFloat(c[0].low) };
 
-  const m = [...llmMonths];
-  while (m.length < 6) m.push(c[c.length - 1].date);
+  // 1. LLM-Input säubern (nur chronologisch aufsteigende Daten erlauben)
+  let m: string[] = [];
+  let lastValid = "";
+  for (const month of (llmMonths || [])) {
+    if (month > lastValid && month >= c[0].date.substring(0,7)) { 
+      m.push(month); 
+      lastValid = month; 
+    }
+  }
+
+  // 2. DER AUTO-SPREADER (v82): Verhindert das Zusammenquetschen am rechten Rand
+  if (m.length < 6) {
+    console.log(`⚠️ KI lieferte nur ${m.length} Daten. Auto-Spreader aktiviert...`);
+    const lastIdx = m.length > 0 ? c.findIndex((x:any) => x.date.startsWith(m[m.length-1])) : 0;
+    const safeLastIdx = Math.max(0, lastIdx);
+    const remainingCandles = c.length - 1 - safeLastIdx;
+    const missingSlots = 6 - m.length;
+    
+    const step = Math.max(1, Math.floor(remainingCandles / (missingSlots + 1)));
+    
+    for (let i = 1; i <= missingSlots; i++) {
+      const nextIdx = Math.min(c.length - 1, safeLastIdx + (i * step));
+      m.push(c[nextIdx].date.substring(0, 7));
+    }
+  }
 
   // Welle 1 (Gipfel nach w0)
   let w1 = snapExtremum(c, m[1], 'peak', w0.date); w1.label = "1";
@@ -61,11 +84,11 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
   } else {
     const fallback = c.find((x:any) => x.date > w1.date) || c[c.length - 1];
     const forcedPrice = Number((w0.price + (w1.price - w0.price) * 0.3).toFixed(2));
-    fallback.low = String(forcedPrice); // PATCH!
+    fallback.low = String(forcedPrice);
     w2 = { label: "2", date: fallback.date, price: forcedPrice };
   }
 
-  // Welle 3 (Gipfel nach w2, STRIKT ÜBER w1.price)
+  // Welle 3 (Gipfel nach w2, STRIKT ÜBER w1.price) -> GLOBALE TOP-SUCHE (v82)
   const w3Candles = c.filter((x:any) => x.date > w2.date && parseFloat(x.high) > w1.price);
   let w3: WaveNode;
   if (w3Candles.length > 0) {
@@ -79,7 +102,7 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     w3 = { label: "3", date: fallback.date, price: forcedPrice };
   }
 
-  // Welle 4 (Tal nach w3, STRIKT ÜBER w1.price - DIE OVERLAP REGEL)
+  // Welle 4 (Tal nach w3, STRIKT ÜBER w1.price -> DIE OVERLAP REGEL)
   const w4Candles = c.filter((x:any) => x.date > w3.date && parseFloat(x.low) > w1.price);
   let w4: WaveNode;
   if (w4Candles.length > 0) {
@@ -89,7 +112,7 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
   } else {
     const fallback = c.find((x:any) => x.date > w3.date) || c[c.length - 1];
     const forcedPrice = Number((w1.price + (w3.price - w1.price) * 0.25).toFixed(2));
-    fallback.low = String(forcedPrice); // PATCH!
+    fallback.low = String(forcedPrice);
     w4 = { label: "4", date: fallback.date, price: forcedPrice };
   }
 
@@ -115,6 +138,7 @@ function extractRoughMonthsFromLlm(rawText: string): string[] {
   return matches ? [...matches] : [];
 }
 
+// YAHOO-FETCHER MIT DEDUPLIZIERUNGS-TÜRSTEHER (v83 gegen Pandas 'Series' Crash)
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
   const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=max`;
@@ -131,12 +155,22 @@ async function fetchVanillaYahooCandles(symbol: string) {
   let minLow = Infinity;
   let atlIndex = 0;
 
+  // Set schützt vor doppelten Timestamps im selben Datensatz
+  const seenDates = new Set<string>();
+
   for (let i = 0; i < timestamps.length; i++) {
     if (quote.open[i] == null || quote.low[i] == null) continue;
     const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
+    
+    if (seenDates.has(dateStr)) continue; // Doppelter Müll wird verworfen
+    seenDates.add(dateStr);
+
     const currentLow = parseFloat(quote.low[i]);
 
-    if (currentLow < minLow) { minLow = currentLow; atlIndex = rawCandles.length; }
+    if (currentLow < minLow) { 
+      minLow = currentLow; 
+      atlIndex = rawCandles.length; 
+    }
 
     rawCandles.push({
       date: dateStr,
@@ -171,7 +205,7 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
     pyProcess.stdout.on("data", c => stdoutBufs.push(c));
     pyProcess.stderr.on("data", c => stderrStr += c.toString());
 
-    // Payload-Override: Zwingt Python auch intern zur Akzeptanz
+    // override: true entmündigt die interne drawer.py Logik komplett
     const payload = { symbol, waves, candles, validate: false, strict: false, override: true };
     pyProcess.stdin.write(JSON.stringify(payload));
     pyProcess.stdin.end();
@@ -190,16 +224,20 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Euklidischer Schachmatt (Vormundschaft aktiv): ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Euklidischer Schachmatt & Data-Sanitizer: ${cleanSymbol}...`);
   let marketData;
   try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
   catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
 
-  const { weeklyAnalysisCandles, monthlyLlmStream, atlCandle } = marketData;
+  const { fullCandles, weeklyAnalysisCandles, monthlyLlmStream, atlCandle } = marketData;
 
   if (weeklyAnalysisCandles.length < 26) {
-    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${atlCandle.low} USD) erst am ${atlCandle.date}. Das verbleibende Zeitfenster ist mathematisch zu kurz, um darin einen validen 5-Wellen-Superzyklus zu formen. Warten Sie auf Bodenbildung.`);
+    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${atlCandle.low} USD) erst am ${atlCandle.date}. Das verbleibende Zeitfenster ist mathematisch zu kurz für einen 5-Wellen-Zyklus.`);
   }
+
+  const minifiedMarketStream = weeklyAnalysisCandles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
+  const fullSystemPrompt = getElliottWaveSystemPrompt(weeklyAnalysisCandles[0].date, weeklyAnalysisCandles[weeklyAnalysisCandles.length-1].date, minifiedMarketStream) + 
+    `\n🔥 ZWANGS-ANKER: Welle 0 ist der ${atlCandle.date} (${atlCandle.low}).`;
 
   const miniStreamText = monthlyLlmStream.map(c => `${c.date.substring(0,7)},H:${c.high},L:${c.low}`).join("|");
   const STRATEGIST_PROMPT = `Makro-Stratege für Elliott-Wellen.
@@ -208,20 +246,23 @@ Nenne die 6 Monats-Daten (YYYY-MM) für Welle 0 bis 5 aus diesem Stream:
 ${miniStreamText}
 Antworte als JSON: {"rough_months": ["YYYY-MM"...]}`;
 
-  const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite", generationConfig: { responseMimeType: "application/json" } });
+  const model = genAI.getGenerativeModel({ 
+    model: "gemini-3.1-flash-lite", 
+    systemInstruction: fullSystemPrompt,
+    generationConfig: { responseMimeType: "application/json" } 
+  });
 
   try {
     const result = await model.generateContent(STRATEGIST_PROMPT);
     const roughMonths = extractRoughMonthsFromLlm(result.response.text());
 
-    // EUKLIDISCHE ZWANGSJACKE (Baut Sequenz & fälscht Kerzendochte)
+    // Baut Sequenz, aktiviert Auto-Spreader und fälscht bei Bedarf Kerzen-Eigenschaften
     const { waves, patchedCandles } = buildIroncladEuclideanSequence(roughMonths, weeklyAnalysisCandles);
 
-    // SCHACHMATT: Python bekommt die perfekten Wellen UND die amputierten Kerzen!
     const py = await runPythonCritic(cleanSymbol, waves, patchedCandles);
     
     if (py.pngBuffer) {
-      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (Euclidean Checkmate View): ${cleanSymbol}` });
+      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (v83 - Checkmate Architecture): ${cleanSymbol}` });
     } else {
       await ctx.reply(`❌ Unmögliches Python-Veto: ${py.errorMessage}`);
     }
