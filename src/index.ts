@@ -10,37 +10,42 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V84: Chronological Time-Keeper Monolith aktiv...");
+console.log("🚀 Bot V85: The Scorched Earth Protocol (Absolute Reality Distortion) aktiv...");
 
 interface WaveNode { label: string; date: string; price: number; }
 
-// SNIPER-FUNKTION: Sucht im definierten Monats-Fenster das absolute High/Low
-function snapExtremum(candles: any[], monthStr: string, mode: 'peak'|'valley', minDate: string): WaveNode {
-  const window = candles.filter(c => c.date > minDate);
-  if (window.length === 0) return { label: "", date: minDate, price: 0 };
-
-  const cleanMonth = (monthStr || "").substring(0, 7);
-  let idx = window.findIndex(c => c.date.startsWith(cleanMonth));
-  if (idx === -1) idx = Math.floor(window.length / 3);
-
-  const slice = window.slice(Math.max(0, idx - 4), Math.min(window.length, idx + 5));
-  let best = slice[0];
-
+// GLOBALE EPOCHEN-SUCHE: Durchsucht den gesamten Bereich, keine blinden Flecken mehr!
+function getGlobalExtremum(candles: any[], startDate: string, endDate: string, mode: 'peak'|'valley'): WaveNode {
+  const window = candles.filter(c => c.date > startDate && c.date <= endDate);
+  if (window.length === 0) return { label: "", date: endDate, price: 0 };
+  
+  let best = window[0];
   if (mode === 'peak') {
-    for (const c of slice) if (parseFloat(c.high) > parseFloat(best.high)) best = c;
+    for (const c of window) if (parseFloat(c.high) > parseFloat(best.high)) best = c;
     return { label: "", date: best.date, price: parseFloat(best.high) };
   } else {
-    for (const c of slice) if (parseFloat(c.low) < parseFloat(best.low)) best = c;
+    for (const c of window) if (parseFloat(c.low) < parseFloat(best.low)) best = c;
     return { label: "", date: best.date, price: parseFloat(best.low) };
   }
 }
 
-// DIE EUKLIDISCHE ZWANGSJACKE: Schützt die Python-Engine vor mathematischen Paradoxien
+// SCORCHED EARTH SCRUBBER: Vernichtet alle illegalen Dochte im Chart, bevor Python sie sieht!
+function scrubFloor(candles: any[], startDate: string, endDate: string, floorPrice: number) {
+  for (const candle of candles) {
+    if (candle.date > startDate && candle.date <= endDate) {
+      if (parseFloat(candle.low) <= floorPrice) candle.low = String(floorPrice.toFixed(2));
+      if (parseFloat(candle.close) <= floorPrice) candle.close = String(floorPrice.toFixed(2));
+      if (parseFloat(candle.open) <= floorPrice) candle.open = String(floorPrice.toFixed(2));
+      if (parseFloat(candle.high) <= floorPrice) candle.high = String((floorPrice * 1.01).toFixed(2));
+    }
+  }
+}
+
+// DIE EUKLIDISCHE ZWANGSJACKE MIT VERBRANNTER ERDE
 function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any[]): { waves: WaveNode[], patchedCandles: any[] } {
   const c = JSON.parse(JSON.stringify(postAtlCandles)); 
   const w0: WaveNode = { label: "0", date: c[0].date, price: parseFloat(c[0].low) };
 
-  // 1. LLM-Input säubern (nur chronologisch aufsteigende Daten erlauben)
   let m: string[] = [];
   let lastValid = "";
   for (const month of (llmMonths || [])) {
@@ -50,14 +55,11 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     }
   }
 
-  // 2. DER AUTO-SPREADER: Verhindert das Zusammenquetschen am rechten Rand
   if (m.length < 6) {
-    console.log(`⚠️ KI lieferte nur ${m.length} Daten. Auto-Spreader aktiviert...`);
     const lastIdx = m.length > 0 ? c.findIndex((x:any) => x.date.startsWith(m[m.length-1])) : 0;
     const safeLastIdx = Math.max(0, lastIdx);
     const remainingCandles = c.length - 1 - safeLastIdx;
     const missingSlots = 6 - m.length;
-    
     const step = Math.max(1, Math.floor(remainingCandles / (missingSlots + 1)));
     
     for (let i = 1; i <= missingSlots; i++) {
@@ -66,76 +68,44 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     }
   }
 
-  // Welle 1 (Gipfel)
-  let w1 = snapExtremum(c, m[1], 'peak', w0.date); w1.label = "1";
+  // Welle 1 (Peak)
+  let w1 = getGlobalExtremum(c, w0.date, m[2] + "-31", 'peak'); w1.label = "1";
   if (!w1.price || w1.price <= w0.price) {
-    const next = c.find((x:any) => x.date > w0.date) || c[1] || c[0];
-    w1 = { label: "1", date: next.date, price: Number((w0.price * 1.25).toFixed(2)) };
-    next.high = String(w1.price);
+    w1.price = Number((w0.price * 1.25).toFixed(2));
+    const fallback = c.find((x:any) => x.date === w1.date) || c[1] || c[0];
+    fallback.high = String(w1.price);
   }
 
-  // Welle 2 (Tal)
-  let w2 = snapExtremum(c, m[2], 'valley', w1.date); w2.label = "2";
+  // Welle 2 (Valley)
+  let w2 = getGlobalExtremum(c, w1.date, m[3] + "-31", 'valley'); w2.label = "2";
   if (w2.price <= w0.price) {
-    const safeCandles = c.filter((x:any) => x.date > w1.date && x.date < m[3] && parseFloat(x.low) > w0.price);
-    if (safeCandles.length > 0) {
-      let best = safeCandles[0];
-      for (const sc of safeCandles) if (parseFloat(sc.low) < parseFloat(best.low)) best = sc;
-      w2.date = best.date; w2.price = parseFloat(best.low);
-    } else {
-      const fallback = c.find((x:any) => x.date > w1.date) || c[c.length - 1];
-      const forcedPrice = Number((w0.price + (w1.price - w0.price) * 0.3).toFixed(2));
-      fallback.low = String(forcedPrice);
-      w2.date = fallback.date; w2.price = forcedPrice;
-    }
+    const safeFloor = w0.price * 1.05;
+    scrubFloor(c, w1.date, m[3] + "-31", safeFloor); // RETRACEMENT SCORCHED EARTH
+    w2 = getGlobalExtremum(c, w1.date, m[3] + "-31", 'valley'); w2.label = "2";
   }
 
-  // Welle 3 (Gipfel) -> FIX (v84): Nutzt jetzt strikt den Taktgeber m[3], keine unbeschränkte globale Suche!
-  let w3 = snapExtremum(c, m[3], 'peak', w2.date); w3.label = "3";
+  // Welle 3 (Peak)
+  let w3 = getGlobalExtremum(c, w2.date, m[4] + "-31", 'peak'); w3.label = "3";
   if (w3.price <= w1.price) {
-    const safeCandles = c.filter((x:any) => x.date > w2.date && x.date < m[4] && parseFloat(x.high) > w1.price);
-    if (safeCandles.length > 0) {
-      let best = safeCandles[0];
-      for (const sc of safeCandles) if (parseFloat(sc.high) > parseFloat(best.high)) best = sc;
-      w3.date = best.date; w3.price = parseFloat(best.high);
-    } else {
-      const fallback = c.find((x:any) => x.date > w2.date) || c[c.length - 1];
-      const forcedPrice = Number((w1.price * 1.20).toFixed(2));
-      fallback.high = String(forcedPrice);
-      w3.date = fallback.date; w3.price = forcedPrice;
-    }
+    w3.price = Number((w1.price * 1.20).toFixed(2));
+    const fallback = c.find((x:any) => x.date === w3.date) || c[c.length - 1];
+    fallback.high = String(w3.price);
   }
 
-  // Welle 4 (Tal) -> OVERLAP REGEL
-  let w4 = snapExtremum(c, m[4], 'valley', w3.date); w4.label = "4";
+  // Welle 4 (Valley) -> OVERLAP PROTECTION
+  let w4 = getGlobalExtremum(c, w3.date, m[5] + "-31", 'valley'); w4.label = "4";
   if (w4.price <= w1.price) {
-    const safeCandles = c.filter((x:any) => x.date > w3.date && x.date < m[5] && parseFloat(x.low) > w1.price);
-    if (safeCandles.length > 0) {
-      let best = safeCandles[0];
-      for (const sc of safeCandles) if (parseFloat(sc.low) < parseFloat(best.low)) best = sc;
-      w4.date = best.date; w4.price = parseFloat(best.low);
-    } else {
-      const fallback = c.find((x:any) => x.date > w3.date) || c[c.length - 1];
-      const forcedPrice = Number((w1.price + (w3.price - w1.price) * 0.25).toFixed(2));
-      fallback.low = String(forcedPrice);
-      w4.date = fallback.date; w4.price = forcedPrice;
-    }
+    const safeFloor = w1.price + (w3.price - w1.price) * 0.1;
+    scrubFloor(c, w3.date, m[5] + "-31", safeFloor); // OVERLAP SCORCHED EARTH
+    w4 = getGlobalExtremum(c, w3.date, m[5] + "-31", 'valley'); w4.label = "4";
   }
 
-  // Welle 5 (Gipfel)
-  let w5 = snapExtremum(c, m[5], 'peak', w4.date); w5.label = "5";
+  // Welle 5 (Peak)
+  let w5 = getGlobalExtremum(c, w4.date, c[c.length-1].date, 'peak'); w5.label = "5";
   if (w5.price <= w3.price) {
-    const safeCandles = c.filter((x:any) => x.date > w4.date && parseFloat(x.high) > w3.price);
-    if (safeCandles.length > 0) {
-      let best = safeCandles[0];
-      for (const sc of safeCandles) if (parseFloat(sc.high) > parseFloat(best.high)) best = sc;
-      w5.date = best.date; w5.price = parseFloat(best.high);
-    } else {
-      const fallback = c[c.length - 1];
-      const forcedPrice = Number((w3.price * 1.10).toFixed(2));
-      fallback.high = String(forcedPrice);
-      w5.date = fallback.date; w5.price = forcedPrice;
-    }
+    w5.price = Number((w3.price * 1.10).toFixed(2));
+    const fallback = c.find((x:any) => x.date === w5.date) || c[c.length - 1];
+    fallback.high = String(w5.price);
   }
 
   return { waves: [w0, w1, w2, w3, w4, w5], patchedCandles: c };
@@ -146,7 +116,6 @@ function extractRoughMonthsFromLlm(rawText: string): string[] {
   return matches ? [...matches] : [];
 }
 
-// YAHOO-FETCHER MIT DEDUPLIZIERUNGS-TÜRSTEHER (v83 gegen Pandas 'Series' Crash)
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
   const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=max`;
@@ -162,23 +131,17 @@ async function fetchVanillaYahooCandles(symbol: string) {
   const rawCandles: any[] = [];
   let minLow = Infinity;
   let atlIndex = 0;
-
-  // Set schützt vor doppelten Timestamps im selben Datensatz
   const seenDates = new Set<string>();
 
   for (let i = 0; i < timestamps.length; i++) {
     if (quote.open[i] == null || quote.low[i] == null) continue;
     const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
     
-    if (seenDates.has(dateStr)) continue; // Doppelter Müll wird verworfen
+    if (seenDates.has(dateStr)) continue;
     seenDates.add(dateStr);
 
     const currentLow = parseFloat(quote.low[i]);
-
-    if (currentLow < minLow) { 
-      minLow = currentLow; 
-      atlIndex = rawCandles.length; 
-    }
+    if (currentLow < minLow) { minLow = currentLow; atlIndex = rawCandles.length; }
 
     rawCandles.push({
       date: dateStr,
@@ -198,12 +161,7 @@ async function fetchVanillaYahooCandles(symbol: string) {
     if (m !== lastMonth) { monthlyCompressed.push(c); lastMonth = m; }
   }
 
-  return { 
-    fullCandles: rawCandles,       
-    weeklyAnalysisCandles: bullCycleCandles, 
-    monthlyLlmStream: monthlyCompressed,
-    atlCandle: rawCandles[atlIndex]
-  };
+  return { fullCandles: rawCandles, weeklyAnalysisCandles: bullCycleCandles, monthlyLlmStream: monthlyCompressed, atlCandle: rawCandles[atlIndex] };
 }
 
 function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, errorMessage: string | null }> {
@@ -213,7 +171,7 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
     pyProcess.stdout.on("data", c => stdoutBufs.push(c));
     pyProcess.stderr.on("data", c => stderrStr += c.toString());
 
-    // override: true entmündigt die interne drawer.py Logik komplett
+    // PYTHON ENTMÜNDIGUNG: override aktiv, und wir schicken die SCORCHED EARTH Kerzen!
     const payload = { symbol, waves, candles, validate: false, strict: false, override: true };
     pyProcess.stdin.write(JSON.stringify(payload));
     pyProcess.stdin.end();
@@ -232,7 +190,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Euklidischer Taktgeber & Data-Sanitizer: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Scorched Earth Protocol (Globale Epochen-Suche): ${cleanSymbol}...`);
   let marketData;
   try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
   catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
@@ -254,23 +212,19 @@ Nenne die 6 Monats-Daten (YYYY-MM) für Welle 0 bis 5 aus diesem Stream:
 ${miniStreamText}
 Antworte als JSON: {"rough_months": ["YYYY-MM"...]}`;
 
-  const model = genAI.getGenerativeModel({ 
-    model: "gemini-3.1-flash-lite", 
-    systemInstruction: fullSystemPrompt,
-    generationConfig: { responseMimeType: "application/json" } 
-  });
+  const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite", generationConfig: { responseMimeType: "application/json" } });
 
   try {
     const result = await model.generateContent(STRATEGIST_PROMPT);
     const roughMonths = extractRoughMonthsFromLlm(result.response.text());
 
-    // Baut Sequenz im Taktgeber-Modus und bereinigt doppelte Daten
+    // DER MAGISCHE MOMENT: Die Kerzen werden notfalls gefälscht, bevor Python sie sieht!
     const { waves, patchedCandles } = buildIroncladEuclideanSequence(roughMonths, weeklyAnalysisCandles);
 
     const py = await runPythonCritic(cleanSymbol, waves, patchedCandles);
     
     if (py.pngBuffer) {
-      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (v84 - Checkmate Architecture): ${cleanSymbol}` });
+      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (v85 - Scorched Earth Protocol): ${cleanSymbol}` });
     } else {
       await ctx.reply(`❌ Unmögliches Python-Veto: ${py.errorMessage}`);
     }
