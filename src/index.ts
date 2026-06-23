@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V91: Dual-Core Architecture & Hologram Overlap Protection aktiv...");
+console.log("🚀 Bot V93: Pure Reality Engine (Keine fliegenden Punkte mehr) aktiv...");
 
 interface WaveNode { label: string; date: string; price: number; }
 
@@ -43,7 +43,7 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     }
   }
 
-  // Auto-Spreader
+  // Auto-Spreader für fehlende KI-Daten
   if (m.length < 6) {
     const lastIdx = m.length > 0 ? c.findIndex((x:any) => x.date.startsWith(m[m.length-1])) : 0;
     const safeLastIdx = Math.max(0, lastIdx);
@@ -56,73 +56,24 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     }
   }
 
+  // ====================================================================
+  // 🔥 100% PURE REALITY: Absolute Bindung an den echten Kurs-Chart
+  // ====================================================================
   let w1 = getGlobalExtremum(c, w0.date, m[2] + "-31", 'peak'); w1.label = "1";
-  if (!w1.price || w1.price <= w0.price) {
-    w1.price = Number((w0.price * 1.25).toFixed(2));
-    const fallback = c.find((x:any) => x.date === w1.date) || c[1] || c[0];
-    fallback.high = String(w1.price);
-  }
-
-  // Welle 2 (Valley) -> HOLOGRAMM PROTECTION (Gewaltfrei)
   let w2 = getGlobalExtremum(c, w1.date, m[3] + "-31", 'valley'); w2.label = "2";
-  if (w2.price <= w0.price) {
-    const safeFloor = Number((w0.price * 1.05).toFixed(2));
-    const legalCandles = c.filter((x:any) => x.date > w1.date && x.date <= (m[3]+"-31") && parseFloat(x.low) > safeFloor);
-    if (legalCandles.length > 0) {
-      let best = legalCandles[0];
-      for (const lc of legalCandles) if (parseFloat(lc.low) < parseFloat(best.low)) best = lc;
-      w2.date = best.date; w2.price = parseFloat(best.low);
-    } else {
-      w2.price = safeFloor;
-      w2.date = (c.find((x:any) => x.date > w1.date) || c[1]).date;
-    }
-  }
-
   let w3 = getGlobalExtremum(c, w2.date, m[4] + "-31", 'peak'); w3.label = "3";
-  if (w3.price <= w1.price) {
-    w3.price = Number((w1.price * 1.20).toFixed(2));
-    const fallback = c.find((x:any) => x.date === w3.date) || c[c.length - 1];
-    fallback.high = String(w3.price);
-  }
-
-  // Welle 4 (Valley) -> HOLOGRAMM PROTECTION (Gewaltfrei)
   let w4 = getGlobalExtremum(c, w3.date, m[5] + "-31", 'valley'); w4.label = "4";
-  if (w4.price <= w1.price) {
-    const safeFloor = Number((w1.price + (w3.price - w1.price) * 0.1).toFixed(2));
-    const legalCandles = c.filter((x:any) => x.date > w3.date && x.date <= (m[5]+"-31") && parseFloat(x.low) > w1.price);
-    
-    if (legalCandles.length > 0) {
-      let best = legalCandles[0];
-      for (const lc of legalCandles) if (parseFloat(lc.low) < parseFloat(best.low)) best = lc;
-      w4.date = best.date; w4.price = parseFloat(best.low);
-    } else {
-      w4.price = safeFloor;
-      w4.date = (c.find((x:any) => x.date > w3.date) || c[c.length - 2]).date;
-    }
-  }
-
   let w5 = getGlobalExtremum(c, w4.date, c[c.length-1].date, 'peak'); w5.label = "5";
-  if (w5.price <= w3.price) {
-    w5.price = Number((w3.price * 1.10).toFixed(2));
-    const fallback = c.find((x:any) => x.date === w5.date) || c[c.length - 1];
-    fallback.high = String(w5.price);
-  }
 
   const finalWaves: WaveNode[] = [w0, w1, w2, w3, w4, w5];
 
-  // POST-CYCLE AUTOPSY
+  // POST-CYCLE AUTOPSY (Auch hier: Keine künstlichen Limits mehr)
   const postW5Candles = c.filter((x:any) => x.date > w5.date);
   if (postW5Candles.length > 15) {
     let wC = getGlobalExtremum(c, w5.date, c[c.length-1].date, 'valley'); wC.label = "C";
     let wB = getGlobalExtremum(c, w5.date, wC.date, 'peak'); wB.label = "B";
     let wA = getGlobalExtremum(c, w5.date, wB.date, 'valley'); wA.label = "A";
 
-    if (wB.price >= w5.price) {
-      wB.price = Number((w5.price * 0.90).toFixed(2));
-      const fallback = c.find((x:any) => x.date === wB.date) || c[c.length - 1];
-      fallback.high = String(wB.price);
-    }
-    if (wA.price >= wB.price) wA.price = Number((wB.price * 0.85).toFixed(2));
     if (wA.date > w5.date && wB.date > wA.date && wC.date > wB.date) {
         finalWaves.push(wA, wB, wC);
     }
@@ -145,34 +96,12 @@ function buildUpwardCorrectionSequence(llmMonths: string[], postAtlCandles: any[
   }
   while (m.length < 4) m.push(c[c.length - 1].date.substring(0, 7));
 
+  // ====================================================================
+  // 🔥 100% PURE REALITY (Auch in Korrekturen)
+  // ====================================================================
   let wA = getGlobalExtremum(c, w0.date, m[1] + "-31", 'peak'); wA.label = "A";
-  if (!wA.price || wA.price <= w0.price) {
-    wA.price = Number((w0.price * 1.25).toFixed(2));
-    const fallback = c.find((x:any) => x.date > w0.date) || c[1];
-    fallback.high = String(wA.price); wA.date = fallback.date;
-  }
-
-  // Welle B (Valley) -> HOLOGRAMM PROTECTION (Gewaltfrei)
   let wB = getGlobalExtremum(c, wA.date, m[2] + "-31", 'valley'); wB.label = "B";
-  if (wB.price <= w0.price) {
-    const safeFloor = Number((w0.price * 1.05).toFixed(2));
-    const legalCandles = c.filter((x:any) => x.date > wA.date && x.date <= (m[2]+"-31") && parseFloat(x.low) > safeFloor);
-    if (legalCandles.length > 0) {
-      let best = legalCandles[0];
-      for (const lc of legalCandles) if (parseFloat(lc.low) < parseFloat(best.low)) best = lc;
-      wB.date = best.date; wB.price = parseFloat(best.low);
-    } else {
-      wB.price = safeFloor;
-      wB.date = (c.find((x:any) => x.date > wA.date) || c[1]).date;
-    }
-  }
-
   let wC = getGlobalExtremum(c, wB.date, c[c.length-1].date, 'peak'); wC.label = "C";
-  if (wC.price <= wB.price) {
-    wC.price = Number((wB.price * 1.10).toFixed(2));
-    const fallback = c.find((x:any) => x.date > wB.date) || c[c.length-1];
-    fallback.high = String(wC.price); wC.date = fallback.date;
-  }
 
   return { waves: [w0, wA, wB, wC], patchedCandles: c };
 }
@@ -255,7 +184,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ V91 Dual-Core Engine (Hologram Protection): ${cleanSymbol}...`);
+  await ctx.reply(`⏳ V93 Pure Reality Engine: ${cleanSymbol}...`);
   let marketData;
   try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
   catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
