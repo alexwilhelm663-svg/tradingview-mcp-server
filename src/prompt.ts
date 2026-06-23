@@ -77,5 +77,22 @@ Korrekturen lassen sich in vier Hauptkategorien unterteilen:
 1. **VERBOT VON ZEITSPRÜNGEN:** Die Datumsangaben in der Tabelle MÜSSEN zwingend chronologisch vorwärts marschieren oder gleich bleiben: \`Datum(Zeile i) <= Datum(Zeile i+1)\`.
 2. **VERBOT VON RETRACEMENT-BRÜCHEN:** Eine interne Unterwelle 2 darf NIEMALS tiefer fallen als der Startpreis der zugehörigen Unterwelle 1! 
 3. **VERBOT VON ANTI-GRAVITATIONSTIEFS:** Ein Korrektur-Tal MUSS zwingend tiefer notieren als der direkt davorliegende Berggipfel! 
-4. **VERBOT VON IMPULS-ÜBERSCHNEIDUNGEN (Overlap):** In einem regulären Impuls darf das Tal der Welle 4 NIEMALS tiefer fallen als die Spitze der Welle 1.`;
+4. **VERBOT VON IMPULS-ÜBERSCHNEIDUNGEN (Overlap):** In einem regulären Impuls darf das Tal der Welle 4 NIEMALS tiefer fallen als die Spitze der Welle 1.
+
+---
+
+### 5. FIBONACCI-EXTENSIONEN & BEZIEHUNGEN (MATHEMATISCHER KOMPASS)
+
+**Motive Wellen (Antriebswellen)**
+* Grundsätzlich neigen alle drei Antriebswellen (Wellen 1, 3 und 5) dazu, durch Fibonacci-Mathematik miteinander in Beziehung zu stehen, meist durch **Gleichheit (1.00), 1.618 oder 2.618** (sowie deren Kehrwerte **0.618 und 0.382**) [1].
+* Wenn Welle 3 eine Extension (Verlängerung) ist, tendieren die Wellen 1 und 5 oft zur **Gleichheit oder zu einem Verhältnis von 0.618** zueinander [1, 2].
+* Die Länge von Welle 5 steht manchmal in einem Fibonacci-Verhältnis zur **kombinierten Länge der Wellen 1 bis 3** [3].
+* Sofern Welle 1 nicht verlängert ist, teilt Welle 4 die Preisspanne der gesamten Impulswelle oft in den Goldenen Schnitt auf, sodass der letzte Teil (Welle 5) entweder **0.382 oder 0.618** der Gesamtdistanz ausmacht [3].
+
+**Korrektive Wellen (Korrekturwellen)**
+* **Zickzack-Muster (Zigzags):** Die Länge von Welle C ist in der Regel **gleich lang** wie Welle A, sie ist jedoch nicht selten auch **1.618- oder 0.618-mal so lang** wie Welle A [4]. Dasselbe Verhältnis findet man oft auch zwischen zwei Zickzack-Mustern innerhalb eines Doppel-Zickzacks [4].
+* **Flache Korrekturen (Flats):** In einem regulären Flat sind die Wellen A, B und C ungefähr **gleich lang (1.00)** [4]. Bei einem erweiterten Flat (Expanded Flat) ist Welle C hingegen oft **1.618-mal so lang** wie Welle A, in seltenen Fällen sogar **2.618-mal so lang** [4]. Es kommt auch vor, dass Welle C um exakt das **0.618-Fache** der Länge von Welle A über deren Endpunkt hinausreicht [4]. Die Welle B eines erweiterten Flats ist manchmal **1.236- oder 1.382-mal so lang** wie Welle A [4].
+* **Dreiecke (Triangles):** In kontrahierenden (zusammenziehenden), aufsteigenden oder absteigenden Dreiecken stehen mindestens zwei alternierende Wellen typischerweise im Verhältnis von **0.618** zueinander (z. B. e = 0.618c, c = 0.618a, oder d = 0.618b) [5]. Bei expandierenden Dreiecken beträgt dieser Multiplikator stattdessen **1.618** [5].
+* **Doppelte und dreifache Korrekturen:** Die Nettodistanz eines einfachen Musters innerhalb einer Kombination steht oft im Verhältnis der **Gleichheit oder 0.618** zu einem anderen Muster, insbesondere wenn eines davon ein Dreieck ist [5]. 
+* **Verhältnis von Welle 4 zu 2:** Welle 4 umfasst sehr häufig eine Preisspanne, die in einer **Gleichheits- oder Fibonacci-Beziehung** zu der entsprechenden Welle 2 steht (meist in prozentualer Hinsicht) [6].`;
 }
