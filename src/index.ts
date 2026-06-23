@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V95: Pure Reality (Auto-Veto & Zero Temp Sniper) aktiv...");
+console.log("🚀 Bot V96: Zero Temp Sniper mit echtem Self-Healing Loop aktiv...");
 
 interface WaveNode { label: string; date: string; price: number; }
 
@@ -43,7 +43,6 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     }
   }
 
-  // Auto-Spreader für fehlende KI-Daten
   if (m.length < 6) {
     const lastIdx = m.length > 0 ? c.findIndex((x:any) => x.date.startsWith(m[m.length-1])) : 0;
     const safeLastIdx = Math.max(0, lastIdx);
@@ -59,13 +58,11 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
   let w1 = getGlobalExtremum(c, w0.date, m[2] + "-31", 'peak'); w1.label = "1";
   
   let w2 = getGlobalExtremum(c, w1.date, m[3] + "-31", 'valley'); w2.label = "2";
-  // AUTO-VETO: Welle 2 darf Welle 0 nicht unterschreiten
   if (w2.price <= w0.price) throw new Error("RETRACEMENT_VIOLATION");
 
   let w3 = getGlobalExtremum(c, w2.date, m[4] + "-31", 'peak'); w3.label = "3";
   
   let w4 = getGlobalExtremum(c, w3.date, m[5] + "-31", 'valley'); w4.label = "4";
-  // AUTO-VETO: Welle 4 darf nicht in das Preisgebiet von Welle 1 eindringen
   if (w4.price <= w1.price) throw new Error("OVERLAP_VIOLATION");
 
   let w5 = getGlobalExtremum(c, w4.date, c[c.length-1].date, 'peak'); w5.label = "5";
@@ -105,11 +102,6 @@ function buildUpwardCorrectionSequence(llmMonths: string[], postAtlCandles: any[
   let wC = getGlobalExtremum(c, wB.date, c[c.length-1].date, 'peak'); wC.label = "C";
 
   return { waves: [w0, wA, wB, wC], patchedCandles: c };
-}
-
-function extractRoughMonthsFromLlm(rawText: string): string[] {
-  const matches = rawText.match(/\b(19|20)\d{2}-(0[1-9]|1[0-2])\b/g);
-  return matches ? [...matches] : [];
 }
 
 async function fetchVanillaYahooCandles(symbol: string) {
@@ -185,7 +177,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ V95 Zero Temp Sniper: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ V96 Zero Temp & Self-Healing: ${cleanSymbol}...`);
   let marketData;
   try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
   catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
@@ -193,16 +185,16 @@ bot.command("analyse", async (ctx) => {
   const { fullCandles, weeklyAnalysisCandles, monthlyLlmStream, atlCandle } = marketData;
 
   if (weeklyAnalysisCandles.length < 26) {
-    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${atlCandle.low} USD) erst am ${atlCandle.date}. Das verbleibende Zeitfenster ist mathematisch zu kurz für einen 5-Wellen-Zyklus.`);
+    return ctx.reply(`📉 **Säkulares Bärenmarkt-Veto:** \nDie Aktie markierte ihr Allzeittief (${atlCandle.low} USD) erst am ${atlCandle.date}. Das verbleibende Zeitfenster ist zu kurz.`);
   }
 
   const minifiedMarketStream = weeklyAnalysisCandles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
   const fullSystemPrompt = getElliottWaveSystemPrompt(weeklyAnalysisCandles[0].date, weeklyAnalysisCandles[weeklyAnalysisCandles.length-1].date, minifiedMarketStream) + 
     `\n🔥 ZWANGS-ANKER: Welle 0 ist der ${atlCandle.date} (${atlCandle.low}).`;
 
-  const STRATEGIST_PROMPT = `Analysiere die Daten, entscheide den macro_trend und liefere das JSON.`;
+  let basePrompt = `Analysiere die Daten, entscheide den macro_trend und liefere das JSON.`;
+  let currentPrompt = basePrompt;
 
-  // 🔥 V95 ZERO TEMPERATURE SNIPER
   const model = genAI.getGenerativeModel({ 
     model: "gemini-3.1-flash-lite", 
     generationConfig: { 
@@ -212,40 +204,67 @@ bot.command("analyse", async (ctx) => {
   });
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: STRATEGIST_PROMPT }] }],
-      systemInstruction: { role: "system", parts: [{ text: fullSystemPrompt }] }
-    });
-    
-    let parsed = { macro_trend: "IMPULSE_UP", rough_months: [] as string[] };
-    const rawText = result.response.text();
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-
+    let attempts = 0;
+    const maxAttempts = 3;
     let waves, patchedCandles;
-    let finalTrend = parsed.macro_trend;
+    let finalTrend = "IMPULSE_UP";
 
-    if (finalTrend === "CORRECTION_UP") {
-        await ctx.reply(`🚨 BÄRENMARKTRALLY ERKANNT: Aufwärtsbewegung ist ein massives A-B-C Fraktal!`);
-        const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
-        waves = res.waves; patchedCandles = res.patchedCandles;
-    } else {
-        try {
-            const res = buildIroncladEuclideanSequence(parsed.rough_months, weeklyAnalysisCandles);
-            waves = res.waves; patchedCandles = res.patchedCandles;
-        } catch (e: any) {
-            // DAS AUTO-VETO GREIFT EIN
-            if (e.message === "OVERLAP_VIOLATION" || e.message === "RETRACEMENT_VIOLATION") {
-                const fehler = e.message === "OVERLAP_VIOLATION" ? "Welle 4 überschneidet Welle 1" : "Welle 2 fällt unter Welle 0";
-                await ctx.reply(`🚨 KERNEL AUTO-VETO (${fehler}): Die KI hat einen mathematisch unmöglichen Impuls konstruiert. Node.js blockiert die fehlerhafte Zeichnung und wandelt die Struktur zwingend in eine A-B-C Korrektur um!`);
-                finalTrend = "CORRECTION_UP";
-                const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
-                waves = res.waves; patchedCandles = res.patchedCandles;
-            } else {
-                throw e;
-            }
-        }
+    // ====================================================================
+    // 🔥 THE SELF-HEALING LOOP
+    // ====================================================================
+    while (attempts < maxAttempts) {
+      attempts++;
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: currentPrompt }] }],
+        systemInstruction: { role: "system", parts: [{ text: fullSystemPrompt }] }
+      });
+      
+      let parsed = { macro_trend: "IMPULSE_UP", rough_months: [] as string[] };
+      const rawText = result.response.text();
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+
+      finalTrend = parsed.macro_trend;
+
+      if (finalTrend === "CORRECTION_UP") {
+          // Bärenrally direkt akzeptieren (kein Overlap-Risiko)
+          if (attempts === 1) await ctx.reply(`🚨 BÄRENMARKTRALLY ERKANNT: Aufwärtsbewegung ist ein massives A-B-C Fraktal!`);
+          const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
+          waves = res.waves; patchedCandles = res.patchedCandles;
+          break; // Loop erfolgreich verlassen
+      } else {
+          try {
+              // Versuche, den Impuls durch die euklidische Zwangsjacke zu pressen
+              const res = buildIroncladEuclideanSequence(parsed.rough_months, weeklyAnalysisCandles);
+              waves = res.waves; patchedCandles = res.patchedCandles;
+              if (attempts > 1) await ctx.reply(`✅ Self-Healing erfolgreich! Die KI hat den Chart repariert.`);
+              break; // Loop erfolgreich verlassen (Kein Fehler geworfen!)
+              
+          } catch (e: any) {
+              if (e.message === "OVERLAP_VIOLATION" || e.message === "RETRACEMENT_VIOLATION") {
+                  const fehlerText = e.message === "OVERLAP_VIOLATION" 
+                      ? "OVERLAP_VIOLATION: Welle 4 ist tiefer gefallen als die Spitze von Welle 1! Das ist in einem Impuls absolut verboten." 
+                      : "RETRACEMENT_VIOLATION: Welle 2 ist tiefer gefallen als der Start von Welle 0! Das ist verboten.";
+                  
+                  if (attempts < maxAttempts) {
+                      await ctx.reply(`⚠️ Self-Healing Loop (Versuch ${attempts}): ${e.message} erkannt. KI wird zur Korrektur gezwungen...`);
+                      // Prompt anpassen, um die KI im nächsten Durchlauf zu belehren
+                      currentPrompt = `${basePrompt}\n\nACHTUNG, FEHLER BEI DEINEM LETZTEN VERSUCH:\n${fehlerText}\nBitte analysiere den Chart erneut und wähle zwingend andere Monate für deine Wellen, um diesen mathematischen Fehler zu vermeiden!`;
+                  } else {
+                      // Wenn es nach 3 Versuchen immer noch scheitert -> Fallback auf A-B-C
+                      await ctx.reply(`🚨 AUTO-VETO KERNEL: Die KI konnte den Chart in 3 Versuchen nicht reparieren. Zählung wird als ungültig (A-B-C Korrektur) deklariert!`);
+                      finalTrend = "CORRECTION_UP";
+                      const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
+                      waves = res.waves; patchedCandles = res.patchedCandles;
+                      break;
+                  }
+              } else {
+                  throw e; // Andere unerwartete Code-Fehler normal werfen
+              }
+          }
+      }
     }
+    // ====================================================================
 
     const py = await runPythonCritic(cleanSymbol, waves, patchedCandles);
     
