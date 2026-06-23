@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V93: Pure Reality Engine (Keine fliegenden Punkte mehr) aktiv...");
+console.log("🚀 Bot V94: Pure Reality mit Auto-Veto (Overlap Protection) aktiv...");
 
 interface WaveNode { label: string; date: string; price: number; }
 
@@ -56,18 +56,22 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     }
   }
 
-  // ====================================================================
-  // 🔥 100% PURE REALITY: Absolute Bindung an den echten Kurs-Chart
-  // ====================================================================
   let w1 = getGlobalExtremum(c, w0.date, m[2] + "-31", 'peak'); w1.label = "1";
+  
   let w2 = getGlobalExtremum(c, w1.date, m[3] + "-31", 'valley'); w2.label = "2";
+  // AUTO-VETO: Welle 2 darf Welle 0 nicht unterschreiten
+  if (w2.price <= w0.price) throw new Error("RETRACEMENT_VIOLATION");
+
   let w3 = getGlobalExtremum(c, w2.date, m[4] + "-31", 'peak'); w3.label = "3";
+  
   let w4 = getGlobalExtremum(c, w3.date, m[5] + "-31", 'valley'); w4.label = "4";
+  // AUTO-VETO: Welle 4 darf nicht in das Preisgebiet von Welle 1 eindringen
+  if (w4.price <= w1.price) throw new Error("OVERLAP_VIOLATION");
+
   let w5 = getGlobalExtremum(c, w4.date, c[c.length-1].date, 'peak'); w5.label = "5";
 
   const finalWaves: WaveNode[] = [w0, w1, w2, w3, w4, w5];
 
-  // POST-CYCLE AUTOPSY (Auch hier: Keine künstlichen Limits mehr)
   const postW5Candles = c.filter((x:any) => x.date > w5.date);
   if (postW5Candles.length > 15) {
     let wC = getGlobalExtremum(c, w5.date, c[c.length-1].date, 'valley'); wC.label = "C";
@@ -96,9 +100,6 @@ function buildUpwardCorrectionSequence(llmMonths: string[], postAtlCandles: any[
   }
   while (m.length < 4) m.push(c[c.length - 1].date.substring(0, 7));
 
-  // ====================================================================
-  // 🔥 100% PURE REALITY (Auch in Korrekturen)
-  // ====================================================================
   let wA = getGlobalExtremum(c, w0.date, m[1] + "-31", 'peak'); wA.label = "A";
   let wB = getGlobalExtremum(c, wA.date, m[2] + "-31", 'valley'); wB.label = "B";
   let wC = getGlobalExtremum(c, wB.date, c[c.length-1].date, 'peak'); wC.label = "C";
@@ -184,7 +185,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ V93 Pure Reality Engine: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ V94 Auto-Veto Kernel: ${cleanSymbol}...`);
   let marketData;
   try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
   catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
@@ -209,28 +210,40 @@ bot.command("analyse", async (ctx) => {
       systemInstruction: { role: "system", parts: [{ text: fullSystemPrompt }] }
     });
     
-    // JSON PARSER MIT DUAL-CORE ERKENNUNG
     let parsed = { macro_trend: "IMPULSE_UP", rough_months: [] as string[] };
     const rawText = result.response.text();
     const jsonMatch = rawText.match(/\{[\s\S]*\}/);
     if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
 
     let waves, patchedCandles;
+    let finalTrend = parsed.macro_trend;
 
-    // THE DUAL-CORE ROUTER
-    if (parsed.macro_trend === "CORRECTION_UP") {
+    if (finalTrend === "CORRECTION_UP") {
         await ctx.reply(`🚨 BÄRENMARKTRALLY ERKANNT: Aufwärtsbewegung ist ein massives A-B-C Fraktal!`);
         const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
         waves = res.waves; patchedCandles = res.patchedCandles;
     } else {
-        const res = buildIroncladEuclideanSequence(parsed.rough_months, weeklyAnalysisCandles);
-        waves = res.waves; patchedCandles = res.patchedCandles;
+        try {
+            const res = buildIroncladEuclideanSequence(parsed.rough_months, weeklyAnalysisCandles);
+            waves = res.waves; patchedCandles = res.patchedCandles;
+        } catch (e: any) {
+            // DAS AUTO-VETO GREIFT EIN
+            if (e.message === "OVERLAP_VIOLATION" || e.message === "RETRACEMENT_VIOLATION") {
+                const fehler = e.message === "OVERLAP_VIOLATION" ? "Welle 4 überschneidet Welle 1" : "Welle 2 fällt unter Welle 0";
+                await ctx.reply(`🚨 KERNEL AUTO-VETO (${fehler}): Die KI hat einen mathematisch unmöglichen Impuls konstruiert. Node.js blockiert die fehlerhafte Zeichnung und wandelt die Struktur zwingend in eine A-B-C Korrektur um!`);
+                finalTrend = "CORRECTION_UP";
+                const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
+                waves = res.waves; patchedCandles = res.patchedCandles;
+            } else {
+                throw e;
+            }
+        }
     }
 
     const py = await runPythonCritic(cleanSymbol, waves, patchedCandles);
     
     if (py.pngBuffer) {
-      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (${parsed.macro_trend}): ${cleanSymbol}` });
+      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (${finalTrend}): ${cleanSymbol}` });
     } else {
       await ctx.reply(`❌ Unmögliches Python-Veto: ${py.errorMessage}`);
     }
