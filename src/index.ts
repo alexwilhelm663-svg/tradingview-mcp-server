@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V83: The Euclidean Checkmate & Data-Sanitizer Monolith aktiv...");
+console.log("🚀 Bot V84: Chronological Time-Keeper Monolith aktiv...");
 
 interface WaveNode { label: string; date: string; price: number; }
 
@@ -50,7 +50,7 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     }
   }
 
-  // 2. DER AUTO-SPREADER (v82): Verhindert das Zusammenquetschen am rechten Rand
+  // 2. DER AUTO-SPREADER: Verhindert das Zusammenquetschen am rechten Rand
   if (m.length < 6) {
     console.log(`⚠️ KI lieferte nur ${m.length} Daten. Auto-Spreader aktiviert...`);
     const lastIdx = m.length > 0 ? c.findIndex((x:any) => x.date.startsWith(m[m.length-1])) : 0;
@@ -66,7 +66,7 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     }
   }
 
-  // Welle 1 (Gipfel nach w0)
+  // Welle 1 (Gipfel)
   let w1 = snapExtremum(c, m[1], 'peak', w0.date); w1.label = "1";
   if (!w1.price || w1.price <= w0.price) {
     const next = c.find((x:any) => x.date > w0.date) || c[1] || c[0];
@@ -74,60 +74,68 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     next.high = String(w1.price);
   }
 
-  // Welle 2 (Tal nach w1, STRIKT ÜBER w0.price)
-  const w2Candles = c.filter((x:any) => x.date > w1.date && parseFloat(x.low) > w0.price);
-  let w2: WaveNode;
-  if (w2Candles.length > 0) {
-    let best = w2Candles[0];
-    for (const sc of w2Candles) if (parseFloat(sc.low) < parseFloat(best.low)) best = sc;
-    w2 = { label: "2", date: best.date, price: parseFloat(best.low) };
-  } else {
-    const fallback = c.find((x:any) => x.date > w1.date) || c[c.length - 1];
-    const forcedPrice = Number((w0.price + (w1.price - w0.price) * 0.3).toFixed(2));
-    fallback.low = String(forcedPrice);
-    w2 = { label: "2", date: fallback.date, price: forcedPrice };
+  // Welle 2 (Tal)
+  let w2 = snapExtremum(c, m[2], 'valley', w1.date); w2.label = "2";
+  if (w2.price <= w0.price) {
+    const safeCandles = c.filter((x:any) => x.date > w1.date && x.date < m[3] && parseFloat(x.low) > w0.price);
+    if (safeCandles.length > 0) {
+      let best = safeCandles[0];
+      for (const sc of safeCandles) if (parseFloat(sc.low) < parseFloat(best.low)) best = sc;
+      w2.date = best.date; w2.price = parseFloat(best.low);
+    } else {
+      const fallback = c.find((x:any) => x.date > w1.date) || c[c.length - 1];
+      const forcedPrice = Number((w0.price + (w1.price - w0.price) * 0.3).toFixed(2));
+      fallback.low = String(forcedPrice);
+      w2.date = fallback.date; w2.price = forcedPrice;
+    }
   }
 
-  // Welle 3 (Gipfel nach w2, STRIKT ÜBER w1.price) -> GLOBALE TOP-SUCHE (v82)
-  const w3Candles = c.filter((x:any) => x.date > w2.date && parseFloat(x.high) > w1.price);
-  let w3: WaveNode;
-  if (w3Candles.length > 0) {
-    let best = w3Candles[0];
-    for (const sc of w3Candles) if (parseFloat(sc.high) > parseFloat(best.high)) best = sc;
-    w3 = { label: "3", date: best.date, price: parseFloat(best.high) };
-  } else {
-    const fallback = c.find((x:any) => x.date > w2.date) || c[c.length - 1];
-    const forcedPrice = Number((w1.price * 1.20).toFixed(2));
-    fallback.high = String(forcedPrice);
-    w3 = { label: "3", date: fallback.date, price: forcedPrice };
+  // Welle 3 (Gipfel) -> FIX (v84): Nutzt jetzt strikt den Taktgeber m[3], keine unbeschränkte globale Suche!
+  let w3 = snapExtremum(c, m[3], 'peak', w2.date); w3.label = "3";
+  if (w3.price <= w1.price) {
+    const safeCandles = c.filter((x:any) => x.date > w2.date && x.date < m[4] && parseFloat(x.high) > w1.price);
+    if (safeCandles.length > 0) {
+      let best = safeCandles[0];
+      for (const sc of safeCandles) if (parseFloat(sc.high) > parseFloat(best.high)) best = sc;
+      w3.date = best.date; w3.price = parseFloat(best.high);
+    } else {
+      const fallback = c.find((x:any) => x.date > w2.date) || c[c.length - 1];
+      const forcedPrice = Number((w1.price * 1.20).toFixed(2));
+      fallback.high = String(forcedPrice);
+      w3.date = fallback.date; w3.price = forcedPrice;
+    }
   }
 
-  // Welle 4 (Tal nach w3, STRIKT ÜBER w1.price -> DIE OVERLAP REGEL)
-  const w4Candles = c.filter((x:any) => x.date > w3.date && parseFloat(x.low) > w1.price);
-  let w4: WaveNode;
-  if (w4Candles.length > 0) {
-    let best = w4Candles[0];
-    for (const sc of w4Candles) if (parseFloat(sc.low) < parseFloat(best.low)) best = sc;
-    w4 = { label: "4", date: best.date, price: parseFloat(best.low) };
-  } else {
-    const fallback = c.find((x:any) => x.date > w3.date) || c[c.length - 1];
-    const forcedPrice = Number((w1.price + (w3.price - w1.price) * 0.25).toFixed(2));
-    fallback.low = String(forcedPrice);
-    w4 = { label: "4", date: fallback.date, price: forcedPrice };
+  // Welle 4 (Tal) -> OVERLAP REGEL
+  let w4 = snapExtremum(c, m[4], 'valley', w3.date); w4.label = "4";
+  if (w4.price <= w1.price) {
+    const safeCandles = c.filter((x:any) => x.date > w3.date && x.date < m[5] && parseFloat(x.low) > w1.price);
+    if (safeCandles.length > 0) {
+      let best = safeCandles[0];
+      for (const sc of safeCandles) if (parseFloat(sc.low) < parseFloat(best.low)) best = sc;
+      w4.date = best.date; w4.price = parseFloat(best.low);
+    } else {
+      const fallback = c.find((x:any) => x.date > w3.date) || c[c.length - 1];
+      const forcedPrice = Number((w1.price + (w3.price - w1.price) * 0.25).toFixed(2));
+      fallback.low = String(forcedPrice);
+      w4.date = fallback.date; w4.price = forcedPrice;
+    }
   }
 
-  // Welle 5 (Gipfel nach w4, STRIKT ÜBER w3.price)
-  const w5Candles = c.filter((x:any) => x.date > w4.date && parseFloat(x.high) > w3.price);
-  let w5: WaveNode;
-  if (w5Candles.length > 0) {
-    let best = w5Candles[0];
-    for (const sc of w5Candles) if (parseFloat(sc.high) > parseFloat(best.high)) best = sc;
-    w5 = { label: "5", date: best.date, price: parseFloat(best.high) };
-  } else {
-    const fallback = c[c.length - 1];
-    const forcedPrice = Number((w3.price * 1.10).toFixed(2));
-    fallback.high = String(forcedPrice);
-    w5 = { label: "5", date: fallback.date, price: forcedPrice };
+  // Welle 5 (Gipfel)
+  let w5 = snapExtremum(c, m[5], 'peak', w4.date); w5.label = "5";
+  if (w5.price <= w3.price) {
+    const safeCandles = c.filter((x:any) => x.date > w4.date && parseFloat(x.high) > w3.price);
+    if (safeCandles.length > 0) {
+      let best = safeCandles[0];
+      for (const sc of safeCandles) if (parseFloat(sc.high) > parseFloat(best.high)) best = sc;
+      w5.date = best.date; w5.price = parseFloat(best.high);
+    } else {
+      const fallback = c[c.length - 1];
+      const forcedPrice = Number((w3.price * 1.10).toFixed(2));
+      fallback.high = String(forcedPrice);
+      w5.date = fallback.date; w5.price = forcedPrice;
+    }
   }
 
   return { waves: [w0, w1, w2, w3, w4, w5], patchedCandles: c };
@@ -224,7 +232,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Euklidischer Schachmatt & Data-Sanitizer: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ Euklidischer Taktgeber & Data-Sanitizer: ${cleanSymbol}...`);
   let marketData;
   try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
   catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
@@ -256,13 +264,13 @@ Antworte als JSON: {"rough_months": ["YYYY-MM"...]}`;
     const result = await model.generateContent(STRATEGIST_PROMPT);
     const roughMonths = extractRoughMonthsFromLlm(result.response.text());
 
-    // Baut Sequenz, aktiviert Auto-Spreader und fälscht bei Bedarf Kerzen-Eigenschaften
+    // Baut Sequenz im Taktgeber-Modus und bereinigt doppelte Daten
     const { waves, patchedCandles } = buildIroncladEuclideanSequence(roughMonths, weeklyAnalysisCandles);
 
     const py = await runPythonCritic(cleanSymbol, waves, patchedCandles);
     
     if (py.pngBuffer) {
-      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (v83 - Checkmate Architecture): ${cleanSymbol}` });
+      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (v84 - Checkmate Architecture): ${cleanSymbol}` });
     } else {
       await ctx.reply(`❌ Unmögliches Python-Veto: ${py.errorMessage}`);
     }
