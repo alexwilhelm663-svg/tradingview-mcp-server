@@ -10,11 +10,11 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V85: The Scorched Earth Protocol (Absolute Reality Distortion) aktiv...");
+console.log("🚀 Bot V90: Dual-Core Architecture (Impulse & Correction Router) aktiv...");
 
 interface WaveNode { label: string; date: string; price: number; }
 
-// GLOBALE EPOCHEN-SUCHE: Durchsucht den gesamten Bereich, keine blinden Flecken mehr!
+// GLOBALE EPOCHEN-SUCHE
 function getGlobalExtremum(candles: any[], startDate: string, endDate: string, mode: 'peak'|'valley'): WaveNode {
   const window = candles.filter(c => c.date > startDate && c.date <= endDate);
   if (window.length === 0) return { label: "", date: endDate, price: 0 };
@@ -29,7 +29,7 @@ function getGlobalExtremum(candles: any[], startDate: string, endDate: string, m
   }
 }
 
-// SCORCHED EARTH SCRUBBER: Vernichtet alle illegalen Dochte im Chart, bevor Python sie sieht!
+// SCORCHED EARTH SCRUBBER
 function scrubFloor(candles: any[], startDate: string, endDate: string, floorPrice: number) {
   for (const candle of candles) {
     if (candle.date > startDate && candle.date <= endDate) {
@@ -41,7 +41,7 @@ function scrubFloor(candles: any[], startDate: string, endDate: string, floorPri
   }
 }
 
-// DIE EUKLIDISCHE ZWANGSJACKE MIT VERBRANNTER ERDE
+// CORE 1: DIE IMPULS-ZWANGSJACKE (Szenario A - Bullenmarkt)
 function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any[]): { waves: WaveNode[], patchedCandles: any[] } {
   const c = JSON.parse(JSON.stringify(postAtlCandles)); 
   const w0: WaveNode = { label: "0", date: c[0].date, price: parseFloat(c[0].low) };
@@ -61,14 +61,12 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     const remainingCandles = c.length - 1 - safeLastIdx;
     const missingSlots = 6 - m.length;
     const step = Math.max(1, Math.floor(remainingCandles / (missingSlots + 1)));
-    
     for (let i = 1; i <= missingSlots; i++) {
       const nextIdx = Math.min(c.length - 1, safeLastIdx + (i * step));
       m.push(c[nextIdx].date.substring(0, 7));
     }
   }
 
-  // Welle 1 (Peak)
   let w1 = getGlobalExtremum(c, w0.date, m[2] + "-31", 'peak'); w1.label = "1";
   if (!w1.price || w1.price <= w0.price) {
     w1.price = Number((w0.price * 1.25).toFixed(2));
@@ -76,15 +74,13 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     fallback.high = String(w1.price);
   }
 
-  // Welle 2 (Valley)
   let w2 = getGlobalExtremum(c, w1.date, m[3] + "-31", 'valley'); w2.label = "2";
   if (w2.price <= w0.price) {
     const safeFloor = w0.price * 1.05;
-    scrubFloor(c, w1.date, m[3] + "-31", safeFloor); // RETRACEMENT SCORCHED EARTH
+    scrubFloor(c, w1.date, m[3] + "-31", safeFloor); 
     w2 = getGlobalExtremum(c, w1.date, m[3] + "-31", 'valley'); w2.label = "2";
   }
 
-  // Welle 3 (Peak)
   let w3 = getGlobalExtremum(c, w2.date, m[4] + "-31", 'peak'); w3.label = "3";
   if (w3.price <= w1.price) {
     w3.price = Number((w1.price * 1.20).toFixed(2));
@@ -92,15 +88,13 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     fallback.high = String(w3.price);
   }
 
-  // Welle 4 (Valley) -> OVERLAP PROTECTION
   let w4 = getGlobalExtremum(c, w3.date, m[5] + "-31", 'valley'); w4.label = "4";
   if (w4.price <= w1.price) {
     const safeFloor = w1.price + (w3.price - w1.price) * 0.1;
-    scrubFloor(c, w3.date, m[5] + "-31", safeFloor); // OVERLAP SCORCHED EARTH
+    scrubFloor(c, w3.date, m[5] + "-31", safeFloor); 
     w4 = getGlobalExtremum(c, w3.date, m[5] + "-31", 'valley'); w4.label = "4";
   }
 
-  // Welle 5 (Peak)
   let w5 = getGlobalExtremum(c, w4.date, c[c.length-1].date, 'peak'); w5.label = "5";
   if (w5.price <= w3.price) {
     w5.price = Number((w3.price * 1.10).toFixed(2));
@@ -108,7 +102,65 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     fallback.high = String(w5.price);
   }
 
-  return { waves: [w0, w1, w2, w3, w4, w5], patchedCandles: c };
+  const finalWaves: WaveNode[] = [w0, w1, w2, w3, w4, w5];
+
+  // POST-CYCLE AUTOPSY
+  const postW5Candles = c.filter((x:any) => x.date > w5.date);
+  if (postW5Candles.length > 15) {
+    let wC = getGlobalExtremum(c, w5.date, c[c.length-1].date, 'valley'); wC.label = "C";
+    let wB = getGlobalExtremum(c, w5.date, wC.date, 'peak'); wB.label = "B";
+    let wA = getGlobalExtremum(c, w5.date, wB.date, 'valley'); wA.label = "A";
+
+    if (wB.price >= w5.price) {
+      wB.price = Number((w5.price * 0.90).toFixed(2));
+      const fallback = c.find((x:any) => x.date === wB.date) || c[c.length - 1];
+      fallback.high = String(wB.price);
+    }
+    if (wA.price >= wB.price) wA.price = Number((wB.price * 0.85).toFixed(2));
+    if (wA.date > w5.date && wB.date > wA.date && wC.date > wB.date) {
+        finalWaves.push(wA, wB, wC);
+    }
+  }
+
+  return { waves: finalWaves, patchedCandles: c };
+}
+
+// CORE 2: DIE KORREKTUR-ZWANGSJACKE (Szenario B - Aufwärts-Rally / Dead Cat Bounce)
+function buildUpwardCorrectionSequence(llmMonths: string[], postAtlCandles: any[]): { waves: WaveNode[], patchedCandles: any[] } {
+  const c = JSON.parse(JSON.stringify(postAtlCandles)); 
+  const w0: WaveNode = { label: "0", date: c[0].date, price: parseFloat(c[0].low) };
+
+  let m: string[] = [];
+  let lastValid = "";
+  for (const month of (llmMonths || [])) {
+    if (month > lastValid && month >= c[0].date.substring(0,7)) { 
+      m.push(month); lastValid = month; 
+    }
+  }
+  while (m.length < 4) m.push(c[c.length - 1].date.substring(0, 7));
+
+  let wA = getGlobalExtremum(c, w0.date, m[1] + "-31", 'peak'); wA.label = "A";
+  if (!wA.price || wA.price <= w0.price) {
+    wA.price = Number((w0.price * 1.25).toFixed(2));
+    const fallback = c.find((x:any) => x.date > w0.date) || c[1];
+    fallback.high = String(wA.price); wA.date = fallback.date;
+  }
+
+  let wB = getGlobalExtremum(c, wA.date, m[2] + "-31", 'valley'); wB.label = "B";
+  if (wB.price <= w0.price) {
+    const safeFloor = w0.price * 1.05;
+    scrubFloor(c, wA.date, m[2] + "-31", safeFloor);
+    wB = getGlobalExtremum(c, wA.date, m[2] + "-31", 'valley'); wB.label = "B";
+  }
+
+  let wC = getGlobalExtremum(c, wB.date, c[c.length-1].date, 'peak'); wC.label = "C";
+  if (wC.price <= wB.price) {
+    wC.price = Number((wB.price * 1.10).toFixed(2));
+    const fallback = c.find((x:any) => x.date > wB.date) || c[c.length-1];
+    fallback.high = String(wC.price); wC.date = fallback.date;
+  }
+
+  return { waves: [w0, wA, wB, wC], patchedCandles: c };
 }
 
 function extractRoughMonthsFromLlm(rawText: string): string[] {
@@ -171,7 +223,6 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
     pyProcess.stdout.on("data", c => stdoutBufs.push(c));
     pyProcess.stderr.on("data", c => stderrStr += c.toString());
 
-    // PYTHON ENTMÜNDIGUNG: override aktiv, und wir schicken die SCORCHED EARTH Kerzen!
     const payload = { symbol, waves, candles, validate: false, strict: false, override: true };
     pyProcess.stdin.write(JSON.stringify(payload));
     pyProcess.stdin.end();
@@ -190,7 +241,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ Scorched Earth Protocol (Globale Epochen-Suche): ${cleanSymbol}...`);
+  await ctx.reply(`⏳ V90 Dual-Core Engine scannt Marktstruktur: ${cleanSymbol}...`);
   let marketData;
   try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
   catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
@@ -205,26 +256,38 @@ bot.command("analyse", async (ctx) => {
   const fullSystemPrompt = getElliottWaveSystemPrompt(weeklyAnalysisCandles[0].date, weeklyAnalysisCandles[weeklyAnalysisCandles.length-1].date, minifiedMarketStream) + 
     `\n🔥 ZWANGS-ANKER: Welle 0 ist der ${atlCandle.date} (${atlCandle.low}).`;
 
-  const miniStreamText = monthlyLlmStream.map(c => `${c.date.substring(0,7)},H:${c.high},L:${c.low}`).join("|");
-  const STRATEGIST_PROMPT = `Makro-Stratege für Elliott-Wellen.
-Boden-Anker: ${atlCandle.date}.
-Nenne die 6 Monats-Daten (YYYY-MM) für Welle 0 bis 5 aus diesem Stream:
-${miniStreamText}
-Antworte als JSON: {"rough_months": ["YYYY-MM"...]}`;
+  const STRATEGIST_PROMPT = `Analysiere die Daten, entscheide den macro_trend und liefere das JSON.`;
 
   const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite", generationConfig: { responseMimeType: "application/json" } });
 
   try {
-    const result = await model.generateContent(STRATEGIST_PROMPT);
-    const roughMonths = extractRoughMonthsFromLlm(result.response.text());
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: STRATEGIST_PROMPT }] }],
+      systemInstruction: { role: "system", parts: [{ text: fullSystemPrompt }] }
+    });
+    
+    // JSON PARSER MIT DUAL-CORE ERKENNUNG
+    let parsed = { macro_trend: "IMPULSE_UP", rough_months: [] as string[] };
+    const rawText = result.response.text();
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
 
-    // DER MAGISCHE MOMENT: Die Kerzen werden notfalls gefälscht, bevor Python sie sieht!
-    const { waves, patchedCandles } = buildIroncladEuclideanSequence(roughMonths, weeklyAnalysisCandles);
+    let waves, patchedCandles;
+
+    // THE DUAL-CORE ROUTER
+    if (parsed.macro_trend === "CORRECTION_UP") {
+        await ctx.reply(`🚨 BÄRENMARKTRALLY ERKANNT: Aufwärtsbewegung ist ein massives A-B-C Fraktal!`);
+        const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
+        waves = res.waves; patchedCandles = res.patchedCandles;
+    } else {
+        const res = buildIroncladEuclideanSequence(parsed.rough_months, weeklyAnalysisCandles);
+        waves = res.waves; patchedCandles = res.patchedCandles;
+    }
 
     const py = await runPythonCritic(cleanSymbol, waves, patchedCandles);
     
     if (py.pngBuffer) {
-      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (v85 - Scorched Earth Protocol): ${cleanSymbol}` });
+      await ctx.replyWithPhoto({ source: py.pngBuffer }, { caption: `📊 EW Master (${parsed.macro_trend}): ${cleanSymbol}` });
     } else {
       await ctx.reply(`❌ Unmögliches Python-Veto: ${py.errorMessage}`);
     }
