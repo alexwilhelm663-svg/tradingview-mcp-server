@@ -10,7 +10,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V90: Dual-Core Architecture (Impulse & Correction Router) aktiv...");
+console.log("🚀 Bot V91: Dual-Core Architecture & Hologram Overlap Protection aktiv...");
 
 interface WaveNode { label: string; date: string; price: number; }
 
@@ -29,18 +29,6 @@ function getGlobalExtremum(candles: any[], startDate: string, endDate: string, m
   }
 }
 
-// SCORCHED EARTH SCRUBBER
-function scrubFloor(candles: any[], startDate: string, endDate: string, floorPrice: number) {
-  for (const candle of candles) {
-    if (candle.date > startDate && candle.date <= endDate) {
-      if (parseFloat(candle.low) <= floorPrice) candle.low = String(floorPrice.toFixed(2));
-      if (parseFloat(candle.close) <= floorPrice) candle.close = String(floorPrice.toFixed(2));
-      if (parseFloat(candle.open) <= floorPrice) candle.open = String(floorPrice.toFixed(2));
-      if (parseFloat(candle.high) <= floorPrice) candle.high = String((floorPrice * 1.01).toFixed(2));
-    }
-  }
-}
-
 // CORE 1: DIE IMPULS-ZWANGSJACKE (Szenario A - Bullenmarkt)
 function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any[]): { waves: WaveNode[], patchedCandles: any[] } {
   const c = JSON.parse(JSON.stringify(postAtlCandles)); 
@@ -55,6 +43,7 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     }
   }
 
+  // Auto-Spreader
   if (m.length < 6) {
     const lastIdx = m.length > 0 ? c.findIndex((x:any) => x.date.startsWith(m[m.length-1])) : 0;
     const safeLastIdx = Math.max(0, lastIdx);
@@ -74,11 +63,19 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     fallback.high = String(w1.price);
   }
 
+  // Welle 2 (Valley) -> HOLOGRAMM PROTECTION (Gewaltfrei)
   let w2 = getGlobalExtremum(c, w1.date, m[3] + "-31", 'valley'); w2.label = "2";
   if (w2.price <= w0.price) {
-    const safeFloor = w0.price * 1.05;
-    scrubFloor(c, w1.date, m[3] + "-31", safeFloor); 
-    w2 = getGlobalExtremum(c, w1.date, m[3] + "-31", 'valley'); w2.label = "2";
+    const safeFloor = Number((w0.price * 1.05).toFixed(2));
+    const legalCandles = c.filter((x:any) => x.date > w1.date && x.date <= (m[3]+"-31") && parseFloat(x.low) > safeFloor);
+    if (legalCandles.length > 0) {
+      let best = legalCandles[0];
+      for (const lc of legalCandles) if (parseFloat(lc.low) < parseFloat(best.low)) best = lc;
+      w2.date = best.date; w2.price = parseFloat(best.low);
+    } else {
+      w2.price = safeFloor;
+      w2.date = (c.find((x:any) => x.date > w1.date) || c[1]).date;
+    }
   }
 
   let w3 = getGlobalExtremum(c, w2.date, m[4] + "-31", 'peak'); w3.label = "3";
@@ -88,11 +85,20 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
     fallback.high = String(w3.price);
   }
 
+  // Welle 4 (Valley) -> HOLOGRAMM PROTECTION (Gewaltfrei)
   let w4 = getGlobalExtremum(c, w3.date, m[5] + "-31", 'valley'); w4.label = "4";
   if (w4.price <= w1.price) {
-    const safeFloor = w1.price + (w3.price - w1.price) * 0.1;
-    scrubFloor(c, w3.date, m[5] + "-31", safeFloor); 
-    w4 = getGlobalExtremum(c, w3.date, m[5] + "-31", 'valley'); w4.label = "4";
+    const safeFloor = Number((w1.price + (w3.price - w1.price) * 0.1).toFixed(2));
+    const legalCandles = c.filter((x:any) => x.date > w3.date && x.date <= (m[5]+"-31") && parseFloat(x.low) > w1.price);
+    
+    if (legalCandles.length > 0) {
+      let best = legalCandles[0];
+      for (const lc of legalCandles) if (parseFloat(lc.low) < parseFloat(best.low)) best = lc;
+      w4.date = best.date; w4.price = parseFloat(best.low);
+    } else {
+      w4.price = safeFloor;
+      w4.date = (c.find((x:any) => x.date > w3.date) || c[c.length - 2]).date;
+    }
   }
 
   let w5 = getGlobalExtremum(c, w4.date, c[c.length-1].date, 'peak'); w5.label = "5";
@@ -146,11 +152,19 @@ function buildUpwardCorrectionSequence(llmMonths: string[], postAtlCandles: any[
     fallback.high = String(wA.price); wA.date = fallback.date;
   }
 
+  // Welle B (Valley) -> HOLOGRAMM PROTECTION (Gewaltfrei)
   let wB = getGlobalExtremum(c, wA.date, m[2] + "-31", 'valley'); wB.label = "B";
   if (wB.price <= w0.price) {
-    const safeFloor = w0.price * 1.05;
-    scrubFloor(c, wA.date, m[2] + "-31", safeFloor);
-    wB = getGlobalExtremum(c, wA.date, m[2] + "-31", 'valley'); wB.label = "B";
+    const safeFloor = Number((w0.price * 1.05).toFixed(2));
+    const legalCandles = c.filter((x:any) => x.date > wA.date && x.date <= (m[2]+"-31") && parseFloat(x.low) > safeFloor);
+    if (legalCandles.length > 0) {
+      let best = legalCandles[0];
+      for (const lc of legalCandles) if (parseFloat(lc.low) < parseFloat(best.low)) best = lc;
+      wB.date = best.date; wB.price = parseFloat(best.low);
+    } else {
+      wB.price = safeFloor;
+      wB.date = (c.find((x:any) => x.date > wA.date) || c[1]).date;
+    }
   }
 
   let wC = getGlobalExtremum(c, wB.date, c[c.length-1].date, 'peak'); wC.label = "C";
@@ -241,7 +255,7 @@ bot.command("analyse", async (ctx) => {
   if (!symbolArg) return ctx.reply("❌ Symbol angeben!");
   const cleanSymbol = symbolArg.trim().split(":").pop()!;
 
-  await ctx.reply(`⏳ V90 Dual-Core Engine scannt Marktstruktur: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ V91 Dual-Core Engine (Hologram Protection): ${cleanSymbol}...`);
   let marketData;
   try { marketData = await fetchVanillaYahooCandles(cleanSymbol); } 
   catch (e: any) { return ctx.reply(`❌ Download: ${e.message}`); }
