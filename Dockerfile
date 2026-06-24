@@ -1,30 +1,21 @@
-FROM node:20-bookworm-slim
-
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
-    build-essential \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV VIRTUAL_ENV=/opt/venv
-RUN python3 -m venv $VIRTUAL_ENV
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
-RUN pip install --no-cache-dir pandas matplotlib
-
-WORKDIR /app
-
-COPY package*.json ./
-RUN npm install
-
-COPY . .
-
-RUN mkdir -p /app/data
-RUN npm run build
-
-EXPOSE 10000
-VOLUME ["/app/data"]
-
-CMD ["npm", "start"]
+{
+  "name": "ew-quant-hunter",
+  "version": "100.0.0",
+  "description": "Autonomous Elliott Wave Hunter-Killer Bot",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
+    "telegraf": "^4.15.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/sqlite3": "^3.1.11",
+    "typescript": "^5.0.0"
+  }
+}
