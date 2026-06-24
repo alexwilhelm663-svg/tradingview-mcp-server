@@ -1,8 +1,11 @@
 import { Telegraf } from "telegraf";
 import { spawn } from "child_process";
 import http from "http";
+import fs from "fs";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getElliottWaveSystemPrompt } from "./prompt";
+import sqlite3 from "sqlite3";
+import { open, Database } from "sqlite";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
@@ -10,13 +13,49 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V98: Hunter-Killer Radar & Autonomous Scanning aktiv...");
+console.log("🚀 Bot V100: Autonomous Hunter-Killer Core aktiv...");
 
 // ============================================================================
-// WATCHLIST FÜR DEN RADAR-SCAN (Beliebig erweiterbar)
+// DATENBANK-SETUP (SQLite mit Auto-Folder Force)
 // ============================================================================
-const WATCHLIST = ["AAPL", "NVDA", "TSLA", "ARM", "PLTR", "IONQ", "MSTR", "AMD", "GOOGL"];
+let db: Database;
 
+async function initDB() {
+    if (!fs.existsSync('./data')) {
+        fs.mkdirSync('./data', { recursive: true });
+        console.log("📁 Ordner './data' wurde vom System zwangsweise erstellt.");
+    }
+
+    db = await open({
+        filename: './data/bot_memory.sqlite',
+        driver: sqlite3.Database
+    });
+
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS watchlist (
+            symbol TEXT PRIMARY KEY
+        );
+        CREATE TABLE IF NOT EXISTS alerts (
+            symbol TEXT PRIMARY KEY,
+            last_alert_timestamp INTEGER
+        );
+    `);
+
+    const count = await db.get(`SELECT COUNT(*) as c FROM watchlist`);
+    if (count.c === 0) {
+        const defaultList = ["AAPL", "NVDA", "TSLA", "ARM", "PLTR", "IONQ", "MSTR", "AMD", "GOOGL", "PYPL"];
+        for (const sym of defaultList) {
+            await db.run(`INSERT INTO watchlist (symbol) VALUES (?)`, sym);
+        }
+    }
+    console.log("💾 SQLite Memory Core geladen und einsatzbereit.");
+}
+
+initDB().catch(err => console.error("❌ Kritischer DB-Fehler:", err));
+
+// ============================================================================
+// ELLIOTT-WAVE CORES & SÄKULARE SCHNITT-ENGINE
+// ============================================================================
 interface WaveNode { label: string; date: string; price: number; }
 
 function getGlobalExtremum(candles: any[], startDate: string, endDate: string, mode: 'peak'|'valley'): WaveNode {
@@ -32,11 +71,49 @@ function getGlobalExtremum(candles: any[], startDate: string, endDate: string, m
   }
 }
 
+function buildSecularBearSequence(candles: any[], athIdx: number): WaveNode[] {
+  const w0: WaveNode = { label: "0", date: candles[0].date, price: parseFloat(candles[0].low) };
+  const w5: WaveNode = { label: "5", date: candles[athIdx].date, price: parseFloat(candles[athIdx].high) };
+  
+  const seg = Math.floor(athIdx / 4);
+  let w1 = getGlobalExtremum(candles, w0.date, candles[Math.max(1, seg)].date, 'peak'); w1.label = "1";
+  let w2 = getGlobalExtremum(candles, w1.date, candles[Math.max(2, seg * 2)].date, 'valley'); w2.label = "2";
+  let w3 = getGlobalExtremum(candles, w2.date, candles[Math.max(3, seg * 3)].date, 'peak'); w3.label = "3";
+  let w4 = getGlobalExtremum(candles, w3.date, candles[Math.max(4, athIdx - 1)].date, 'valley'); w4.label = "4";
+  
+  const bearCandles = candles.slice(athIdx);
+  let minIdx = 0; let minLow = Infinity;
+  for (let i = 0; i < bearCandles.length; i++) {
+      const l = parseFloat(bearCandles[i].low);
+      if (l < minLow) { minLow = l; minIdx = i; }
+  }
+  if (minIdx === 0) minIdx = bearCandles.length - 1;
+  
+  let maxIdx = 0; let maxHigh = -Infinity;
+  for (let i = 0; i < minIdx; i++) {
+      const h = parseFloat(bearCandles[i].high);
+      if (h > maxHigh) { maxHigh = h; maxIdx = i; }
+  }
+  if (maxIdx === 0) maxIdx = Math.floor(minIdx / 2);
+  
+  let aIdx = 0; let aLow = Infinity;
+  for (let i = 0; i < maxIdx; i++) {
+      const l = parseFloat(bearCandles[i].low);
+      if (l < aLow) { aLow = l; aIdx = i; }
+  }
+  if (aIdx === 0) aIdx = Math.floor(maxIdx / 2);
+  
+  const wA: WaveNode = { label: "A", date: bearCandles[aIdx].date, price: parseFloat(bearCandles[aIdx].low) };
+  const wB: WaveNode = { label: "B", date: bearCandles[maxIdx].date, price: parseFloat(bearCandles[maxIdx].high) };
+  const wC: WaveNode = { label: "C", date: bearCandles[minIdx].date, price: parseFloat(bearCandles[minIdx].low) };
+  
+  return [w0, w1, w2, w3, w4, w5, wA, wB, wC];
+}
+
 function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any[]): { waves: WaveNode[], patchedCandles: any[] } {
   const c = JSON.parse(JSON.stringify(postAtlCandles)); 
   const w0: WaveNode = { label: "0", date: c[0].date, price: parseFloat(c[0].low) };
-  let m: string[] = [];
-  let lastValid = "";
+  let m: string[] = []; let lastValid = "";
   
   for (const month of (llmMonths || [])) {
     if (month > lastValid && month >= c[0].date.substring(0,7)) { m.push(month); lastValid = month; }
@@ -44,13 +121,11 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
 
   if (m.length < 6) {
     const lastIdx = m.length > 0 ? c.findIndex((x:any) => x.date.startsWith(m[m.length-1])) : 0;
-    const safeLastIdx = Math.max(0, lastIdx);
-    const remainingCandles = c.length - 1 - safeLastIdx;
+    const remainingCandles = c.length - 1 - Math.max(0, lastIdx);
     const missingSlots = 6 - m.length;
     const step = Math.max(1, Math.floor(remainingCandles / (missingSlots + 1)));
     for (let i = 1; i <= missingSlots; i++) {
-      const nextIdx = Math.min(c.length - 1, safeLastIdx + (i * step));
-      m.push(c[nextIdx].date.substring(0, 7));
+      m.push(c[Math.min(c.length - 1, Math.max(0, lastIdx) + (i * step))].date.substring(0, 7));
     }
   }
 
@@ -77,9 +152,7 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
 function buildUpwardCorrectionSequence(llmMonths: string[], postAtlCandles: any[]): { waves: WaveNode[], patchedCandles: any[] } {
   const c = JSON.parse(JSON.stringify(postAtlCandles)); 
   const w0: WaveNode = { label: "0", date: c[0].date, price: parseFloat(c[0].low) };
-  let m: string[] = [];
-  let lastValid = "";
-  
+  let m: string[] = []; let lastValid = "";
   for (const month of (llmMonths || [])) {
     if (month > lastValid && month >= c[0].date.substring(0,7)) { m.push(month); lastValid = month; }
   }
@@ -93,8 +166,7 @@ function buildUpwardCorrectionSequence(llmMonths: string[], postAtlCandles: any[
 
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
-  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=max`;
-  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+  const res = await fetch(`https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=max`, { headers: { "User-Agent": "Mozilla/5.0" } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const raw = await res.json();
   const chartData = raw.chart?.result?.[0];
@@ -102,10 +174,8 @@ async function fetchVanillaYahooCandles(symbol: string) {
   
   const timestamps = chartData.timestamp || [];
   const quote = chartData.indicators?.quote?.[0] || {};
-  
   const rawCandles: any[] = [];
-  let minLow = Infinity;
-  let atlIndex = 0;
+  let minLow = Infinity; let atlIndex = 0;
   const seenDates = new Set<string>();
 
   for (let i = 0; i < timestamps.length; i++) {
@@ -122,43 +192,59 @@ async function fetchVanillaYahooCandles(symbol: string) {
   }
 
   const bullCycleCandles = rawCandles.slice(atlIndex);
-  const monthlyCompressed: any[] = [];
-  let lastMonth = "";
-  for (const c of bullCycleCandles) {
-    const m = c.date.substring(0, 7);
-    if (m !== lastMonth) { monthlyCompressed.push(c); lastMonth = m; }
-  }
-  return { fullCandles: rawCandles, weeklyAnalysisCandles: bullCycleCandles, monthlyLlmStream: monthlyCompressed, atlCandle: rawCandles[atlIndex] };
+  return { fullCandles: rawCandles, weeklyAnalysisCandles: bullCycleCandles, atlCandle: rawCandles[atlIndex] };
 }
 
 function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, errorMessage: string | null }> {
   return new Promise((resolve) => {
     const pyProcess = spawn("python3", ["python_service/drawer.py"]);
-    let stdoutBufs: Buffer[] = [], stderrStr = "";
+    let stdoutBufs: Buffer[] = []; let stderrStr = "";
     pyProcess.stdout.on("data", c => stdoutBufs.push(c));
     pyProcess.stderr.on("data", c => stderrStr += c.toString());
 
-    const payload = { symbol, waves, candles, validate: false, strict: false, override: true };
-    pyProcess.stdin.write(JSON.stringify(payload));
+    pyProcess.stdin.write(JSON.stringify({ symbol, waves, candles, validate: false, strict: false, override: true }));
     pyProcess.stdin.end();
 
     pyProcess.on("close", (code) => {
       const trimmedStderr = stderrStr.trim();
       if (code !== 0) return resolve({ pngBuffer: null, errorMessage: `Python Crash:\n${trimmedStderr}` });
       if (stdoutBufs.length > 0) return resolve({ pngBuffer: Buffer.concat(stdoutBufs), errorMessage: null });
-      resolve({ pngBuffer: null, errorMessage: trimmedStderr || "Python beendete den Prozess ohne Bild." });
+      resolve({ pngBuffer: null, errorMessage: trimmedStderr || "Prozess beendet ohne Bild." });
     });
   });
 }
 
-// ============================================================================
-// CORE ANALYSE-ENGINE (Refaktoriert für Einzelaufrufe & Radar-Loops)
-// ============================================================================
-async function analyzeAsset(symbol: string, silentLogging = false) {
+async function analyzeAsset(symbol: string) {
   const marketData = await fetchVanillaYahooCandles(symbol);
-  const { fullCandles, weeklyAnalysisCandles, atlCandle } = marketData;
+  const { weeklyAnalysisCandles, atlCandle } = marketData;
 
   if (weeklyAnalysisCandles.length < 26) throw new Error("Säkulares Bärenmarkt-Veto (Historie zu kurz).");
+
+  const lastCandle = weeklyAnalysisCandles[weeklyAnalysisCandles.length - 1];
+  const currentPrice = parseFloat(lastCandle.close);
+
+  let globalAthPrice = 0; let globalAthIdx = 0;
+  for (let i = 0; i < weeklyAnalysisCandles.length; i++) {
+      const h = parseFloat(weeklyAnalysisCandles[i].high);
+      if (h > globalAthPrice) { globalAthPrice = h; globalAthIdx = i; }
+  }
+
+  const athCandle = weeklyAnalysisCandles[globalAthIdx];
+  const priceDropFromAthPct = ((globalAthPrice - currentPrice) / globalAthPrice) * 100;
+  const daysSinceAth = (new Date(lastCandle.date).getTime() - new Date(athCandle.date).getTime()) / (1000 * 60 * 60 * 24);
+
+  // SECULAR BEAR INTERCEPTOR (V100)
+  if (priceDropFromAthPct > 60 && daysSinceAth > 400) {
+      console.log(`[INTERCEPTOR] ${symbol} als Säkularer Bärenmarkt identifiziert (-${priceDropFromAthPct.toFixed(1)}%). Slicing aktiv...`);
+      const waves = buildSecularBearSequence(weeklyAnalysisCandles, globalAthIdx);
+      const py = await runPythonCritic(symbol, waves, weeklyAnalysisCandles);
+      if (!py.pngBuffer) throw new Error(`Python Veto im Autopsie-Modus: ${py.errorMessage}`);
+      
+      return { 
+          buffer: py.pngBuffer, finalTrend: "MACRO_BEAR_DOWN", isHotSetup: false, 
+          killZoneStatus: `📉 **SÄKULARER BÄRENMARKT:** Asset im strukturellen Abwärtstrend (-${priceDropFromAthPct.toFixed(1)}% vom ATH). Am Allzeithoch (${athCandle.date}) getrennt.` 
+      };
+  }
 
   const minifiedMarketStream = weeklyAnalysisCandles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
   const fullSystemPrompt = getElliottWaveSystemPrompt(weeklyAnalysisCandles[0].date, weeklyAnalysisCandles[weeklyAnalysisCandles.length-1].date, minifiedMarketStream) + 
@@ -166,13 +252,9 @@ async function analyzeAsset(symbol: string, silentLogging = false) {
 
   let basePrompt = `Analysiere die Daten, entscheide den macro_trend und liefere das JSON.`;
   let currentPrompt = basePrompt;
-
-  let attempts = 0;
-  const maxAttempts = 3;
-  let waves: WaveNode[] = [];
-  let patchedCandles: any[] = [];
-  let finalTrend = "IMPULSE_UP";
-  let currentTemp = 0.0; 
+  let attempts = 0; const maxAttempts = 3;
+  let waves: WaveNode[] = []; let patchedCandles: any[] = [];
+  let finalTrend = "IMPULSE_UP"; let currentTemp = 0.0; 
 
   while (attempts < maxAttempts) {
     attempts++;
@@ -187,23 +269,19 @@ async function analyzeAsset(symbol: string, silentLogging = false) {
 
     if (finalTrend === "CORRECTION_UP") {
         const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
-        waves = res.waves; patchedCandles = res.patchedCandles;
-        break;
+        waves = res.waves; patchedCandles = res.patchedCandles; break;
     } else {
         try {
             const res = buildIroncladEuclideanSequence(parsed.rough_months, weeklyAnalysisCandles);
-            waves = res.waves; patchedCandles = res.patchedCandles;
-            break; 
+            waves = res.waves; patchedCandles = res.patchedCandles; break; 
         } catch (e: any) {
             if (e.message === "OVERLAP_VIOLATION" || e.message === "RETRACEMENT_VIOLATION") {
                 if (attempts < maxAttempts) {
-                    currentTemp += 0.35; 
-                    currentPrompt = `${basePrompt}\n\nACHTUNG! FEHLER:\n${e.message}\nWÄHLE ANDERE MONATE!`;
+                    currentTemp += 0.35; currentPrompt = `${basePrompt}\n\nACHTUNG! FEHLER:\n${e.message}\nWÄHLE ANDERE MONATE!`;
                 } else {
                     finalTrend = "CORRECTION_UP";
                     const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
-                    waves = res.waves; patchedCandles = res.patchedCandles;
-                    break;
+                    waves = res.waves; patchedCandles = res.patchedCandles; break;
                 }
             } else throw e; 
         }
@@ -213,70 +291,70 @@ async function analyzeAsset(symbol: string, silentLogging = false) {
   const py = await runPythonCritic(symbol, waves, patchedCandles);
   if (!py.pngBuffer) throw new Error(`Python Veto: ${py.errorMessage}`);
 
-  // KILL-ZONE BERECHNUNG
-  const currentPrice = parseFloat(weeklyAnalysisCandles[weeklyAnalysisCandles.length - 1].close);
-  let isHotSetup = false;
-  let killZoneStatus = "";
-
+  let isHotSetup = false; let killZoneStatus = "";
   if (finalTrend === "IMPULSE_UP" && waves.length >= 6) {
-      const w0 = waves[0].price;
-      const w4 = waves[4].price;
-      const w5 = waves[5].price;
-      const diff = w5 - w0;
-      const fib382 = w5 - (0.382 * diff);
-      
-      // Wenn der Kurs unter das 38.2er Fib gefallen ist, aber noch über dem Tief von Welle 4 liegt
+      const w0 = waves[0].price; const w4 = waves[4].price; const w5 = waves[5].price;
+      const fib382 = w5 - (0.382 * (w5 - w0));
       if (currentPrice <= fib382 && currentPrice >= (w4 * 0.8)) {
           isHotSetup = true;
           killZoneStatus = `🚨 **HOT SETUP:** Kurs (${currentPrice}$) befindet sich in der Macro Kill-Zone!`;
       }
   }
-
   return { buffer: py.pngBuffer, finalTrend, isHotSetup, killZoneStatus };
 }
 
-// ============================================================================
-// BOT BEFEHLE
-// ============================================================================
+bot.command("add", async (ctx) => {
+    const sym = (ctx.message.text.split(" ")[1] || "").trim().toUpperCase();
+    if (!sym) return ctx.reply("❌ Symbol angeben! Bsp: /add PYPL");
+    await db.run(`INSERT OR IGNORE INTO watchlist (symbol) VALUES (?)`, sym);
+    await ctx.reply(`✅ ${sym} zur Watchlist hinzugefügt.`);
+});
+
+bot.command("rm", async (ctx) => {
+    const sym = (ctx.message.text.split(" ")[1] || "").trim().toUpperCase();
+    if (!sym) return ctx.reply("❌ Symbol angeben! Bsp: /rm PYPL");
+    await db.run(`DELETE FROM watchlist WHERE symbol = ?`, sym);
+    await ctx.reply(`🗑️ ${sym} von Watchlist entfernt.`);
+});
+
+bot.command("watchlist", async (ctx) => {
+    const rows = await db.all(`SELECT symbol FROM watchlist`);
+    await ctx.reply(rows.length === 0 ? "📭 Watchlist leer." : `📋 **Radar-Watchlist:**\n${rows.map(r => `• ${r.symbol}`).join("\n")}`);
+});
 
 bot.command("analyse", async (ctx) => {
-  const symbolArg = ctx.message.text.split(" ")[1];
-  if (!symbolArg) return ctx.reply("❌ Symbol angeben! Bsp: /analyse AAPL");
-  const cleanSymbol = symbolArg.trim().toUpperCase();
+  const sym = (ctx.message.text.split(" ")[1] || "").trim().toUpperCase();
+  if (!sym) return ctx.reply("❌ Symbol angeben! Bsp: /analyse PYPL");
 
-  await ctx.reply(`⏳ V98 Analyse: ${cleanSymbol}...`);
+  await ctx.reply(`⏳ V100 Scan: ${sym}...`);
   try {
-      const result = await analyzeAsset(cleanSymbol);
-      let caption = `📊 EW Master (${result.finalTrend}): ${cleanSymbol}`;
-      if (result.isHotSetup) caption += `\n\n${result.killZoneStatus}`;
-      await ctx.replyWithPhoto({ source: result.buffer }, { caption });
-  } catch (e: any) {
-      await ctx.reply(`⚠️ Fehler bei ${cleanSymbol}: ${e.message}`);
-  }
+      const result = await analyzeAsset(sym);
+      await ctx.replyWithPhoto({ source: result.buffer }, { caption: `📊 EW Master (${result.finalTrend}): ${sym}` + (result.killZoneStatus ? `\n\n${result.killZoneStatus}` : "") });
+  } catch (e: any) { await ctx.reply(`⚠️ Fehler: ${e.message}`); }
 });
 
 bot.command("radar", async (ctx) => {
-  await ctx.reply(`📡 **RADAR AKTIVIERT**\nScanne ${WATCHLIST.length} Tech-Werte im Hintergrund auf 'Macro Kill-Zone' Setups.\nIch melde mich nur, wenn ich ein Setup finde!`);
-  
-  let hits = 0;
-  for (const sym of WATCHLIST) {
-      try {
-          // Kurzer Delay um Rate-Limits der API zu schonen
-          await new Promise(resolve => setTimeout(resolve, 2000)); 
-          const result = await analyzeAsset(sym, true);
-          
-          if (result.isHotSetup && result.finalTrend === "IMPULSE_UP") {
-              hits++;
-              await ctx.replyWithPhoto({ source: result.buffer }, { 
-                  caption: `🎯 **RADAR HIT: ${sym}**\n${result.killZoneStatus}\nPerfektes Setup für einen langfristigen Einstieg.` 
-              });
-          }
-      } catch (e) {
-          console.log(`[RADAR SKIP] ${sym} übersprungen: ${e}`);
-      }
-  }
+  const rows = await db.all(`SELECT symbol FROM watchlist`);
+  if (rows.length === 0) return ctx.reply("❌ Watchlist leer.");
 
-  await ctx.reply(`🏁 **RADAR ABGESCHLOSSEN**\nScan beendet. Setups gefunden: ${hits}/${WATCHLIST.length}`);
+  await ctx.reply(`📡 **RADAR AKTIVIERT** (${rows.length} Assets)...`);
+  let hits = 0; const now = Date.now();
+  for (const row of rows) {
+      const sym = row.symbol;
+      try {
+          const record = await db.get(`SELECT last_alert_timestamp FROM alerts WHERE symbol = ?`, sym);
+          if (record && (now - record.last_alert_timestamp) < (7 * 24 * 3600 * 1000)) continue;
+
+          await new Promise(r => setTimeout(r, 2500)); 
+          const res = await analyzeAsset(sym);
+          if (res.isHotSetup && res.finalTrend === "IMPULSE_UP") {
+              hits++;
+              await db.run(`INSERT OR REPLACE INTO alerts (symbol, last_alert_timestamp) VALUES (?, ?)`, sym, now);
+              await ctx.replyWithPhoto({ source: res.buffer }, { caption: `🎯 **RADAR HIT: ${sym}**\n${res.killZoneStatus}` });
+          }
+      } catch (e) {}
+  }
+  await ctx.reply(`🏁 **RADAR BEENDET** (Hits: ${hits})`);
 });
 
 if (RENDER_EXTERNAL_URL) {
@@ -289,3 +367,4 @@ if (RENDER_EXTERNAL_URL) {
     } else res.end("OK");
   }).listen(PORT);
 } else bot.launch();
+  
