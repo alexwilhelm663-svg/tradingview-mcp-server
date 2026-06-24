@@ -28,14 +28,16 @@ def main():
         fig, ax = plt.subplots(figsize=(14, 7))
         ax.plot(df.index, df['close'], color='#1f2937', linewidth=1, zorder=2)
         
-        is_correction_macro = any(w['label'] in ['A', 'B', 'C'] for w in waves)
+        # 🔥 CORE-UPGRADE: W, X, Y in die Korrekturliste aufgenommen
+        is_correction_macro = any(w['label'] in ['A', 'B', 'C', 'W', 'X', 'Y'] for w in waves)
         
         for i in range(len(waves) - 1):
             w_curr = waves[i]; w_next = waves[i+1]
             curr_date = pd.to_datetime(w_curr['date']); next_date = pd.to_datetime(w_next['date'])
             
-            line_color = '#ef4444' if w_next['label'] in ['A', 'B', 'C'] else '#2563eb'
-            line_style = '--' if w_next['label'] in ['A', 'B', 'C'] else '-'
+            # 🔥 Wenn die nächste Welle W, X, Y, A, B oder C heißt -> ROT und GESTRICHELT
+            line_color = '#ef4444' if w_next['label'] in ['A', 'B', 'C', 'W', 'X', 'Y'] else '#2563eb'
+            line_style = '--' if w_next['label'] in ['A', 'B', 'C', 'W', 'X', 'Y'] else '-'
                 
             ax.plot([curr_date, next_date], [w_curr['price'], w_next['price']], color=line_color, linestyle=line_style, linewidth=2, zorder=5)
             
@@ -50,7 +52,6 @@ def main():
             is_valley = w_next['price'] < w_curr['price']
             ax.annotate(w_next['label'], (next_date, w_next['price']), xytext=(0, -15 if is_valley else 10), textcoords='offset points', ha='center', color='#ea580c' if is_valley else line_color, fontweight='bold', fontsize=10)
                          
-        # TARGET MATRIX (V92)
         if len(waves) == 6 and not is_correction_macro:
             w0 = waves[0]['price']; w4 = waves[4]['price']; w5 = waves[5]['price']
             w5_date = pd.to_datetime(waves[5]['date']); end_date = df.index[-1]
