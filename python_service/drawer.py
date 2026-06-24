@@ -1,6 +1,7 @@
 import sys
 import json
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import io
 import warnings
@@ -28,6 +29,10 @@ def main():
 
         plt.style.use("default")
         fig, ax = plt.subplots(figsize=(14, 7))
+
+        # Aktueller Kurs für dynamische Sensorik
+        current_price = df["close"].iloc[-1]
+
         ax.plot(df.index, df["close"], color="#1f2937", linewidth=1, zorder=2)
 
         is_correction_macro = any(
@@ -71,7 +76,7 @@ def main():
                 ax.fill_between(
                     [curr_date, next_date],
                     [w_curr["price"], w_next["price"]],
-                    df["low"].min() * 0.9,
+                    df["low"].min() * 0.85,
                     color="#2563eb",
                     alpha=0.08,
                     zorder=1,
@@ -107,7 +112,9 @@ def main():
                 fontsize=10,
             )
 
-        # 2. TARGET MATRIX (Bullen-Impuls)
+        # =====================================================================
+        # 🔥 2. LOGARITHMIC TARGET MATRIX (Bullen-Impuls)
+        # =====================================================================
         if len(waves) == 6 and not is_correction_macro:
             w0 = waves[0]["price"]
             w4 = waves[4]["price"]
@@ -115,11 +122,15 @@ def main():
             w5_date = pd.to_datetime(waves[5]["date"])
             end_date = df.index[-1]
 
-            if w5_date < end_date:
-                diff = w5 - w0
-                f382 = w5 - (0.382 * diff)
-                f500 = w5 - (0.500 * diff)
-                f618 = w5 - (0.618 * diff)
+            if w5_date < end_date and w5 > w0:
+                log_w0 = np.log(w0)
+                log_w5 = np.log(w5)
+                log_diff = log_w5 - log_w0
+
+                # Logarithmische Retracements (Prozentual korrekte Schwingung)
+                f382 = np.exp(log_w5 - (0.382 * log_diff))
+                f500 = np.exp(log_w5 - (0.500 * log_diff))
+                f618 = np.exp(log_w5 - (0.618 * log_diff))
 
                 ax.hlines(
                     y=f382,
@@ -131,7 +142,7 @@ def main():
                     zorder=3,
                 )
                 ax.annotate(
-                    "Fib 0.382",
+                    f"Fib 0.382 ({f382:.2f}$)",
                     (end_date, f382),
                     xytext=(5, 0),
                     textcoords="offset points",
@@ -139,6 +150,7 @@ def main():
                     fontsize=8,
                     va="center",
                 )
+
                 ax.hlines(
                     y=f500,
                     xmin=w5_date,
@@ -149,7 +161,7 @@ def main():
                     zorder=3,
                 )
                 ax.annotate(
-                    "Fib 0.500",
+                    f"Fib 0.500 ({f500:.2f}$)",
                     (end_date, f500),
                     xytext=(5, 0),
                     textcoords="offset points",
@@ -157,6 +169,7 @@ def main():
                     fontsize=8,
                     va="center",
                 )
+
                 ax.hlines(
                     y=f618,
                     xmin=w5_date,
@@ -167,7 +180,7 @@ def main():
                     zorder=3,
                 )
                 ax.annotate(
-                    "Fib 0.618 (Golden Pocket)",
+                    f"Fib 0.618 Golden Pocket ({f618:.2f}$)",
                     (end_date, f618),
                     xytext=(5, 0),
                     textcoords="offset points",
@@ -185,18 +198,10 @@ def main():
                     alpha=0.05,
                     zorder=1,
                 )
-                ax.annotate(
-                    "Macro Kill-Zone",
-                    (w5_date + (end_date - w5_date) / 2, (w4 + f618) / 2),
-                    color="#ef4444",
-                    alpha=0.6,
-                    ha="center",
-                    va="center",
-                    fontsize=9,
-                    fontweight="bold",
-                )
 
-        # 🔥 3. CORRECTION PROJECTION MATRIX (V102 - C-Wellen Zielzonen)
+        # =====================================================================
+        # 🔥 3. LOGARITHMIC CORRECTION PROJECTION (V103 - Vektor-Geometrie)
+        # =====================================================================
         node_A = next((w for w in waves if w["label"] == "A"), None)
         node_B = next((w for w in waves if w["label"] == "B"), None)
 
@@ -207,84 +212,139 @@ def main():
                 p_A = node_A["price"]
                 p_B = node_B["price"]
 
-                # Vektor der Strecke A
-                diff_A = abs(p_start_A - p_A)
+                if p_start_A > p_A:
+                    log_start_A = np.log(p_start_A)
+                    log_A = np.log(p_A)
+                    log_B = np.log(p_B)
 
-                # Die 3 heiligen Projektionsziele für Welle C
-                t_618 = p_B - (0.618 * diff_A)
-                t_100 = p_B - (1.000 * diff_A)
-                t_1618 = p_B - (1.618 * diff_A)
+                    # Logarithmische Vektor-Länge der Welle A
+                    log_drop_A = log_start_A - log_A
 
-                date_B = pd.to_datetime(node_B["date"])
-                end_date = df.index[-1]
+                    # Die 3 echten, prozentualen Projektionsziele für Welle C
+                    t_618 = np.exp(log_B - (0.618 * log_drop_A))
+                    t_100 = np.exp(log_B - (1.000 * log_drop_A))
+                    t_1618 = np.exp(log_B - (1.618 * log_drop_A))
 
-                if date_B <= end_date:
-                    # Minimal-Ziel (0.618)
-                    ax.hlines(
-                        y=t_618,
-                        xmin=date_B,
-                        xmax=end_date,
-                        colors="#c084fc",
-                        linestyles=":",
-                        linewidth=1.2,
-                        zorder=4,
-                    )
-                    ax.annotate(
-                        f"C = 0.618 A ({t_618:.2f}$)",
-                        (end_date, t_618),
-                        xytext=(5, 0),
-                        textcoords="offset points",
-                        color="#c084fc",
-                        fontsize=8,
-                        va="center",
-                    )
+                    date_B = pd.to_datetime(node_B["date"])
+                    end_date = df.index[-1]
 
-                    # Lehrbuch 1:1 Ziel (1.000) -> Hauptziel
-                    ax.hlines(
-                        y=t_100,
-                        xmin=date_B,
-                        xmax=end_date,
-                        colors="#ec4899",
-                        linestyles="--",
-                        linewidth=1.5,
-                        zorder=4,
-                    )
-                    ax.annotate(
-                        f"C = 1.000 A ({t_100:.2f}$) [Target]",
-                        (end_date, t_100),
-                        xytext=(5, 0),
-                        textcoords="offset points",
-                        color="#ec4899",
-                        fontsize=9,
-                        va="center",
-                        fontweight="bold",
-                    )
+                    if date_B <= end_date:
+                        # Minimal-Ziel (0.618)
+                        ax.hlines(
+                            y=t_618,
+                            xmin=date_B,
+                            xmax=end_date,
+                            colors="#c084fc",
+                            linestyles=":",
+                            linewidth=1.2,
+                            zorder=4,
+                        )
+                        ax.annotate(
+                            f"C = 0.618 A ({t_618:.2f}$)",
+                            (end_date, t_618),
+                            xytext=(5, 0),
+                            textcoords="offset points",
+                            color="#c084fc",
+                            fontsize=8,
+                            va="center",
+                        )
 
-                    # Schmerz-Ziel / Expanded Flat (1.618)
-                    ax.hlines(
-                        y=t_1618,
-                        xmin=date_B,
-                        xmax=end_date,
-                        colors="#9f1239",
-                        linestyles="-.",
-                        linewidth=1.2,
-                        zorder=4,
-                    )
-                    ax.annotate(
-                        f"C = 1.618 A ({t_1618:.2f}$)",
-                        (end_date, t_1618),
-                        xytext=(5, 0),
-                        textcoords="offset points",
-                        color="#9f1239",
-                        fontsize=8,
-                        va="center",
-                    )
+                        # Dynamische Sensorik für das 1.000er Hauptziel
+                        if current_price < t_100:
+                            # Ziel wurde nach unten durchbrochen -> Wird zu Widerstand!
+                            ax.hlines(
+                                y=t_100,
+                                xmin=date_B,
+                                xmax=end_date,
+                                colors="#ef4444",
+                                linestyles="--",
+                                linewidth=1.2,
+                                zorder=4,
+                            )
+                            ax.annotate(
+                                f"C = 1.000 A ({t_100:.2f}$) [Broken / Resistance]",
+                                (end_date, t_100),
+                                xytext=(5, 0),
+                                textcoords="offset points",
+                                color="#ef4444",
+                                fontsize=8,
+                                va="center",
+                            )
+
+                            # 1.618 wird zum neuen Hauptziel deklariert
+                            ax.hlines(
+                                y=t_1618,
+                                xmin=date_B,
+                                xmax=end_date,
+                                colors="#9f1239",
+                                linestyles="-.",
+                                linewidth=1.8,
+                                zorder=4,
+                            )
+                            ax.annotate(
+                                f"C = 1.618 A ({t_1618:.2f}$) [Capitulation Target]",
+                                (end_date, t_1618),
+                                xytext=(5, 0),
+                                textcoords="offset points",
+                                color="#9f1239",
+                                fontsize=9,
+                                va="center",
+                                fontweight="bold",
+                            )
+                            ax.fill_between(
+                                [date_B, end_date],
+                                [t_100] * 2,
+                                [t_1618] * 2,
+                                color="#9f1239",
+                                alpha=0.04,
+                                zorder=1,
+                            )
+                        else:
+                            # Normalzustand: 1.000 ist das aktive Ziel
+                            ax.hlines(
+                                y=t_100,
+                                xmin=date_B,
+                                xmax=end_date,
+                                colors="#ec4899",
+                                linestyles="--",
+                                linewidth=1.6,
+                                zorder=4,
+                            )
+                            ax.annotate(
+                                f"C = 1.000 A ({t_100:.2f}$) [Target]",
+                                (end_date, t_100),
+                                xytext=(5, 0),
+                                textcoords="offset points",
+                                color="#ec4899",
+                                fontsize=9,
+                                va="center",
+                                fontweight="bold",
+                            )
+
+                            ax.hlines(
+                                y=t_1618,
+                                xmin=date_B,
+                                xmax=end_date,
+                                colors="#9f1239",
+                                linestyles="-.",
+                                linewidth=1.0,
+                                zorder=4,
+                            )
+                            ax.annotate(
+                                f"C = 1.618 A ({t_1618:.2f}$)",
+                                (end_date, t_1618),
+                                xytext=(5, 0),
+                                textcoords="offset points",
+                                color="#9f1239",
+                                fontsize=8,
+                                va="center",
+                            )
 
         ax.set_yscale("log")
         ax.grid(True, which="major", ls="-", alpha=0.2)
         ax.grid(True, which="minor", ls=":", alpha=0.1)
         ax.set_title(
-            f"{symbol} - Self-Healing EW Master",
+            f"{symbol} - Self-Healing EW Master (Log-Vector Core)",
             loc="left",
             fontweight="bold",
             fontsize=12,
