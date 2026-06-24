@@ -60,9 +60,12 @@ Korrekturen lassen sich in vier Hauptkategorien unterteilen:
 * Spiegeln ein Gleichgewicht der Kräfte wider, was zu einer Seitwärtsbewegung mit meist sinkendem Volumen führt.
 * Bestehen aus fünf überlappenden Wellen (a-b-c-d-e). Treten als Welle 4, B oder X auf. Auf sie folgt fast immer ein starker Schub ("Thrust") in Richtung des Haupttrends.
 
-**D. Kombinierte Strukturen (Double/Triple Threes):**
-* Hier reihen sich einfache Korrekturen waagerecht aneinander, verbunden durch eine Welle X.
-* In solchen Kombinationen taucht niemals mehr als ein Zickzack oder ein einziges Dreieck auf.
+** D. Komplexe Korrekturen (Double Threes / Kombinationen)
+Wenn der Markt zeitlich korrigiert, anstatt preislich tief zu fallen, nutzt er komplexe Kombinationsstrukturen (W-X-Y).
+* Welle W ist die erste korrekte Struktur (z. B. ein ZigZag oder Flat).
+* Welle X ist eine fundamentale Gegenbewegung/Brücke, die die beiden Korrekturen miteinander verbindet.
+* Welle Y ist die zweite korrekte Struktur, die das Muster seitwärts oder in einem leicht geneigten Kanal vollendet.
+* PFLICHT-ANWENDUNG: Wähle W-X-Y zwingend, wenn der Markt sich in einem zähen Seitwärtskanal, einer langgezogenen Range oder einem unübersichtlichen Konsolidierungskeil befindet, der sich mathematisch nicht als sauberer 5er-Impuls zählen lässt!
 
 ---
 
