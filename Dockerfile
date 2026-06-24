@@ -1,15 +1,30 @@
-FROM node:20-bookworm
-RUN apt-get update && apt-get install -y python3 python3-pip && rm -rf /var/lib/apt/lists/*
+FROM node:20-bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    build-essential \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN pip install --no-cache-dir pandas matplotlib
+
 WORKDIR /app
-COPY requirements.txt* ./
-RUN pip3 install --no-cache-dir --break-system-packages pandas matplotlib numpy
+
 COPY package*.json ./
-# HIER das Gemini-SDK installieren
-RUN npm install @google/generative-ai telegraf
-COPY tsconfig.json ./
-COPY src ./src
-COPY python_service ./python_service
+RUN npm install
+
+COPY . .
+
+RUN mkdir -p /app/data
 RUN npm run build
-ENV PORT=10000
+
 EXPOSE 10000
+VOLUME ["/app/data"]
+
 CMD ["npm", "start"]
