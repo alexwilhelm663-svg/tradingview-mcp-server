@@ -1,366 +1,129 @@
-import sys
-import json
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import io
-import warnings
+import { Telegraf } from "telegraf";
+import http from "http";
+import fs from "fs";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import sqlite3 from "sqlite3";
+import { open, Database } from "sqlite";
+import cron from "node-cron";
+import { analyzeAsset } from "./engine";
 
-warnings.filterwarnings("ignore")
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infinity });
 
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
+const PORT = process.env.PORT || 10000;
 
-def main():
-    try:
-        input_data = sys.stdin.read()
-        payload = json.loads(input_data)
+console.log("🚀 Bot V104.2: Slim Server & Telegraf Router aktiv...");
 
-        symbol = payload.get("symbol", "UNKNOWN").upper()
-        waves = payload.get("waves", [])
-        candles = payload.get("candles", [])
+let db: Database;
+let activeChatId: number | null = null;
 
-        if not candles or not waves:
-            sys.exit(1)
+async function initDB() {
+    if (!fs.existsSync('./data')) {
+        fs.mkdirSync('./data', { recursive: true });
+    }
+    db = await open({ filename: './data/bot_memory.sqlite', driver: sqlite3.Database });
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS watchlist (symbol TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS alerts (symbol TEXT PRIMARY KEY, last_alert_timestamp INTEGER);
+    `);
+    const count = await db.get(`SELECT COUNT(*) as c FROM watchlist`);
+    if (count.c === 0) {
+        const defaultList = ["AAPL", "NVDA", "TSLA", "ARM", "PLTR", "IONQ", "MSTR", "AMD", "GOOGL", "PYPL", "BAYN.DE"];
+        for (const sym of defaultList) { await db.run(`INSERT INTO watchlist (symbol) VALUES (?)`, sym); }
+    }
+    console.log("💾 SQLite Memory Core geladen.");
+}
+initDB().catch(console.error);
 
-        df = pd.DataFrame(candles)
-        df["date"] = pd.to_datetime(df["date"])
-        df.set_index("date", inplace=True)
-        for col in ["open", "high", "low", "close"]:
-            df[col] = df[col].astype(float)
+async function runRadarScan(targetChatId: number) {
+  const rows = await db.all(`SELECT symbol FROM watchlist`);
+  if (rows.length === 0) {
+      await bot.telegram.sendMessage(targetChatId, "❌ Automatischer Scan abgebrochen: Watchlist leer.");
+      return;
+  }
 
-        plt.style.use("default")
-        fig, ax = plt.subplots(figsize=(14, 7))
+  console.log(`[CRON] Starte autonomen Radar-Scan für ${rows.length} Assets...`);
+  let hits = 0; const now = Date.now();
 
-        # Aktueller Kurs für dynamische Sensorik
-        current_price = df["close"].iloc[-1]
+  for (const row of rows) {
+      const sym = row.symbol;
+      try {
+          const record = await db.get(`SELECT last_alert_timestamp FROM alerts WHERE symbol = ?`, sym);
+          if (record && (now - record.last_alert_timestamp) < (7 * 24 * 3600 * 1000)) continue;
 
-        ax.plot(df.index, df["close"], color="#1f2937", linewidth=1, zorder=2)
+          await new Promise(r => setTimeout(r, 2500)); 
+          const res = await analyzeAsset(sym, genAI);
+          
+          if (res.isHotSetup && res.finalTrend === "IMPULSE_UP") {
+              hits++;
+              await db.run(`INSERT OR REPLACE INTO alerts (symbol, last_alert_timestamp) VALUES (?, ?)`, sym, now);
+              await bot.telegram.sendPhoto(targetChatId, { source: res.buffer }, { 
+                  caption: `🎯 **AUTOMATISCHER RADAR HIT: ${sym}**\n${res.killZoneStatus}\n(7 Tage Stummschaltung aktiv).` 
+              });
+          }
+      } catch (e) { console.error(`[CRON SKIP] Fehler bei ${sym}:`, e); }
+  }
+  console.log(`[CRON] Scan beendet. Hits: ${hits}`);
+}
 
-        is_correction_macro = any(
-            w["label"] in ["A", "B", "C", "W", "X", "Y"] for w in waves
-        )
+cron.schedule("15 22 * * *", async () => {
+    if (activeChatId) {
+        await bot.telegram.sendMessage(activeChatId, "📡 **Automatischer Abend-Scan ausgelöst (NYSE Close)...**");
+        await runRadarScan(activeChatId);
+    }
+});
 
-        # 1. Standard Wellen zeichnen
-        for i in range(len(waves) - 1):
-            w_curr = waves[i]
-            w_next = waves[i + 1]
-            curr_date = pd.to_datetime(w_curr["date"])
-            next_date = pd.to_datetime(w_next["date"])
+// ============================================================================
+// TELEGRAM COMMANDS
+// ============================================================================
 
-            line_color = (
-                "#ef4444"
-                if w_next["label"] in ["A", "B", "C", "W", "X", "Y"]
-                else "#2563eb"
-            )
-            line_style = (
-                "--"
-                if w_next["label"] in ["A", "B", "C", "W", "X", "Y"]
-                else "-"
-            )
+bot.command("add", async (ctx) => {
+    activeChatId = ctx.chat.id; 
+    const sym = (ctx.message.text.split(" ")[1] || "").trim().toUpperCase();
+    if (!sym) return ctx.reply("❌ Symbol angeben!");
+    await db.run(`INSERT OR IGNORE INTO watchlist (symbol) VALUES (?)`, sym);
+    await ctx.reply(`✅ ${sym} hinzugefügt.`);
+});
 
-            ax.plot(
-                [curr_date, next_date],
-                [w_curr["price"], w_next["price"]],
-                color=line_color,
-                linestyle=line_style,
-                linewidth=2,
-                zorder=5,
-            )
+bot.command("rm", async (ctx) => {
+    activeChatId = ctx.chat.id;
+    const sym = (ctx.message.text.split(" ")[1] || "").trim().toUpperCase();
+    if (!sym) return ctx.reply("❌ Symbol angeben!");
+    await db.run(`DELETE FROM watchlist WHERE symbol = ?`, sym);
+    await ctx.reply(`🗑️ ${sym} entfernt.`);
+});
 
-            if line_style == "-" and w_next["label"] in [
-                "1",
-                "2",
-                "3",
-                "4",
-                "5",
-            ]:
-                ax.fill_between(
-                    [curr_date, next_date],
-                    [w_curr["price"], w_next["price"]],
-                    df["low"].min() * 0.85,
-                    color="#2563eb",
-                    alpha=0.08,
-                    zorder=1,
-                )
+bot.command("watchlist", async (ctx) => {
+    activeChatId = ctx.chat.id;
+    const rows = await db.all(`SELECT symbol FROM watchlist`);
+    await ctx.reply(rows.length === 0 ? "📭 Watchlist leer." : `📋 **Radar-Watchlist:**\n${rows.map(r => `• ${r.symbol}`).join("\n")}`);
+});
 
-            if i == 0:
-                ax.scatter(
-                    curr_date, w_curr["price"], color="#2563eb", s=40, zorder=6
-                )
-                ax.annotate(
-                    w_curr["label"],
-                    (curr_date, w_curr["price"]),
-                    xytext=(0, -15),
-                    textcoords="offset points",
-                    ha="center",
-                    color="#ea580c",
-                    fontweight="bold",
-                    fontsize=10,
-                )
+bot.command("analyse", async (ctx) => {
+  activeChatId = ctx.chat.id;
+  const sym = (ctx.message.text.split(" ")[1] || "").trim().toUpperCase();
+  if (!sym) return ctx.reply("❌ Symbol angeben!");
+  await ctx.reply(`⏳ Scan läuft: ${sym}...`);
+  try {
+      const result = await analyzeAsset(sym, genAI);
+      await ctx.replyWithPhoto({ source: result.buffer }, { caption: `📊 EW Master (${result.finalTrend}): ${sym}` + (result.killZoneStatus ? `\n\n${result.killZoneStatus}` : "") });
+  } catch (e: any) { await ctx.reply(`⚠️ Fehler: ${e.message}`); }
+});
 
-            ax.scatter(
-                next_date, w_next["price"], color=line_color, s=40, zorder=6
-            )
-            is_valley = w_next["price"] < w_curr["price"]
-            ax.annotate(
-                w_next["label"],
-                (next_date, w_next["price"]),
-                xytext=(0, -15 if is_valley else 10),
-                textcoords="offset points",
-                ha="center",
-                color="#ea580c" if is_valley else line_color,
-                fontweight="bold",
-                fontsize=10,
-            )
+bot.command("radar", async (ctx) => {
+  activeChatId = ctx.chat.id;
+  await ctx.reply(`📡 **MANUELLER RADAR-START**...`);
+  await runRadarScan(ctx.chat.id);
+});
 
-        # =====================================================================
-        # 🔥 2. LOGARITHMIC TARGET MATRIX (Bullen-Impuls)
-        # =====================================================================
-        if len(waves) == 6 and not is_correction_macro:
-            w0 = waves[0]["price"]
-            w4 = waves[4]["price"]
-            w5 = waves[5]["price"]
-            w5_date = pd.to_datetime(waves[5]["date"])
-            end_date = df.index[-1]
-
-            if w5_date < end_date and w5 > w0:
-                log_w0 = np.log(w0)
-                log_w5 = np.log(w5)
-                log_diff = log_w5 - log_w0
-
-                # Logarithmische Retracements (Prozentual korrekte Schwingung)
-                f382 = np.exp(log_w5 - (0.382 * log_diff))
-                f500 = np.exp(log_w5 - (0.500 * log_diff))
-                f618 = np.exp(log_w5 - (0.618 * log_diff))
-
-                ax.hlines(
-                    y=f382,
-                    xmin=w5_date,
-                    xmax=end_date,
-                    colors="#f59e0b",
-                    linestyles=":",
-                    linewidth=1.5,
-                    zorder=3,
-                )
-                ax.annotate(
-                    f"Fib 0.382 ({f382:.2f}$)",
-                    (end_date, f382),
-                    xytext=(5, 0),
-                    textcoords="offset points",
-                    color="#f59e0b",
-                    fontsize=8,
-                    va="center",
-                )
-
-                ax.hlines(
-                    y=f500,
-                    xmin=w5_date,
-                    xmax=end_date,
-                    colors="#f59e0b",
-                    linestyles=":",
-                    linewidth=1.5,
-                    zorder=3,
-                )
-                ax.annotate(
-                    f"Fib 0.500 ({f500:.2f}$)",
-                    (end_date, f500),
-                    xytext=(5, 0),
-                    textcoords="offset points",
-                    color="#f59e0b",
-                    fontsize=8,
-                    va="center",
-                )
-
-                ax.hlines(
-                    y=f618,
-                    xmin=w5_date,
-                    xmax=end_date,
-                    colors="#ef4444",
-                    linestyles="--",
-                    linewidth=1.5,
-                    zorder=3,
-                )
-                ax.annotate(
-                    f"Fib 0.618 Golden Pocket ({f618:.2f}$)",
-                    (end_date, f618),
-                    xytext=(5, 0),
-                    textcoords="offset points",
-                    color="#ef4444",
-                    fontsize=8,
-                    va="center",
-                    fontweight="bold",
-                )
-
-                ax.fill_between(
-                    [w5_date, end_date],
-                    [w4] * 2,
-                    [f618] * 2,
-                    color="#ef4444",
-                    alpha=0.05,
-                    zorder=1,
-                )
-
-        # =====================================================================
-        # 🔥 3. LOGARITHMIC CORRECTION PROJECTION (V103 - Vektor-Geometrie)
-        # =====================================================================
-        node_A = next((w for w in waves if w["label"] == "A"), None)
-        node_B = next((w for w in waves if w["label"] == "B"), None)
-
-        if node_A and node_B:
-            idx_A = waves.index(node_A)
-            if idx_A > 0:
-                p_start_A = waves[idx_A - 1]["price"]
-                p_A = node_A["price"]
-                p_B = node_B["price"]
-
-                if p_start_A > p_A:
-                    log_start_A = np.log(p_start_A)
-                    log_A = np.log(p_A)
-                    log_B = np.log(p_B)
-
-                    # Logarithmische Vektor-Länge der Welle A
-                    log_drop_A = log_start_A - log_A
-
-                    # Die 3 echten, prozentualen Projektionsziele für Welle C
-                    t_618 = np.exp(log_B - (0.618 * log_drop_A))
-                    t_100 = np.exp(log_B - (1.000 * log_drop_A))
-                    t_1618 = np.exp(log_B - (1.618 * log_drop_A))
-
-                    date_B = pd.to_datetime(node_B["date"])
-                    end_date = df.index[-1]
-
-                    if date_B <= end_date:
-                        # Minimal-Ziel (0.618)
-                        ax.hlines(
-                            y=t_618,
-                            xmin=date_B,
-                            xmax=end_date,
-                            colors="#c084fc",
-                            linestyles=":",
-                            linewidth=1.2,
-                            zorder=4,
-                        )
-                        ax.annotate(
-                            f"C = 0.618 A ({t_618:.2f}$)",
-                            (end_date, t_618),
-                            xytext=(5, 0),
-                            textcoords="offset points",
-                            color="#c084fc",
-                            fontsize=8,
-                            va="center",
-                        )
-
-                        # Dynamische Sensorik für das 1.000er Hauptziel
-                        if current_price < t_100:
-                            # Ziel wurde nach unten durchbrochen -> Wird zu Widerstand!
-                            ax.hlines(
-                                y=t_100,
-                                xmin=date_B,
-                                xmax=end_date,
-                                colors="#ef4444",
-                                linestyles="--",
-                                linewidth=1.2,
-                                zorder=4,
-                            )
-                            ax.annotate(
-                                f"C = 1.000 A ({t_100:.2f}$) [Broken / Resistance]",
-                                (end_date, t_100),
-                                xytext=(5, 0),
-                                textcoords="offset points",
-                                color="#ef4444",
-                                fontsize=8,
-                                va="center",
-                            )
-
-                            # 1.618 wird zum neuen Hauptziel deklariert
-                            ax.hlines(
-                                y=t_1618,
-                                xmin=date_B,
-                                xmax=end_date,
-                                colors="#9f1239",
-                                linestyles="-.",
-                                linewidth=1.8,
-                                zorder=4,
-                            )
-                            ax.annotate(
-                                f"C = 1.618 A ({t_1618:.2f}$) [Capitulation Target]",
-                                (end_date, t_1618),
-                                xytext=(5, 0),
-                                textcoords="offset points",
-                                color="#9f1239",
-                                fontsize=9,
-                                va="center",
-                                fontweight="bold",
-                            )
-                            ax.fill_between(
-                                [date_B, end_date],
-                                [t_100] * 2,
-                                [t_1618] * 2,
-                                color="#9f1239",
-                                alpha=0.04,
-                                zorder=1,
-                            )
-                        else:
-                            # Normalzustand: 1.000 ist das aktive Ziel
-                            ax.hlines(
-                                y=t_100,
-                                xmin=date_B,
-                                xmax=end_date,
-                                colors="#ec4899",
-                                linestyles="--",
-                                linewidth=1.6,
-                                zorder=4,
-                            )
-                            ax.annotate(
-                                f"C = 1.000 A ({t_100:.2f}$) [Target]",
-                                (end_date, t_100),
-                                xytext=(5, 0),
-                                textcoords="offset points",
-                                color="#ec4899",
-                                fontsize=9,
-                                va="center",
-                                fontweight="bold",
-                            )
-
-                            ax.hlines(
-                                y=t_1618,
-                                xmin=date_B,
-                                xmax=end_date,
-                                colors="#9f1239",
-                                linestyles="-.",
-                                linewidth=1.0,
-                                zorder=4,
-                            )
-                            ax.annotate(
-                                f"C = 1.618 A ({t_1618:.2f}$)",
-                                (end_date, t_1618),
-                                xytext=(5, 0),
-                                textcoords="offset points",
-                                color="#9f1239",
-                                fontsize=8,
-                                va="center",
-                            )
-
-        ax.set_yscale("log")
-        ax.grid(True, which="major", ls="-", alpha=0.2)
-        ax.grid(True, which="minor", ls=":", alpha=0.1)
-        ax.set_title(
-            f"{symbol} - Self-Healing EW Master (Log-Vector Core)",
-            loc="left",
-            fontweight="bold",
-            fontsize=12,
-        )
-        plt.subplots_adjust(right=0.92)
-
-        buf = io.BytesIO()
-        plt.savefig(buf, format="png", bbox_inches="tight", dpi=150)
-        buf.seek(0)
-        sys.stdout.buffer.write(buf.getvalue())
-
-    except Exception as e:
-        print(str(e), file=sys.stderr)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
-    
+if (RENDER_EXTERNAL_URL) {
+  const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
+  bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
+  http.createServer((req, res) => {
+    if (req.url === webhookPath && req.method === "POST") {
+      let body = ""; req.on("data", c => body += c);
+      req.on("end", () => { res.writeHead(200); res.end("ok"); try { bot.handleUpdate(JSON.parse(body)); } catch (e) {} });
+    } else res.end("OK");
+  }).listen(PORT);
+} else bot.launch();
