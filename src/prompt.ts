@@ -31,6 +31,8 @@ Motive Wellen bestehen immer aus fünf Unterwellen und bewegen sich in die gleic
 * **Gleichheit:** Zwei der Antriebswellen streben nach Gleichheit in Dauer und Ausmaß. Ist keine perfekte Gleichheit gegeben, liegt oft ein Fibonacci-Verhältnis von 0,618 vor.
 * **Kanalisierung:** Parallele Trendkanäle markieren typischerweise die oberen und unteren Grenzen von Impulsen.
 * **Throw-over:** Nähert sich die fünfte Welle bei sinkendem Volumen der oberen Trendkanallinie, wird sie diese oft nur genau treffen oder verfehlen. Bei hohem Volumen ist jedoch ein "Throw-over" (ein kurzes Durchbrechen der Kanallinie nach oben) wahrscheinlich, bevor der Trend umkehrt.
+* **VOLUMEN-GESETZ: Welle 3 weist typischerweise das höchste Handelsvolumen auf. Ein starker Preisanstieg bei abnehmendem Volumen (oft in Welle 5 oder bei Korrektur-Rallyes) deutet auf Erschöpfung hin und darf nicht als robuster Impuls gezählt werden!
+
 
 **Diagonale Dreiecke (Ausnahme von Impulsen):**
 Diagonale Dreiecke sind motive Wellen, die jedoch nicht als echte Impulse gelten, da sie korrektive Eigenschaften aufweisen. Bei ihnen dringt Welle 4 fast immer in das Preisgebiet von Welle 1 ein.
