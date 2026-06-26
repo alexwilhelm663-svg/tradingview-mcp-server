@@ -13,7 +13,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V104.2: Slim Server & Telegraf Router aktiv...");
+console.log("🚀 Bot V106: Speaking Radar Receipt Engine aktiv...");
 
 let db: Database;
 let activeChatId: number | null = null;
@@ -44,13 +44,19 @@ async function runRadarScan(targetChatId: number) {
   }
 
   console.log(`[CRON] Starte autonomen Radar-Scan für ${rows.length} Assets...`);
-  let hits = 0; const now = Date.now();
+  let hits = 0; 
+  let mutedCount = 0; // 🔥 Zählt die Maulkorb-Aktien
+  const now = Date.now();
+  const SEVEN_DAYS_MS = 7 * 24 * 3600 * 1000;
 
   for (const row of rows) {
       const sym = row.symbol;
       try {
           const record = await db.get(`SELECT last_alert_timestamp FROM alerts WHERE symbol = ?`, sym);
-          if (record && (now - record.last_alert_timestamp) < (7 * 24 * 3600 * 1000)) continue;
+          if (record && (now - record.last_alert_timestamp) < SEVEN_DAYS_MS) {
+              mutedCount++;
+              continue;
+          }
 
           await new Promise(r => setTimeout(r, 2500)); 
           const res = await analyzeAsset(sym, genAI);
@@ -64,7 +70,17 @@ async function runRadarScan(targetChatId: number) {
           }
       } catch (e) { console.error(`[CRON SKIP] Fehler bei ${sym}:`, e); }
   }
-  console.log(`[CRON] Scan beendet. Hits: ${hits}`);
+
+  // 🔥 V106 DIE QUITTUNG AN DEN OPERATOR
+  if (hits === 0) {
+      await bot.telegram.sendMessage(targetChatId, 
+          `🏁 **SCAN ABGESCHLOSSEN**\n\n• Radar-Watchlist: \`${rows.length}\` Werte\n• Neue Treffer: \`0\`\n• Durch 7d-Maulkorb blockiert: \`${mutedCount}\`\n\n*(Keine neue Aktie befindet sich in der Macro Kill-Zone).*`
+      );
+  } else {
+      await bot.telegram.sendMessage(targetChatId, `🏁 **RADAR-DURCHLAUF BEENDET** (Neue Hits: ${hits})`);
+  }
+
+  console.log(`[CRON] Scan beendet. Hits: ${hits}, Muted: ${mutedCount}`);
 }
 
 cron.schedule("15 22 * * *", async () => {
@@ -74,10 +90,7 @@ cron.schedule("15 22 * * *", async () => {
     }
 });
 
-// ============================================================================
-// TELEGRAM COMMANDS
-// ============================================================================
-
+// TELEGRAM COMMAND ROUTING
 bot.command("add", async (ctx) => {
     activeChatId = ctx.chat.id; 
     const sym = (ctx.message.text.split(" ")[1] || "").trim().toUpperCase();
