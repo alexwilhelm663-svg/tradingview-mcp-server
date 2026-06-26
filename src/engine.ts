@@ -151,7 +151,18 @@ async function fetchVanillaYahooCandles(symbol: string) {
     if (seenDates.has(dateStr)) continue; seenDates.add(dateStr);
     const currentLow = parseFloat(quote.low[i]);
     if (currentLow < minLow) { minLow = currentLow; atlIndex = rawCandles.length; }
-    rawCandles.push({ date: dateStr, open: Number(quote.open[i]).toFixed(4), high: Number(quote.high[i]).toFixed(4), low: Number(quote.low[i]).toFixed(4), close: Number(quote.close[i]).toFixed(4) });
+    
+    // 🔥 V105 VOLUMEN-EXTRAKTION
+    const vol = quote.volume?.[i] || 0;
+
+    rawCandles.push({ 
+        date: dateStr, 
+        open: Number(quote.open[i]).toFixed(4), 
+        high: Number(quote.high[i]).toFixed(4), 
+        low: Number(quote.low[i]).toFixed(4), 
+        close: Number(quote.close[i]).toFixed(4),
+        volume: vol
+    });
   }
   return { fullCandles: rawCandles, weeklyAnalysisCandles: rawCandles.slice(atlIndex), atlCandle: rawCandles[atlIndex] };
 }
@@ -195,7 +206,8 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
       return { buffer: py.pngBuffer, finalTrend: "MACRO_BEAR_DOWN", isHotSetup: false, killZoneStatus: `📉 **SÄKULARER BÄRENMARKT:** Abwärtstrend (-${priceDropFromAthPct.toFixed(1)}% vom ATH). Seziert am ${athCandle.date}.` };
   }
 
-  const minifiedMarketStream = weeklyAnalysisCandles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close}`).join("|");
+  // 🔥 V105 VOLUMEN-EINSPEISUNG IN DEN LLM-STREAM
+  const minifiedMarketStream = weeklyAnalysisCandles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close},${c.volume}`).join("|");
   const fullSystemPrompt = getElliottWaveSystemPrompt(weeklyAnalysisCandles[0].date, weeklyAnalysisCandles[weeklyAnalysisCandles.length-1].date, minifiedMarketStream) + `\n🔥 ZWANGS-ANKER: Welle 0 ist der ${atlCandle.date} (${atlCandle.low}).`;
 
   let basePrompt = `Analysiere die Daten, entscheide den macro_trend und liefere das JSON.`;
@@ -245,9 +257,8 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   if (finalTrend === "IMPULSE_UP" && waves.length >= 6) {
       const w0 = waves[0].price; const w4 = waves[4].price; const w5 = waves[5].price;
       if (w5 > w0) {
-          // 🔥 LOGARITHMISCHE SENSORIK FÜR DIE TS ALARM-LOGIK (v104)
           const logW0 = Math.log(w0); const logW5 = Math.log(w5);
-          const logFib382 = npExp_ts(logW5 - (0.382 * (logW5 - logW0)));
+          const logFib382 = Math.exp(logW5 - (0.382 * (logW5 - logW0)));
           if (currentPrice <= logFib382 && currentPrice >= (w4 * 0.8)) {
               isHotSetup = true; 
               killZoneStatus = `🚨 **HOT SETUP:** Kurs (${currentPrice.toFixed(2)}$) befindet sich in der Macro Kill-Zone!`;
@@ -255,7 +266,4 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
       }
   }
   return { buffer: py.pngBuffer, finalTrend, isHotSetup, killZoneStatus };
-}
-
-function npExp_ts(val: number): number { return Math.exp(val); }
-
+    }
