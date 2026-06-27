@@ -13,7 +13,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V106: Speaking Radar Receipt Engine aktiv...");
+console.log("🚀 Bot V107: Dual-Origin Screener Ingestion Engine aktiv...");
 
 let db: Database;
 let activeChatId: number | null = null;
@@ -23,18 +23,43 @@ async function initDB() {
         fs.mkdirSync('./data', { recursive: true });
     }
     db = await open({ filename: './data/bot_memory.sqlite', driver: sqlite3.Database });
+    
+    // 🔥 V107 MIGRATION: Erweitert bestehende Tabellen sicher um die 'source' Spalte
     await db.exec(`
-        CREATE TABLE IF NOT EXISTS watchlist (symbol TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS watchlist (symbol TEXT PRIMARY KEY, source TEXT DEFAULT 'MANUAL');
         CREATE TABLE IF NOT EXISTS alerts (symbol TEXT PRIMARY KEY, last_alert_timestamp INTEGER);
     `);
+    try { await db.exec(`ALTER TABLE watchlist ADD COLUMN source TEXT DEFAULT 'MANUAL'`); } catch(e) {}
+
     const count = await db.get(`SELECT COUNT(*) as c FROM watchlist`);
     if (count.c === 0) {
         const defaultList = ["AAPL", "NVDA", "TSLA", "ARM", "PLTR", "IONQ", "MSTR", "AMD", "GOOGL", "PYPL", "BAYN.DE"];
-        for (const sym of defaultList) { await db.run(`INSERT INTO watchlist (symbol) VALUES (?)`, sym); }
+        for (const sym of defaultList) { await db.run(`INSERT INTO watchlist (symbol, source) VALUES (?, 'MANUAL')`, sym); }
     }
-    console.log("💾 SQLite Memory Core geladen.");
+    console.log("💾 SQLite Memory Core (Dual-Origin) geladen.");
 }
 initDB().catch(console.error);
+
+// ============================================================================
+// 🔥 DER REGEX PARSER FÜR DEN TÄGLICHEN ELLIOTT REPORT
+// ============================================================================
+function extractTickersFromReport(text: string): string[] {
+    const lines = text.split('\n');
+    const found: string[] = [];
+    // Sucht am Zeilenanfang nach 2-8 Großbuchstaben/Zahlen/Punkten, gefolgt von Leerzeichen & einer Ziffer/Minus
+    const tickerRegex = /^([A-Z0-9.\-]{2,8})\s+[-]?\d/;
+    
+    for (const l of lines) {
+        const m = l.trim().match(tickerRegex);
+        if (m) {
+            const sym = m[1].trim();
+            if (!['CRV', 'OSC', 'EXP', 'AUSBR', 'KORR', 'TK', 'EW'].includes(sym)) {
+                found.push(sym);
+            }
+        }
+    }
+    return Array.from(new Set(found));
+}
 
 async function runRadarScan(targetChatId: number) {
   const rows = await db.all(`SELECT symbol FROM watchlist`);
@@ -44,8 +69,7 @@ async function runRadarScan(targetChatId: number) {
   }
 
   console.log(`[CRON] Starte autonomen Radar-Scan für ${rows.length} Assets...`);
-  let hits = 0; 
-  let mutedCount = 0; // 🔥 Zählt die Maulkorb-Aktien
+  let hits = 0; let mutedCount = 0;
   const now = Date.now();
   const SEVEN_DAYS_MS = 7 * 24 * 3600 * 1000;
 
@@ -53,10 +77,7 @@ async function runRadarScan(targetChatId: number) {
       const sym = row.symbol;
       try {
           const record = await db.get(`SELECT last_alert_timestamp FROM alerts WHERE symbol = ?`, sym);
-          if (record && (now - record.last_alert_timestamp) < SEVEN_DAYS_MS) {
-              mutedCount++;
-              continue;
-          }
+          if (record && (now - record.last_alert_timestamp) < SEVEN_DAYS_MS) { mutedCount++; continue; }
 
           await new Promise(r => setTimeout(r, 2500)); 
           const res = await analyzeAsset(sym, genAI);
@@ -71,32 +92,68 @@ async function runRadarScan(targetChatId: number) {
       } catch (e) { console.error(`[CRON SKIP] Fehler bei ${sym}:`, e); }
   }
 
-  // 🔥 V106 DIE QUITTUNG AN DEN OPERATOR
   if (hits === 0) {
-      await bot.telegram.sendMessage(targetChatId, 
-          `🏁 **SCAN ABGESCHLOSSEN**\n\n• Radar-Watchlist: \`${rows.length}\` Werte\n• Neue Treffer: \`0\`\n• Durch 7d-Maulkorb blockiert: \`${mutedCount}\`\n\n*(Keine neue Aktie befindet sich in der Macro Kill-Zone).*`
-      );
+      await bot.telegram.sendMessage(targetChatId, `🏁 **SCAN ABGESCHLOSSEN**\n\n• Radar-Watchlist: \`${rows.length}\` Werte\n• Neue Treffer: \`0\`\n• Durch 7d-Maulkorb blockiert: \`${mutedCount}\`\n\n*(Keine neue Aktie befindet sich in der Macro Kill-Zone).*`);
   } else {
       await bot.telegram.sendMessage(targetChatId, `🏁 **RADAR-DURCHLAUF BEENDET** (Neue Hits: ${hits})`);
   }
-
-  console.log(`[CRON] Scan beendet. Hits: ${hits}, Muted: ${mutedCount}`);
 }
 
 cron.schedule("15 22 * * *", async () => {
-    if (activeChatId) {
-        await bot.telegram.sendMessage(activeChatId, "📡 **Automatischer Abend-Scan ausgelöst (NYSE Close)...**");
-        await runRadarScan(activeChatId);
-    }
+    if (activeChatId) await runRadarScan(activeChatId);
 });
 
-// TELEGRAM COMMAND ROUTING
+// ============================================================================
+// 🔥 TEXT MIDDLEWARE (Fängt den täglichen Report ab)
+// ============================================================================
+bot.on("text", async (ctx, next) => {
+    const text = ctx.message.text;
+    if (text.startsWith("/")) return next(); 
+
+    if (text.includes("Elliott 1-2 Screen") || text.includes("Third-of-a-Third") || text.includes("Universum:")) {
+        activeChatId = ctx.chat.id;
+        const parsedTickers = extractTickersFromReport(text);
+        
+        if (parsedTickers.length === 0) {
+            return ctx.reply("⚠️ Screen-Report erkannt, aber es konnten keine validen Ticker extrahiert werden.");
+        }
+
+        const oldScreenRows = await db.all(`SELECT symbol FROM watchlist WHERE source = 'SCREEN'`);
+        const oldSet = new Set(oldScreenRows.map(r => r.symbol));
+        const newSet = new Set(parsedTickers);
+
+        const toAdd = parsedTickers.filter(x => !oldSet.has(x));
+        const toRemove = Array.from(oldSet).filter(x => !newSet.has(x));
+
+        // 1. Alte Screen-Werte löschen (Manuelle bleiben unberührt!)
+        for (const sym of toRemove) await db.run(`DELETE FROM watchlist WHERE symbol = ? AND source = 'SCREEN'`, sym);
+        
+        // 2. Neue Screen-Werte eintragen
+        for (const sym of parsedTickers) await db.run(`INSERT OR IGNORE INTO watchlist (symbol, source) VALUES (?, 'SCREEN')`, sym);
+
+        const total = await db.get(`SELECT COUNT(*) as c FROM watchlist`);
+        const manualCount = await db.get(`SELECT COUNT(*) as c FROM watchlist WHERE source = 'MANUAL'`);
+
+        await ctx.reply(
+            `📥 **SCREEN-REPORT SYNCHRONISIERT**\n\n` +
+            `• Im Report erkannt: \`${parsedTickers.length}\` Ticker\n` +
+            `• Frische Kandidaten: \`+${toAdd.length}\` ${toAdd.length > 0 ? `*(${toAdd.slice(0, 4).join(", ")}${toAdd.length > 4 ? '...' : ''})*` : ''}\n` +
+            `• Veraltete Screen-Werte gelöscht: \`-${toRemove.length}\`\n` +
+            `• Deine manuellen Darlings geschützt: \`${manualCount.c}\`\n\n` +
+            `📡 **Radar scharfgeschaltet: Überwacht heute Abend exakt ${total.c} Assets.**`
+        );
+        return;
+    }
+    return next();
+});
+
+// TELEGRAM COMMANDS
 bot.command("add", async (ctx) => {
     activeChatId = ctx.chat.id; 
     const sym = (ctx.message.text.split(" ")[1] || "").trim().toUpperCase();
     if (!sym) return ctx.reply("❌ Symbol angeben!");
-    await db.run(`INSERT OR IGNORE INTO watchlist (symbol) VALUES (?)`, sym);
-    await ctx.reply(`✅ ${sym} hinzugefügt.`);
+    await db.run(`INSERT OR REPLACE INTO watchlist (symbol, source) VALUES (?, 'MANUAL')`, sym);
+    await ctx.reply(`✅ ${sym} (MANUAL) zur Watchlist hinzugefügt.`);
 });
 
 bot.command("rm", async (ctx) => {
@@ -109,8 +166,8 @@ bot.command("rm", async (ctx) => {
 
 bot.command("watchlist", async (ctx) => {
     activeChatId = ctx.chat.id;
-    const rows = await db.all(`SELECT symbol FROM watchlist`);
-    await ctx.reply(rows.length === 0 ? "📭 Watchlist leer." : `📋 **Radar-Watchlist:**\n${rows.map(r => `• ${r.symbol}`).join("\n")}`);
+    const rows = await db.all(`SELECT symbol, source FROM watchlist ORDER BY source, symbol`);
+    await ctx.reply(rows.length === 0 ? "📭 Watchlist leer." : `📋 **Radar-Watchlist (${rows.length}):**\n${rows.map(r => `• \`${r.symbol.padEnd(8)}\` [${r.source}]`).join("\n")}`);
 });
 
 bot.command("analyse", async (ctx) => {
@@ -140,3 +197,4 @@ if (RENDER_EXTERNAL_URL) {
     } else res.end("OK");
   }).listen(PORT);
 } else bot.launch();
+                            
