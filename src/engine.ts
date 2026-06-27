@@ -95,7 +95,11 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
   let w3 = getGlobalExtremum(c, w2.date, m[4] + "-31", 'peak'); w3.label = "3";
   let w4 = getGlobalExtremum(c, w3.date, m[5] + "-31", 'valley'); w4.label = "4";
   if (w4.price <= w1.price) throw new Error("OVERLAP_VIOLATION");
+  
   let w5 = getGlobalExtremum(c, w4.date, c[c.length-1].date, 'peak'); w5.label = "5";
+  
+  // 🔥 BUILD 107: DER ANTI-WURMLOCH SCHUTZ FÜR WELLE 5
+  if (w5.price <= w4.price) throw new Error("WAVE5_VALLEY_VIOLATION");
 
   const finalWaves: WaveNode[] = [w0, w1, w2, w3, w4, w5];
   const postW5Candles = c.filter((x:any) => x.date > w5.date);
@@ -152,7 +156,6 @@ async function fetchVanillaYahooCandles(symbol: string) {
     const currentLow = parseFloat(quote.low[i]);
     if (currentLow < minLow) { minLow = currentLow; atlIndex = rawCandles.length; }
     
-    // 🔥 V105 VOLUMEN-EXTRAKTION
     const vol = quote.volume?.[i] || 0;
 
     rawCandles.push({ 
@@ -206,7 +209,6 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
       return { buffer: py.pngBuffer, finalTrend: "MACRO_BEAR_DOWN", isHotSetup: false, killZoneStatus: `📉 **SÄKULARER BÄRENMARKT:** Abwärtstrend (-${priceDropFromAthPct.toFixed(1)}% vom ATH). Seziert am ${athCandle.date}.` };
   }
 
-  // 🔥 V105 VOLUMEN-EINSPEISUNG IN DEN LLM-STREAM
   const minifiedMarketStream = weeklyAnalysisCandles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close},${c.volume}`).join("|");
   const fullSystemPrompt = getElliottWaveSystemPrompt(weeklyAnalysisCandles[0].date, weeklyAnalysisCandles[weeklyAnalysisCandles.length-1].date, minifiedMarketStream) + `\n🔥 ZWANGS-ANKER: Welle 0 ist der ${atlCandle.date} (${atlCandle.low}).`;
 
@@ -237,9 +239,10 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
             const res = buildIroncladEuclideanSequence(parsed.rough_months, weeklyAnalysisCandles);
             waves = res.waves; patchedCandles = res.patchedCandles; break; 
         } catch (e: any) {
-            if (e.message === "OVERLAP_VIOLATION" || e.message === "RETRACEMENT_VIOLATION") {
+            // 🔥 BUILD 107 CATCH-UPGRADE: FÄNGT DIE WELLE-5 ANOMALIE AB
+            if (e.message === "OVERLAP_VIOLATION" || e.message === "RETRACEMENT_VIOLATION" || e.message === "WAVE5_VALLEY_VIOLATION") {
                 if (attempts < maxAttempts) {
-                    currentTemp += 0.35; currentPrompt = `${basePrompt}\n\nACHTUNG! FEHLER:\n${e.message}\nWÄHLE ANDERE MONATE!`;
+                    currentTemp += 0.35; currentPrompt = `${basePrompt}\n\nACHTUNG! GEOMETRIE-FEHLER:\n${e.message}\nWÄHLE ANDERE MONATE!`;
                 } else {
                     finalTrend = "CORRECTION_UP";
                     const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
@@ -266,4 +269,4 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
       }
   }
   return { buffer: py.pngBuffer, finalTrend, isHotSetup, killZoneStatus };
-    }
+}
