@@ -97,8 +97,6 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
   if (w4.price <= w1.price) throw new Error("OVERLAP_VIOLATION");
   
   let w5 = getGlobalExtremum(c, w4.date, c[c.length-1].date, 'peak'); w5.label = "5";
-  
-  // 🔥 BUILD 107: DER ANTI-WURMLOCH SCHUTZ FÜR WELLE 5
   if (w5.price <= w4.price) throw new Error("WAVE5_VALLEY_VIOLATION");
 
   const finalWaves: WaveNode[] = [w0, w1, w2, w3, w4, w5];
@@ -140,6 +138,7 @@ function buildComplexCorrectionSequence(llmMonths: string[], postAtlCandles: any
   return { waves: [w0, wW, wX, wY], patchedCandles: c };
 }
 
+// 🔥 URSPRUNG: YAHOO FINANCE (Für Aktien)
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
   const res = await fetch(`https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=max`, { headers: { "User-Agent": "Mozilla/5.0" } });
@@ -170,6 +169,50 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return { fullCandles: rawCandles, weeklyAnalysisCandles: rawCandles.slice(atlIndex), atlCandle: rawCandles[atlIndex] };
 }
 
+// 🔥 NEU IN BUILD 109: KRYPTO-HISTORIKER (Bypass via CryptoCompare)
+async function fetchCryptoCompareCandles(symbol: string) {
+  const cleanSym = symbol.trim().toUpperCase();
+  const parts = cleanSym.split("-");
+  const coin = parts[0]; 
+  const fiat = parts[1] || "USD";
+  
+  // Zieht 2000 Wochen (ca. 38 Jahre) an aggregierten 7-Tages-Kerzen
+  const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${coin}&tsym=${fiat}&limit=2000&aggregate=7`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`CryptoCompare HTTP Fehler: ${res.status}`);
+  const raw = await res.json();
+  if (raw.Response === "Error") throw new Error(`Krypto-API Fehler: ${raw.Message}`);
+
+  const dataArr = raw.Data?.Data || [];
+  if (dataArr.length === 0) throw new Error("Keine Krypto-Daten auf CCData gefunden.");
+
+  const rawCandles: any[] = []; let minLow = Infinity; let atlIndex = 0; const seenDates = new Set<string>();
+
+  for (let i = 0; i < dataArr.length; i++) {
+      const c = dataArr[i];
+      if (c.close === 0 && c.open === 0) continue; // Überspringt Leere vor der Erschaffung
+      
+      const dateStr = new Date(c.time * 1000).toISOString().split('T')[0];
+      if (seenDates.has(dateStr)) continue; seenDates.add(dateStr);
+      
+      const currentLow = parseFloat(c.low);
+      if (currentLow < minLow && currentLow > 0) { 
+          minLow = currentLow; 
+          atlIndex = rawCandles.length; 
+      }
+
+      rawCandles.push({
+          date: dateStr,
+          open: Number(c.open).toFixed(4),
+          high: Number(c.high).toFixed(4),
+          low: Number(c.low).toFixed(4),
+          close: Number(c.close).toFixed(4),
+          volume: c.volumeto || 0
+      });
+  }
+  return { fullCandles: rawCandles, weeklyAnalysisCandles: rawCandles.slice(atlIndex), atlCandle: rawCandles[atlIndex] };
+}
+
 function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, errorMessage: string | null }> {
   return new Promise((resolve) => {
     const pyProcess = spawn("python3", ["python_service/drawer.py"]);
@@ -186,7 +229,22 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
 }
 
 export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
-  const marketData = await fetchVanillaYahooCandles(symbol);
+  let marketData;
+  const cleanSym = symbol.trim().toUpperCase();
+
+  // 🔥 BUILD 109: DER DUAL-FEED-ROUTER
+  if (cleanSym.includes("-USD") || cleanSym.includes("-EUR")) {
+      try {
+          console.log(`[API-ROUTER] Krypto-Asset erkannt (${cleanSym}). Umgehe Yahoo, aktiviere CryptoCompare...`);
+          marketData = await fetchCryptoCompareCandles(cleanSym);
+      } catch (e) {
+          console.log(`[API-ROUTER] CryptoCompare fehlgeschlagen. Fallback zu Yahoo Finance...`);
+          marketData = await fetchVanillaYahooCandles(cleanSym);
+      }
+  } else {
+      marketData = await fetchVanillaYahooCandles(cleanSym);
+  }
+
   const { weeklyAnalysisCandles, atlCandle } = marketData;
   if (weeklyAnalysisCandles.length < 26) throw new Error("Säkulares Bärenmarkt-Veto (Historie zu kurz).");
 
@@ -239,7 +297,6 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
             const res = buildIroncladEuclideanSequence(parsed.rough_months, weeklyAnalysisCandles);
             waves = res.waves; patchedCandles = res.patchedCandles; break; 
         } catch (e: any) {
-            // 🔥 BUILD 107 CATCH-UPGRADE: FÄNGT DIE WELLE-5 ANOMALIE AB
             if (e.message === "OVERLAP_VIOLATION" || e.message === "RETRACEMENT_VIOLATION" || e.message === "WAVE5_VALLEY_VIOLATION") {
                 if (attempts < maxAttempts) {
                     currentTemp += 0.35; currentPrompt = `${basePrompt}\n\nACHTUNG! GEOMETRIE-FEHLER:\n${e.message}\nWÄHLE ANDERE MONATE!`;
