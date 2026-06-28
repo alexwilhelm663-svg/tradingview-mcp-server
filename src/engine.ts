@@ -159,46 +159,60 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return { fullCandles: rawCandles, weeklyAnalysisCandles: rawCandles.slice(atlIndex), atlCandle: rawCandles[atlIndex] };
 }
 
-// 🔥 BUILD 114: DER BITSTAMP NATIVE CORE (Offizielle REST API ab August 2011)
-async function fetchBitstampCandles(symbol: string) {
-  // Wandelt 'BTC-USD' in 'btcusd' um
-  const pair = symbol.trim().replace('-', '').toLowerCase();
+// 🔥 BUILD 115: DER KRAKEN CORE (Die unzerstörbare Tier-1 Exchange API)
+async function fetchKrakenCandles(symbol: string) {
+  let coin = symbol.trim().split('-')[0].toUpperCase();
+  const fiat = symbol.trim().split('-')[1]?.toUpperCase() || 'USD';
   
-  // step=604800 (1 Woche in Sekunden), limit=1000 (reicht exakt 19,1 Jahre zurück)
-  const url = `https://www.bitstamp.net/api/v2/ohlc/${pair}/?step=604800&limit=1000`;
+  // Kraken verwendet historisch XBT anstelle von BTC
+  if (coin === 'BTC') coin = 'XBT';
+  const pair = `${coin}${fiat}`;
   
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Bitstamp Exchange verweigert: HTTP ${res.status}`);
+  // interval=10080 bedeutet 7 Tage in Minuten. Liefert ~720 Wochen zurück (13,8 Jahre).
+  const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=10080`;
+  
+  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+  if (!res.ok) throw new Error(`Kraken API verweigert: HTTP ${res.status}`);
   
   const raw = await res.json();
-  const ohlcList = raw.data?.ohlc || [];
-  if (ohlcList.length === 0) throw new Error("Bitstamp lieferte leeren Kerzen-Array.");
+  if (raw.error && raw.error.length > 0) throw new Error(`Kraken Fehler: ${raw.error.join(', ')}`);
+  
+  const resultKeys = Object.keys(raw.result);
+  const dataKey = resultKeys.find(k => k !== 'last');
+  if (!dataKey) throw new Error("Keine Kursdaten im Kraken-JSON gefunden.");
+  
+  const ohlcList = raw.result[dataKey];
+  if (!ohlcList || ohlcList.length === 0) throw new Error("Kraken lieferte leeren Kerzen-Array.");
 
   const tempCandles: any[] = [];
   const seenDates = new Set<string>();
 
   for (let i = 0; i < ohlcList.length; i++) {
+      // Format: [time, open, high, low, close, vwap, volume, count]
       const c = ohlcList[i];
-      const o = parseFloat(c.open);
-      const close = parseFloat(c.close);
+      const timeSec = typeof c[0] === 'number' ? c[0] : parseInt(c[0]);
       
-      if (isNaN(o) || isNaN(close) || (o === 0 && close === 0)) continue;
-
-      const dateStr = new Date(parseInt(c.timestamp) * 1000).toISOString().split('T')[0];
+      const dateStr = new Date(timeSec * 1000).toISOString().split('T')[0];
       if (seenDates.has(dateStr)) continue; 
       seenDates.add(dateStr);
 
+      const o = parseFloat(c[1]);
+      const h = parseFloat(c[2]);
+      const l = parseFloat(c[3]);
+      const close = parseFloat(c[4]);
+      
+      if (isNaN(o) || isNaN(close) || (o === 0 && close === 0)) continue;
+
       tempCandles.push({
           date: dateStr,
-          open: Number(c.open).toFixed(4),
-          high: Number(c.high).toFixed(4),
-          low: Number(c.low).toFixed(4),
-          close: Number(c.close).toFixed(4),
-          volume: parseFloat(c.volume) || 0
+          open: o.toFixed(4),
+          high: h.toFixed(4),
+          low: l.toFixed(4),
+          close: close.toFixed(4),
+          volume: parseFloat(c[6]) || 0
       });
   }
 
-  // Absoluter Chronologie-Anker
   tempCandles.sort((a, b) => a.date.localeCompare(b.date));
 
   let minLow = Infinity; let atlIndex = 0;
@@ -209,8 +223,6 @@ async function fetchBitstampCandles(symbol: string) {
           atlIndex = i; 
       }
   }
-
-  console.log(`[BITSTAMP] ${tempCandles.length} Kerzen geladen. Genesis-Tal: ${tempCandles[atlIndex].date} (${tempCandles[atlIndex].low}$)`);
 
   return { 
       fullCandles: tempCandles, 
@@ -237,12 +249,12 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
 export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   let marketData; const cleanSym = symbol.trim().toUpperCase();
   
-  // 🔥 BUILD 114 WEICHE: KRYPTO -> BITSTAMP EXCHANGE | AKTIEN -> YAHOO
+  // 🔥 BUILD 115 WEICHE: KRYPTO -> KRAKEN API | AKTIEN -> YAHOO
   if (cleanSym.includes("-USD") || cleanSym.includes("-EUR")) {
       try { 
-          marketData = await fetchBitstampCandles(cleanSym); 
+          marketData = await fetchKrakenCandles(cleanSym); 
       } catch (e: any) { 
-          throw new Error(`Bitstamp Feed gescheitert: ${e.message}`);
+          throw new Error(`Kraken Feed gescheitert: ${e.message}`);
       }
   } else { 
       marketData = await fetchVanillaYahooCandles(cleanSym); 
@@ -341,4 +353,4 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   }
 
   return { buffer: py.pngBuffer, finalTrend, isHotSetup, killZoneStatus, isBreakoutSetup, breakoutStatus };
-                                                                                     }
+        }
