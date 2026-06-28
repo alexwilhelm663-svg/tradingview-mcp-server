@@ -159,60 +159,58 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return { fullCandles: rawCandles, weeklyAnalysisCandles: rawCandles.slice(atlIndex), atlCandle: rawCandles[atlIndex] };
 }
 
-// 🔥 BUILD 113: DER QUANT-HISTORIKER (Stooq CSV Bypass ab 2010)
-async function fetchStooqCryptoCandles(symbol: string) {
-  // Verwandelt 'BTC-USD' in das polnische Ticker-Format 'btcusd'
-  const stooqTicker = symbol.trim().replace('-', '').toLowerCase();
-  const url = `https://stooq.com/q/d/l/?s=${stooqTicker}&i=w`; // i=w bedeutet Weekly
+// 🔥 BUILD 114: DER BITSTAMP NATIVE CORE (Offizielle REST API ab August 2011)
+async function fetchBitstampCandles(symbol: string) {
+  // Wandelt 'BTC-USD' in 'btcusd' um
+  const pair = symbol.trim().replace('-', '').toLowerCase();
   
-  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
-  if (!res.ok) throw new Error(`Stooq Server abgelehnt: HTTP ${res.status}`);
+  // step=604800 (1 Woche in Sekunden), limit=1000 (reicht exakt 19,1 Jahre zurück)
+  const url = `https://www.bitstamp.net/api/v2/ohlc/${pair}/?step=604800&limit=1000`;
   
-  const csvText = await res.text();
-  const lines = csvText.trim().split('\n');
-  if (lines.length < 5) throw new Error("Stooq lieferte keine ausreichende CSV-Historie.");
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Bitstamp Exchange verweigert: HTTP ${res.status}`);
+  
+  const raw = await res.json();
+  const ohlcList = raw.data?.ohlc || [];
+  if (ohlcList.length === 0) throw new Error("Bitstamp lieferte leeren Kerzen-Array.");
 
   const tempCandles: any[] = [];
-  
-  // Zeile 0 ist der Header ("Date,Open,High,Low,Close,Volume")
-  for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(',');
-      if (cols.length < 5) continue;
+  const seenDates = new Set<string>();
 
-      const dateStr = cols[0].trim();
-      const o = parseFloat(cols[1]);
-      const h = parseFloat(cols[2]);
-      const l = parseFloat(cols[3]);
-      const c = parseFloat(cols[4]);
-      const v = cols[5] ? parseFloat(cols[5]) : 0;
+  for (let i = 0; i < ohlcList.length; i++) {
+      const c = ohlcList[i];
+      const o = parseFloat(c.open);
+      const close = parseFloat(c.close);
+      
+      if (isNaN(o) || isNaN(close) || (o === 0 && close === 0)) continue;
 
-      if (isNaN(c) || isNaN(l) || l <= 0) continue;
+      const dateStr = new Date(parseInt(c.timestamp) * 1000).toISOString().split('T')[0];
+      if (seenDates.has(dateStr)) continue; 
+      seenDates.add(dateStr);
 
       tempCandles.push({
           date: dateStr,
-          open: o.toFixed(4),
-          high: h.toFixed(4),
-          low: l.toFixed(4),
-          close: c.toFixed(4),
-          volume: v
+          open: Number(c.open).toFixed(4),
+          high: Number(c.high).toFixed(4),
+          low: Number(c.low).toFixed(4),
+          close: Number(c.close).toFixed(4),
+          volume: parseFloat(c.volume) || 0
       });
   }
 
-  if (tempCandles.length === 0) throw new Error("CSV konnte nicht in Kerzen umgewandelt werden.");
-
-  // 🔥 ABSOLUTE KERN-GARANTIE: Zwingt die Zeitreihe in chronologische Aufwärts-Reihenfolge
+  // Absoluter Chronologie-Anker
   tempCandles.sort((a, b) => a.date.localeCompare(b.date));
 
   let minLow = Infinity; let atlIndex = 0;
   for (let i = 0; i < tempCandles.length; i++) {
       const currentLow = parseFloat(tempCandles[i].low);
-      if (currentLow < minLow) { 
+      if (currentLow < minLow && currentLow > 0) { 
           minLow = currentLow; 
           atlIndex = i; 
       }
   }
 
-  console.log(`[STOOQ] Erfolgreich ${tempCandles.length} Wochenkerzen geladen. Ursprungs-Tal (Welle 0): ${tempCandles[atlIndex].date} (${tempCandles[atlIndex].low}$)`);
+  console.log(`[BITSTAMP] ${tempCandles.length} Kerzen geladen. Genesis-Tal: ${tempCandles[atlIndex].date} (${tempCandles[atlIndex].low}$)`);
 
   return { 
       fullCandles: tempCandles, 
@@ -239,12 +237,12 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
 export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   let marketData; const cleanSym = symbol.trim().toUpperCase();
   
-  // 🔥 BUILD 113 WEICHE: KRYPTO -> STOOQ CSV | AKTIEN -> YAHOO
+  // 🔥 BUILD 114 WEICHE: KRYPTO -> BITSTAMP EXCHANGE | AKTIEN -> YAHOO
   if (cleanSym.includes("-USD") || cleanSym.includes("-EUR")) {
       try { 
-          marketData = await fetchStooqCryptoCandles(cleanSym); 
+          marketData = await fetchBitstampCandles(cleanSym); 
       } catch (e: any) { 
-          throw new Error(`Krypto-Feed (Stooq) gescheitert: ${e.message}`);
+          throw new Error(`Bitstamp Feed gescheitert: ${e.message}`);
       }
   } else { 
       marketData = await fetchVanillaYahooCandles(cleanSym); 
@@ -343,4 +341,4 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   }
 
   return { buffer: py.pngBuffer, finalTrend, isHotSetup, killZoneStatus, isBreakoutSetup, breakoutStatus };
-      }
+                                                                                     }
