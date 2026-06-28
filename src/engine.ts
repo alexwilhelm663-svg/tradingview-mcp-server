@@ -168,17 +168,25 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return { fullCandles: rawCandles, weeklyAnalysisCandles: rawCandles.slice(atlIndex), atlCandle: rawCandles[atlIndex] };
 }
 
+// 🔥 BUILD 112: KRYPTO-FEED MIT STEALTH-HEADERS (Kein Yahoo-Fallback mehr!)
 async function fetchCryptoCompareCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
   const parts = cleanSym.split("-");
   const coin = parts[0]; const fiat = parts[1] || "USD";
   const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${coin}&tsym=${fiat}&limit=2000&aggregate=7`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`CryptoCompare HTTP Fehler: ${res.status}`);
+  
+  const res = await fetch(url, {
+      headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          "Accept": "application/json"
+      }
+  });
+
+  if (!res.ok) throw new Error(`HTTP ${res.status} (Cloudflare Firewall blockiert)`);
   const raw = await res.json();
-  if (raw.Response === "Error") throw new Error(`Krypto-API Fehler: ${raw.Message}`);
+  if (raw.Response === "Error") throw new Error(`CCData API abgelehnt: ${raw.Message}`);
   const dataArr = raw.Data?.Data || [];
-  if (dataArr.length === 0) throw new Error("Keine Krypto-Daten gefunden.");
+  if (dataArr.length === 0) throw new Error("Datensatz leer.");
 
   const rawCandles: any[] = []; let minLow = Infinity; let atlIndex = 0; const seenDates = new Set<string>();
   for (let i = 0; i < dataArr.length; i++) {
@@ -209,9 +217,17 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
 
 export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   let marketData; const cleanSym = symbol.trim().toUpperCase();
+  
+  // 🔥 BUILD 112 WEICHE: STIRBT EHRLICH, WENN KRYPTO VERWEIGERT WIRD
   if (cleanSym.includes("-USD") || cleanSym.includes("-EUR")) {
-      try { marketData = await fetchCryptoCompareCandles(cleanSym); } catch (e) { marketData = await fetchVanillaYahooCandles(cleanSym); }
-  } else { marketData = await fetchVanillaYahooCandles(cleanSym); }
+      try { 
+          marketData = await fetchCryptoCompareCandles(cleanSym); 
+      } catch (e: any) { 
+          throw new Error(`Krypto-Historie (CCData) verweigert: ${e.message}`);
+      }
+  } else { 
+      marketData = await fetchVanillaYahooCandles(cleanSym); 
+  }
 
   const { weeklyAnalysisCandles, atlCandle } = marketData;
   if (weeklyAnalysisCandles.length < 26) throw new Error("Säkulares Bärenmarkt-Veto (Historie zu kurz).");
@@ -281,14 +297,12 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   const py = await runPythonCritic(symbol, waves, patchedCandles);
   if (!py.pngBuffer) throw new Error(`Python Veto: ${py.errorMessage}`);
 
-  // 🔥 BUILD 110: SENSORIK FÜR ALARME (DIP VS. BREAKOUT)
   let isHotSetup = false; let killZoneStatus = "";
   let isBreakoutSetup = false; let breakoutStatus = "";
 
   if (finalTrend === "IMPULSE_UP" && waves.length >= 6) {
       const w0 = waves[0].price; const w1 = waves[1]; const w3 = waves[3]; const w4 = waves[4].price; const w5 = waves[5].price;
       
-      // A. Dip-Sensor (Macro Retracement)
       if (w5 > w0) {
           const logW0 = Math.log(w0); const logW5 = Math.log(w5);
           const logFib382 = Math.exp(logW5 - (0.382 * (logW5 - logW0)));
@@ -298,7 +312,6 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
           }
       }
 
-      // B. Ausbruchs-Sensor (Breakout confirmed über W1 oder W3 Hochs)
       if (w1 && currentPrice >= w1.price && currentPrice <= w1.price * 1.12) {
           isBreakoutSetup = true;
           breakoutStatus = `🚀 **AUSBRUCH BESTÄTIGT:** Kurs (${currentPrice.toFixed(2)}$) schließt über dem Welle-1-Widerstand (${w1.price.toFixed(2)}$)!`;
