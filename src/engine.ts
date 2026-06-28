@@ -153,51 +153,72 @@ async function fetchVanillaYahooCandles(symbol: string) {
     if (seenDates.has(dateStr)) continue; seenDates.add(dateStr);
     const currentLow = parseFloat(quote.low[i]);
     if (currentLow < minLow) { minLow = currentLow; atlIndex = rawCandles.length; }
-    
     const vol = quote.volume?.[i] || 0;
-
-    rawCandles.push({ 
-        date: dateStr, 
-        open: Number(quote.open[i]).toFixed(4), 
-        high: Number(quote.high[i]).toFixed(4), 
-        low: Number(quote.low[i]).toFixed(4), 
-        close: Number(quote.close[i]).toFixed(4),
-        volume: vol
-    });
+    rawCandles.push({ date: dateStr, open: Number(quote.open[i]).toFixed(4), high: Number(quote.high[i]).toFixed(4), low: Number(quote.low[i]).toFixed(4), close: Number(quote.close[i]).toFixed(4), volume: vol });
   }
   return { fullCandles: rawCandles, weeklyAnalysisCandles: rawCandles.slice(atlIndex), atlCandle: rawCandles[atlIndex] };
 }
 
-// 🔥 BUILD 112: KRYPTO-FEED MIT STEALTH-HEADERS (Kein Yahoo-Fallback mehr!)
-async function fetchCryptoCompareCandles(symbol: string) {
-  const cleanSym = symbol.trim().toUpperCase();
-  const parts = cleanSym.split("-");
-  const coin = parts[0]; const fiat = parts[1] || "USD";
-  const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${coin}&tsym=${fiat}&limit=2000&aggregate=7`;
+// 🔥 BUILD 113: DER QUANT-HISTORIKER (Stooq CSV Bypass ab 2010)
+async function fetchStooqCryptoCandles(symbol: string) {
+  // Verwandelt 'BTC-USD' in das polnische Ticker-Format 'btcusd'
+  const stooqTicker = symbol.trim().replace('-', '').toLowerCase();
+  const url = `https://stooq.com/q/d/l/?s=${stooqTicker}&i=w`; // i=w bedeutet Weekly
   
-  const res = await fetch(url, {
-      headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-          "Accept": "application/json"
-      }
-  });
+  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+  if (!res.ok) throw new Error(`Stooq Server abgelehnt: HTTP ${res.status}`);
+  
+  const csvText = await res.text();
+  const lines = csvText.trim().split('\n');
+  if (lines.length < 5) throw new Error("Stooq lieferte keine ausreichende CSV-Historie.");
 
-  if (!res.ok) throw new Error(`HTTP ${res.status} (Cloudflare Firewall blockiert)`);
-  const raw = await res.json();
-  if (raw.Response === "Error") throw new Error(`CCData API abgelehnt: ${raw.Message}`);
-  const dataArr = raw.Data?.Data || [];
-  if (dataArr.length === 0) throw new Error("Datensatz leer.");
+  const tempCandles: any[] = [];
+  
+  // Zeile 0 ist der Header ("Date,Open,High,Low,Close,Volume")
+  for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',');
+      if (cols.length < 5) continue;
 
-  const rawCandles: any[] = []; let minLow = Infinity; let atlIndex = 0; const seenDates = new Set<string>();
-  for (let i = 0; i < dataArr.length; i++) {
-      const c = dataArr[i]; if (c.close === 0 && c.open === 0) continue;
-      const dateStr = new Date(c.time * 1000).toISOString().split('T')[0];
-      if (seenDates.has(dateStr)) continue; seenDates.add(dateStr);
-      const currentLow = parseFloat(c.low);
-      if (currentLow < minLow && currentLow > 0) { minLow = currentLow; atlIndex = rawCandles.length; }
-      rawCandles.push({ date: dateStr, open: Number(c.open).toFixed(4), high: Number(c.high).toFixed(4), low: Number(c.low).toFixed(4), close: Number(c.close).toFixed(4), volume: c.volumeto || 0 });
+      const dateStr = cols[0].trim();
+      const o = parseFloat(cols[1]);
+      const h = parseFloat(cols[2]);
+      const l = parseFloat(cols[3]);
+      const c = parseFloat(cols[4]);
+      const v = cols[5] ? parseFloat(cols[5]) : 0;
+
+      if (isNaN(c) || isNaN(l) || l <= 0) continue;
+
+      tempCandles.push({
+          date: dateStr,
+          open: o.toFixed(4),
+          high: h.toFixed(4),
+          low: l.toFixed(4),
+          close: c.toFixed(4),
+          volume: v
+      });
   }
-  return { fullCandles: rawCandles, weeklyAnalysisCandles: rawCandles.slice(atlIndex), atlCandle: rawCandles[atlIndex] };
+
+  if (tempCandles.length === 0) throw new Error("CSV konnte nicht in Kerzen umgewandelt werden.");
+
+  // 🔥 ABSOLUTE KERN-GARANTIE: Zwingt die Zeitreihe in chronologische Aufwärts-Reihenfolge
+  tempCandles.sort((a, b) => a.date.localeCompare(b.date));
+
+  let minLow = Infinity; let atlIndex = 0;
+  for (let i = 0; i < tempCandles.length; i++) {
+      const currentLow = parseFloat(tempCandles[i].low);
+      if (currentLow < minLow) { 
+          minLow = currentLow; 
+          atlIndex = i; 
+      }
+  }
+
+  console.log(`[STOOQ] Erfolgreich ${tempCandles.length} Wochenkerzen geladen. Ursprungs-Tal (Welle 0): ${tempCandles[atlIndex].date} (${tempCandles[atlIndex].low}$)`);
+
+  return { 
+      fullCandles: tempCandles, 
+      weeklyAnalysisCandles: tempCandles.slice(atlIndex), 
+      atlCandle: tempCandles[atlIndex] 
+  };
 }
 
 function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, errorMessage: string | null }> {
@@ -218,12 +239,12 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
 export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   let marketData; const cleanSym = symbol.trim().toUpperCase();
   
-  // 🔥 BUILD 112 WEICHE: STIRBT EHRLICH, WENN KRYPTO VERWEIGERT WIRD
+  // 🔥 BUILD 113 WEICHE: KRYPTO -> STOOQ CSV | AKTIEN -> YAHOO
   if (cleanSym.includes("-USD") || cleanSym.includes("-EUR")) {
       try { 
-          marketData = await fetchCryptoCompareCandles(cleanSym); 
+          marketData = await fetchStooqCryptoCandles(cleanSym); 
       } catch (e: any) { 
-          throw new Error(`Krypto-Historie (CCData) verweigert: ${e.message}`);
+          throw new Error(`Krypto-Feed (Stooq) gescheitert: ${e.message}`);
       }
   } else { 
       marketData = await fetchVanillaYahooCandles(cleanSym); 
@@ -322,4 +343,4 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   }
 
   return { buffer: py.pngBuffer, finalTrend, isHotSetup, killZoneStatus, isBreakoutSetup, breakoutStatus };
-            }
+      }
