@@ -138,7 +138,6 @@ function buildComplexCorrectionSequence(llmMonths: string[], postAtlCandles: any
   return { waves: [w0, wW, wX, wY], patchedCandles: c };
 }
 
-// 🔥 URSPRUNG: YAHOO FINANCE (Für Aktien)
 async function fetchVanillaYahooCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
   const res = await fetch(`https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSym)}?interval=1wk&range=max`, { headers: { "User-Agent": "Mozilla/5.0" } });
@@ -169,46 +168,26 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return { fullCandles: rawCandles, weeklyAnalysisCandles: rawCandles.slice(atlIndex), atlCandle: rawCandles[atlIndex] };
 }
 
-// 🔥 NEU IN BUILD 109: KRYPTO-HISTORIKER (Bypass via CryptoCompare)
 async function fetchCryptoCompareCandles(symbol: string) {
   const cleanSym = symbol.trim().toUpperCase();
   const parts = cleanSym.split("-");
-  const coin = parts[0]; 
-  const fiat = parts[1] || "USD";
-  
-  // Zieht 2000 Wochen (ca. 38 Jahre) an aggregierten 7-Tages-Kerzen
+  const coin = parts[0]; const fiat = parts[1] || "USD";
   const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${coin}&tsym=${fiat}&limit=2000&aggregate=7`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`CryptoCompare HTTP Fehler: ${res.status}`);
   const raw = await res.json();
   if (raw.Response === "Error") throw new Error(`Krypto-API Fehler: ${raw.Message}`);
-
   const dataArr = raw.Data?.Data || [];
-  if (dataArr.length === 0) throw new Error("Keine Krypto-Daten auf CCData gefunden.");
+  if (dataArr.length === 0) throw new Error("Keine Krypto-Daten gefunden.");
 
   const rawCandles: any[] = []; let minLow = Infinity; let atlIndex = 0; const seenDates = new Set<string>();
-
   for (let i = 0; i < dataArr.length; i++) {
-      const c = dataArr[i];
-      if (c.close === 0 && c.open === 0) continue; // Überspringt Leere vor der Erschaffung
-      
+      const c = dataArr[i]; if (c.close === 0 && c.open === 0) continue;
       const dateStr = new Date(c.time * 1000).toISOString().split('T')[0];
       if (seenDates.has(dateStr)) continue; seenDates.add(dateStr);
-      
       const currentLow = parseFloat(c.low);
-      if (currentLow < minLow && currentLow > 0) { 
-          minLow = currentLow; 
-          atlIndex = rawCandles.length; 
-      }
-
-      rawCandles.push({
-          date: dateStr,
-          open: Number(c.open).toFixed(4),
-          high: Number(c.high).toFixed(4),
-          low: Number(c.low).toFixed(4),
-          close: Number(c.close).toFixed(4),
-          volume: c.volumeto || 0
-      });
+      if (currentLow < minLow && currentLow > 0) { minLow = currentLow; atlIndex = rawCandles.length; }
+      rawCandles.push({ date: dateStr, open: Number(c.open).toFixed(4), high: Number(c.high).toFixed(4), low: Number(c.low).toFixed(4), close: Number(c.close).toFixed(4), volume: c.volumeto || 0 });
   }
   return { fullCandles: rawCandles, weeklyAnalysisCandles: rawCandles.slice(atlIndex), atlCandle: rawCandles[atlIndex] };
 }
@@ -229,21 +208,10 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
 }
 
 export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
-  let marketData;
-  const cleanSym = symbol.trim().toUpperCase();
-
-  // 🔥 BUILD 109: DER DUAL-FEED-ROUTER
+  let marketData; const cleanSym = symbol.trim().toUpperCase();
   if (cleanSym.includes("-USD") || cleanSym.includes("-EUR")) {
-      try {
-          console.log(`[API-ROUTER] Krypto-Asset erkannt (${cleanSym}). Umgehe Yahoo, aktiviere CryptoCompare...`);
-          marketData = await fetchCryptoCompareCandles(cleanSym);
-      } catch (e) {
-          console.log(`[API-ROUTER] CryptoCompare fehlgeschlagen. Fallback zu Yahoo Finance...`);
-          marketData = await fetchVanillaYahooCandles(cleanSym);
-      }
-  } else {
-      marketData = await fetchVanillaYahooCandles(cleanSym);
-  }
+      try { marketData = await fetchCryptoCompareCandles(cleanSym); } catch (e) { marketData = await fetchVanillaYahooCandles(cleanSym); }
+  } else { marketData = await fetchVanillaYahooCandles(cleanSym); }
 
   const { weeklyAnalysisCandles, atlCandle } = marketData;
   if (weeklyAnalysisCandles.length < 26) throw new Error("Säkulares Bärenmarkt-Veto (Historie zu kurz).");
@@ -264,7 +232,7 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
       const waves = buildSecularBearSequence(weeklyAnalysisCandles, globalAthIdx);
       const py = await runPythonCritic(symbol, waves, weeklyAnalysisCandles);
       if (!py.pngBuffer) throw new Error(`Python Veto: ${py.errorMessage}`);
-      return { buffer: py.pngBuffer, finalTrend: "MACRO_BEAR_DOWN", isHotSetup: false, killZoneStatus: `📉 **SÄKULARER BÄRENMARKT:** Abwärtstrend (-${priceDropFromAthPct.toFixed(1)}% vom ATH). Seziert am ${athCandle.date}.` };
+      return { buffer: py.pngBuffer, finalTrend: "MACRO_BEAR_DOWN", isHotSetup: false, killZoneStatus: `📉 **SÄKULARER BÄRENMARKT:** Abwärtstrend (-${priceDropFromAthPct.toFixed(1)}% vom ATH).`, isBreakoutSetup: false, breakoutStatus: "" };
   }
 
   const minifiedMarketStream = weeklyAnalysisCandles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close},${c.volume}`).join("|");
@@ -313,17 +281,32 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   const py = await runPythonCritic(symbol, waves, patchedCandles);
   if (!py.pngBuffer) throw new Error(`Python Veto: ${py.errorMessage}`);
 
+  // 🔥 BUILD 110: SENSORIK FÜR ALARME (DIP VS. BREAKOUT)
   let isHotSetup = false; let killZoneStatus = "";
+  let isBreakoutSetup = false; let breakoutStatus = "";
+
   if (finalTrend === "IMPULSE_UP" && waves.length >= 6) {
-      const w0 = waves[0].price; const w4 = waves[4].price; const w5 = waves[5].price;
+      const w0 = waves[0].price; const w1 = waves[1]; const w3 = waves[3]; const w4 = waves[4].price; const w5 = waves[5].price;
+      
+      // A. Dip-Sensor (Macro Retracement)
       if (w5 > w0) {
           const logW0 = Math.log(w0); const logW5 = Math.log(w5);
           const logFib382 = Math.exp(logW5 - (0.382 * (logW5 - logW0)));
           if (currentPrice <= logFib382 && currentPrice >= (w4 * 0.8)) {
               isHotSetup = true; 
-              killZoneStatus = `🚨 **HOT SETUP:** Kurs (${currentPrice.toFixed(2)}$) befindet sich in der Macro Kill-Zone!`;
+              killZoneStatus = `🚨 **KILL-ZONE HIT:** Kurs (${currentPrice.toFixed(2)}$) befindet sich im tiefen logarithmischen Dip!`;
           }
       }
+
+      // B. Ausbruchs-Sensor (Breakout confirmed über W1 oder W3 Hochs)
+      if (w1 && currentPrice >= w1.price && currentPrice <= w1.price * 1.12) {
+          isBreakoutSetup = true;
+          breakoutStatus = `🚀 **AUSBRUCH BESTÄTIGT:** Kurs (${currentPrice.toFixed(2)}$) schließt über dem Welle-1-Widerstand (${w1.price.toFixed(2)}$)!`;
+      } else if (w3 && currentPrice >= w3.price && currentPrice <= w3.price * 1.12) {
+          isBreakoutSetup = true;
+          breakoutStatus = `🚀 **AUSBRUCH BESTÄTIGT:** Kurs (${currentPrice.toFixed(2)}$) schließt über dem Welle-3-Widerstand (${w3.price.toFixed(2)}$)!`;
+      }
   }
-  return { buffer: py.pngBuffer, finalTrend, isHotSetup, killZoneStatus };
+
+  return { buffer: py.pngBuffer, finalTrend, isHotSetup, killZoneStatus, isBreakoutSetup, breakoutStatus };
 }
