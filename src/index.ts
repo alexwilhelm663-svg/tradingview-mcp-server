@@ -13,7 +13,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, { handlerTimeout: Infi
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const PORT = process.env.PORT || 10000;
 
-console.log("🚀 Bot V110: Hybrid Dual-Hunter (Dips & Breakouts) aktiv...");
+console.log("🚀 Bot V110.1: Hybrid Dual-Hunter (Dips & Breakouts) aktiv...");
 
 let db: Database;
 let activeChatId: number | null = null;
@@ -33,7 +33,8 @@ async function initDB() {
     const count = await db.get(`SELECT COUNT(*) as c FROM watchlist`);
     if (count.c === 0) {
         const defaultList = ["AAPL", "NVDA", "TSLA", "ARM", "PLTR", "IONQ", "MSTR", "AMD", "GOOGL", "PYPL", "BAYN.DE"];
-        for (const sym of defaultList) { await db.run Tactics = `INSERT INTO watchlist (symbol, source) VALUES (?, 'MANUAL')`, sym); }
+        // 🔥 FIX: Syntax-Fehler behoben
+        for (const sym of defaultList) { await db.run(`INSERT INTO watchlist (symbol, source) VALUES (?, 'MANUAL')`, sym); }
     }
     console.log(`💾 SQLite Dual-Origin loaded. Active Chat: ${activeChatId || 'None'}`);
 }
@@ -80,7 +81,7 @@ async function processScreenReport(text: string, chatId: number) {
     );
 }
 
-// 🔥 BUILD 110: HYBRID RADAR ROUTER (ZWEI ALARM-KLASSEN)
+// 🔥 BUILD 110.1: HYBRID RADAR ROUTER (ZWEI ALARM-KLASSEN)
 async function runRadarScan(targetChatId: number) {
   const rows = await db.all(`SELECT symbol, source FROM watchlist`);
   if (rows.length === 0) return bot.telegram.sendMessage(targetChatId, "❌ Abbruch: Watchlist leer.");
@@ -105,11 +106,9 @@ async function runRadarScan(targetChatId: number) {
               let msgCaption = "";
 
               if (res.isHotSetup) {
-                  // Alarm-Klasse 1: Der tiefe Dip (Gilt immer!)
                   triggerAlert = true;
                   msgCaption = `🎯 **RADAR HIT (DEEP DIP): ${sym}**\n${res.killZoneStatus}\n(7 Tage Cooldown aktiv).`;
               } else if (res.isBreakoutSetup && isScreenAsset) {
-                  // Alarm-Klasse 2: Die Ausbruchs-Bestätigung (Gilt exklusiv für SCREEN-Werte)
                   triggerAlert = true;
                   msgCaption = `🚀 **RADAR HIT (BREAKOUT!): ${sym}**\n${res.breakoutStatus}\n(7 Tage Cooldown aktiv).`;
               }
