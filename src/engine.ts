@@ -322,4 +322,4 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   }
 
   return { buffer: py.pngBuffer, finalTrend, isHotSetup, killZoneStatus, isBreakoutSetup, breakoutStatus };
-}
+            }
