@@ -105,16 +105,19 @@ Wenn der Markt zeitlich korrigiert, anstatt preislich tief zu fallen, nutzt er k
 ==================================================================
 
 OUTPUT-FORMAT:
-Analysiere die Daten und entscheide zwingend, ob die Aufwärtsbewegung ein echter Bullenmarkt (Motive Welle) oder nur eine gigantische Bärenmarktrally / Aufwärtskorrektur (A-B-C) ist.
+Analysiere die Daten und entscheide anhand der Struktur, welches Szenario vorliegt.
 Antworte STRIKT als valides JSON-Objekt. Keine Erklärungen außerhalb des JSON.
 
-Szenario A (Echter Bullenmarkt):
+⚠️ HARTE AUSWAHL-SPERRE (SÄKULARE DOKTRIN):
+Wenn der analysierte Kurs-Stream über mehrere Jahre/Jahrzehnte ein massives exponentielles Wachstum aufweist (wie z.B. bei Bitcoin oder Aktien-Indizes seit dem Genesis/Start-Tief), IST SZENARIO B VERBOTEN! Ein historischer, säkularer Bullenmarkt MUSS zwingend als Szenario A ('IMPULSE_UP') gezählt werden. Szenario B ('CORRECTION_UP') ist ausschließlich für untergeordnete Bärenmarktrallyes oder Seitwärtsphasen zulässig!
+
+Szenario A (Echter Bullenmarkt / Säkularer Trend):
 {
   "macro_trend": "IMPULSE_UP",
   "rough_months": ["YYYY-MM", "YYYY-MM", "YYYY-MM", "YYYY-MM", "YYYY-MM", "YYYY-MM"]
 }
 
-Szenario B (Aufwärtskorrektur / Dead Cat Bounce):
+Szenario B (Aufwärtskorrektur / Dead Cat Bounce - VERBOTEN BEI EXPONENTIELLEN MAKRO-RALLYES):
 {
   "macro_trend": "CORRECTION_UP",
   "rough_months": ["YYYY-MM", "YYYY-MM", "YYYY-MM", "YYYY-MM"]
