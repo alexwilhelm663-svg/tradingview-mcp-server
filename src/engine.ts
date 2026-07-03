@@ -73,7 +73,8 @@ function buildSecularBearSequence(candles: any[], athIdx: number): WaveNode[] {
   return [w0, w1, w2, w3, w4, w5, wA, wB, wC];
 }
 
-function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any[]): { waves: WaveNode[], patchedCandles: any[] } {
+// 🔥 BUILD 116 FIX: isCrypto Parameter erlaubt logarithmische FTX-Wicks in das W1-Territorium
+function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any[], isCrypto: boolean = false): { waves: WaveNode[], patchedCandles: any[] } {
   const c = JSON.parse(JSON.stringify(postAtlCandles)); 
   const w0: WaveNode = { label: "0", date: c[0].date, price: parseFloat(c[0].low) };
   let m: string[] = []; let lastValid = "";
@@ -94,7 +95,10 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
   if (w2.price <= w0.price) throw new Error("RETRACEMENT_VIOLATION");
   let w3 = getGlobalExtremum(c, w2.date, m[4] + "-31", 'peak'); w3.label = "3";
   let w4 = getGlobalExtremum(c, w3.date, m[5] + "-31", 'valley'); w4.label = "4";
-  if (w4.price <= w1.price) throw new Error("OVERLAP_VIOLATION");
+  
+  // 🔥 DIE KRYPTO-BEFREIUNG: Kein Overlap-Verbot bei Krypto, solange W4 über W2 bleibt!
+  if (!isCrypto && w4.price <= w1.price) throw new Error("OVERLAP_VIOLATION");
+  if (isCrypto && w4.price <= w2.price) throw new Error("CRYPTO_W4_BELOW_W2_VIOLATION");
   
   let w5 = getGlobalExtremum(c, w4.date, c[c.length-1].date, 'peak'); w5.label = "5";
   if (w5.price <= w4.price) throw new Error("WAVE5_VALLEY_VIOLATION");
@@ -159,76 +163,38 @@ async function fetchVanillaYahooCandles(symbol: string) {
   return { fullCandles: rawCandles, weeklyAnalysisCandles: rawCandles.slice(atlIndex), atlCandle: rawCandles[atlIndex] };
 }
 
-// 🔥 BUILD 115: DER KRAKEN CORE (Die unzerstörbare Tier-1 Exchange API)
 async function fetchKrakenCandles(symbol: string) {
   let coin = symbol.trim().split('-')[0].toUpperCase();
   const fiat = symbol.trim().split('-')[1]?.toUpperCase() || 'USD';
-  
-  // Kraken verwendet historisch XBT anstelle von BTC
   if (coin === 'BTC') coin = 'XBT';
   const pair = `${coin}${fiat}`;
-  
-  // interval=10080 bedeutet 7 Tage in Minuten. Liefert ~720 Wochen zurück (13,8 Jahre).
   const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=10080`;
-  
   const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
   if (!res.ok) throw new Error(`Kraken API verweigert: HTTP ${res.status}`);
-  
   const raw = await res.json();
   if (raw.error && raw.error.length > 0) throw new Error(`Kraken Fehler: ${raw.error.join(', ')}`);
-  
   const resultKeys = Object.keys(raw.result);
   const dataKey = resultKeys.find(k => k !== 'last');
   if (!dataKey) throw new Error("Keine Kursdaten im Kraken-JSON gefunden.");
-  
   const ohlcList = raw.result[dataKey];
   if (!ohlcList || ohlcList.length === 0) throw new Error("Kraken lieferte leeren Kerzen-Array.");
 
-  const tempCandles: any[] = [];
-  const seenDates = new Set<string>();
-
+  const tempCandles: any[] = []; const seenDates = new Set<string>();
   for (let i = 0; i < ohlcList.length; i++) {
-      // Format: [time, open, high, low, close, vwap, volume, count]
-      const c = ohlcList[i];
-      const timeSec = typeof c[0] === 'number' ? c[0] : parseInt(c[0]);
-      
+      const c = ohlcList[i]; const timeSec = typeof c[0] === 'number' ? c[0] : parseInt(c[0]);
       const dateStr = new Date(timeSec * 1000).toISOString().split('T')[0];
-      if (seenDates.has(dateStr)) continue; 
-      seenDates.add(dateStr);
-
-      const o = parseFloat(c[1]);
-      const h = parseFloat(c[2]);
-      const l = parseFloat(c[3]);
-      const close = parseFloat(c[4]);
-      
+      if (seenDates.has(dateStr)) continue; seenDates.add(dateStr);
+      const o = parseFloat(c[1]); const h = parseFloat(c[2]); const l = parseFloat(c[3]); const close = parseFloat(c[4]);
       if (isNaN(o) || isNaN(close) || (o === 0 && close === 0)) continue;
-
-      tempCandles.push({
-          date: dateStr,
-          open: o.toFixed(4),
-          high: h.toFixed(4),
-          low: l.toFixed(4),
-          close: close.toFixed(4),
-          volume: parseFloat(c[6]) || 0
-      });
+      tempCandles.push({ date: dateStr, open: o.toFixed(4), high: h.toFixed(4), low: l.toFixed(4), close: close.toFixed(4), volume: parseFloat(c[6]) || 0 });
   }
-
   tempCandles.sort((a, b) => a.date.localeCompare(b.date));
-
   let minLow = Infinity; let atlIndex = 0;
   for (let i = 0; i < tempCandles.length; i++) {
       const currentLow = parseFloat(tempCandles[i].low);
-      if (currentLow < minLow && currentLow > 0) { 
-          minLow = currentLow; 
-          atlIndex = i; 
-      }
+      if (currentLow < minLow && currentLow > 0) { minLow = currentLow; atlIndex = i; }
   }
-
-  return { 
-      fullCandles: tempCandles, 
-      weeklyAnalysisCandles: tempCandles.slice(atlIndex), 
-      atlCandle: tempCandles[atlIndex] 
-  };
+  return { fullCandles: tempCandles, weeklyAnalysisCandles: tempCandles.slice(atlIndex), atlCandle: tempCandles[atlIndex] };
 }
 
 function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<{ pngBuffer: Buffer | null, errorMessage: string | null }> {
@@ -248,17 +214,11 @@ function runPythonCritic(symbol: string, waves: any[], candles: any[]): Promise<
 
 export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   let marketData; const cleanSym = symbol.trim().toUpperCase();
+  const isCrypto = cleanSym.includes("-USD") || cleanSym.includes("-EUR");
   
-  // 🔥 BUILD 115 WEICHE: KRYPTO -> KRAKEN API | AKTIEN -> YAHOO
-  if (cleanSym.includes("-USD") || cleanSym.includes("-EUR")) {
-      try { 
-          marketData = await fetchKrakenCandles(cleanSym); 
-      } catch (e: any) { 
-          throw new Error(`Kraken Feed gescheitert: ${e.message}`);
-      }
-  } else { 
-      marketData = await fetchVanillaYahooCandles(cleanSym); 
-  }
+  if (isCrypto) {
+      try { marketData = await fetchKrakenCandles(cleanSym); } catch (e: any) { throw new Error(`Kraken Feed gescheitert: ${e.message}`); }
+  } else { marketData = await fetchVanillaYahooCandles(cleanSym); }
 
   const { weeklyAnalysisCandles, atlCandle } = marketData;
   if (weeklyAnalysisCandles.length < 26) throw new Error("Säkulares Bärenmarkt-Veto (Historie zu kurz).");
@@ -309,16 +269,18 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
         waves = res.waves; patchedCandles = res.patchedCandles; break;
     } else {
         try {
-            const res = buildIroncladEuclideanSequence(parsed.rough_months, weeklyAnalysisCandles);
+            // 🔥 BUILD 116: Übergabe von isCrypto verhindert Overlap-Sturz durch den FTX-Crash!
+            const res = buildIroncladEuclideanSequence(parsed.rough_months, weeklyAnalysisCandles, isCrypto);
             waves = res.waves; patchedCandles = res.patchedCandles; break; 
         } catch (e: any) {
-            if (e.message === "OVERLAP_VIOLATION" || e.message === "RETRACEMENT_VIOLATION" || e.message === "WAVE5_VALLEY_VIOLATION") {
+            if (e.message === "OVERLAP_VIOLATION" || e.message === "RETRACEMENT_VIOLATION" || e.message === "WAVE5_VALLEY_VIOLATION" || e.message === "CRYPTO_W4_BELOW_W2_VIOLATION") {
                 if (attempts < maxAttempts) {
                     currentTemp += 0.35; currentPrompt = `${basePrompt}\n\nACHTUNG! GEOMETRIE-FEHLER:\n${e.message}\nWÄHLE ANDERE MONATE!`;
                 } else {
-                    finalTrend = "CORRECTION_UP";
-                    const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
-                    waves = res.waves; patchedCandles = res.patchedCandles; break;
+                    // 🔥 SCHLUSS MIT VERRAT: Wenn KI auf IMPULSE_UP beharrt, baue mechanisch die ersten 6 Wellen!
+                    console.log("[GEO-ANPASSUNG] Geometrie-Konflikt gelöst: Erzwungener Impuls-Anker.");
+                    const res = buildSecularBearSequence(weeklyAnalysisCandles, globalAthIdx);
+                    waves = res.slice(0, 6); patchedCandles = weeklyAnalysisCandles; break;
                 }
             } else throw e; 
         }
@@ -353,4 +315,4 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   }
 
   return { buffer: py.pngBuffer, finalTrend, isHotSetup, killZoneStatus, isBreakoutSetup, breakoutStatus };
-        }
+      }
