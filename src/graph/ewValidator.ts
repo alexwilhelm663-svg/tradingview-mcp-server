@@ -27,7 +27,7 @@ const WaveCountSchema = z.object({
   analysis: z.string().describe("Kurze Begründung des Setups"),
 });
 
-// 3. Status-Objekt des Graphen (FIX: Typen für current und next hinzugefügt)
+// 3. Status-Objekt des Graphen
 export const RadarState = Annotation.Root({
   symbol: Annotation<string>(),
   marketData: Annotation<any>(),
@@ -51,8 +51,9 @@ async function analyzeNode(state: typeof RadarState.State) {
     throw new Error("GEMINI_API_KEY fehlt in der .env Datei");
   }
 
+  // FIX: Korrekter Parameter 'model' für die aktuelle @langchain/google-genai Version
   const llm = new ChatGoogleGenerativeAI({
-    modelName: "gemini-1.5-pro",
+    model: "gemini-1.5-pro",
     apiKey: process.env.GEMINI_API_KEY,
     temperature: 0.1,
   }).withStructuredOutput(WaveCountSchema);
@@ -110,7 +111,6 @@ const builder = new StateGraph(RadarState)
   .addEdge(START, "analyze")
   .addEdge("analyze", "validate");
 
-// FIX: Expliziter Typ für den 'state' Parameter in der Conditional Edge
 builder.addConditionalEdges("validate", (state: typeof RadarState.State) => {
   if (state.isValid) return END;
   if (state.attempts >= 3) {
