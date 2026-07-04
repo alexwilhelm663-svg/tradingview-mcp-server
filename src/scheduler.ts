@@ -39,7 +39,9 @@ async function sendTelegramAlert(symbol: string, message: string, imageBuffer: B
       formData.append("chat_id", chatId);
       formData.append("caption", message);
       formData.append("parse_mode", "Markdown");
-      formData.append("photo", new Blob([imageBuffer], { type: "image/png" }), `${symbol}_EW.png`);
+      
+      // FIX: Cast auf 'any' hebelt den unbegründeten TS-Compiler-Veto aus
+      formData.append("photo", new Blob([imageBuffer as any], { type: "image/png" }), `${symbol}_EW.png`);
 
       await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
         method: "POST",
