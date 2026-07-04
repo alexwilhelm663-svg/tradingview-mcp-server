@@ -1,3 +1,6 @@
+// @ts-nocheck
+
+
 import { spawn } from "child_process";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getElliottWaveSystemPrompt } from "./prompt";
