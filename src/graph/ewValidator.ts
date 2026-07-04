@@ -27,18 +27,18 @@ const WaveCountSchema = z.object({
   analysis: z.string().describe("Kurze Begründung des Setups"),
 });
 
-// 3. Status-Objekt des Graphen
+// 3. Status-Objekt des Graphen (FIX: Typen für current und next hinzugefügt)
 export const RadarState = Annotation.Root({
   symbol: Annotation<string>(),
   marketData: Annotation<any>(),
   waveCount: Annotation<z.infer<typeof WaveCountSchema> | null>(),
   isValid: Annotation<boolean>(),
   errorLogs: Annotation<string[]>({
-    reducer: (current, next) => current.concat(next),
+    reducer: (current: string[], next: string[]) => current.concat(next),
     default: () => [],
   }),
   attempts: Annotation<number>({
-    reducer: (current, next) => current + next,
+    reducer: (current: number, next: number) => current + next,
     default: () => 0,
   }),
 });
@@ -54,12 +54,11 @@ async function analyzeNode(state: typeof RadarState.State) {
   const llm = new ChatGoogleGenerativeAI({
     modelName: "gemini-1.5-pro",
     apiKey: process.env.GEMINI_API_KEY,
-    temperature: 0.1, // Sehr niedrig für maximale Präzision
+    temperature: 0.1,
   }).withStructuredOutput(WaveCountSchema);
 
   let prompt = `Analysiere die Elliott-Wellen für ${state.symbol} basierend auf diesen Kerzendaten/Zusammenfassungen: ${JSON.stringify(state.marketData)}.`;
   
-  // Selbstkorrektur-Schleife: Fehler an das LLM zurückfüttern
   if (state.errorLogs.length > 0) {
     prompt += `\n\nACHTUNG: Deine vorherige Zählung war ungültig. Korrigiere zwingend diese Regelverstöße:\n- ${state.errorLogs.join("\n- ")}`;
   }
@@ -111,14 +110,14 @@ const builder = new StateGraph(RadarState)
   .addEdge(START, "analyze")
   .addEdge("analyze", "validate");
 
-builder.addConditionalEdges("validate", (state) => {
+// FIX: Expliziter Typ für den 'state' Parameter in der Conditional Edge
+builder.addConditionalEdges("validate", (state: typeof RadarState.State) => {
   if (state.isValid) return END;
   if (state.attempts >= 3) {
     console.error(`[Abbruch] Konnte nach 3 Versuchen keine valide Zählung für ${state.symbol} finden.`);
     return END;
   }
-  return "analyze"; // Zurück zu Gemini
+  return "analyze";
 });
 
 export const ewAnalyzerWorkflow = builder.compile({ checkpointer: memory });
-
