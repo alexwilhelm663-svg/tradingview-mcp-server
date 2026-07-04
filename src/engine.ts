@@ -2,9 +2,13 @@ import { spawn } from "child_process";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getElliottWaveSystemPrompt } from "./prompt";
 
-export interface WaveNode { label: string; date: string; price: number; }
+export interface WaveNode {
+  label: string;
+  date: string;
+  price: number;
+}
 
-function getGlobalExtremum(candles: any[], startDate: string, endDate: string, mode: 'peak'|'valley'): WaveNode {
+function getGlobalExtremum(candles: any[], startDate: string, endDate: string, mode: 'peak' | 'valley'): WaveNode {
   const window = candles.filter(c => c.date > startDate && c.date <= endDate);
   if (window.length === 0) return { label: "", date: endDate, price: 0 };
   let best = window[0];
@@ -26,43 +30,43 @@ function buildSecularBearSequence(candles: any[], athIdx: number): WaveNode[] {
   let w2 = getGlobalExtremum(candles, w1.date, candles[Math.max(2, seg * 2)].date, 'valley'); w2.label = "2";
   
   if (w2.price <= w0.price) {
-      const valid = candles.filter(c => c.date > w1.date && c.date <= candles[Math.max(2, seg * 2)].date && parseFloat(c.low) > w0.price);
-      if (valid.length > 0) {
-          let b = valid[0]; for (const c of valid) if (parseFloat(c.low) < parseFloat(b.low)) b = c;
-          w2 = { label: "2", date: b.date, price: parseFloat(b.low) };
-      } else w2.price = w0.price * 1.05; 
+    const valid = candles.filter(c => c.date > w1.date && c.date <= candles[Math.max(2, seg * 2)].date && parseFloat(c.low) > w0.price);
+    if (valid.length > 0) {
+      let b = valid[0]; for (const c of valid) if (parseFloat(c.low) < parseFloat(b.low)) b = c;
+      w2 = { label: "2", date: b.date, price: parseFloat(b.low) };
+    } else w2.price = w0.price * 1.05; 
   }
 
   let w3 = getGlobalExtremum(candles, w2.date, candles[Math.max(3, seg * 3)].date, 'peak'); w3.label = "3";
   let w4 = getGlobalExtremum(candles, w3.date, candles[Math.max(4, athIdx - 1)].date, 'valley'); w4.label = "4";
 
   if (w4.price <= w1.price) {
-      const valid = candles.filter(c => c.date > w3.date && c.date < w5.date && parseFloat(c.low) > w1.price);
-      if (valid.length > 0) {
-          let b = valid[0]; for (const c of valid) if (parseFloat(c.low) < parseFloat(b.low)) b = c;
-          w4 = { label: "4", date: b.date, price: parseFloat(b.low) };
-      } else { w4.price = w1.price * 1.05; }
+    const valid = candles.filter(c => c.date > w3.date && c.date < w5.date && parseFloat(c.low) > w1.price);
+    if (valid.length > 0) {
+      let b = valid[0]; for (const c of valid) if (parseFloat(c.low) < parseFloat(b.low)) b = c;
+      w4 = { label: "4", date: b.date, price: parseFloat(b.low) };
+    } else { w4.price = w1.price * 1.05; }
   }
   
   const bearCandles = candles.slice(athIdx);
   let minIdx = 0; let minLow = Infinity;
   for (let i = 0; i < bearCandles.length; i++) {
-      const l = parseFloat(bearCandles[i].low);
-      if (l < minLow) { minLow = l; minIdx = i; }
+    const l = parseFloat(bearCandles[i].low);
+    if (l < minLow) { minLow = l; minIdx = i; }
   }
   if (minIdx === 0) minIdx = bearCandles.length - 1;
   
   let maxIdx = 0; let maxHigh = -Infinity;
   for (let i = 0; i < minIdx; i++) {
-      const h = parseFloat(bearCandles[i].high);
-      if (h > maxHigh) { maxHigh = h; maxIdx = i; }
+    const h = parseFloat(bearCandles[i].high);
+    if (h > maxHigh) { maxHigh = h; maxIdx = i; }
   }
   if (maxIdx === 0) maxIdx = Math.floor(minIdx / 2);
   
   let aIdx = 0; let aLow = Infinity;
   for (let i = 0; i < maxIdx; i++) {
-      const l = parseFloat(bearCandles[i].low);
-      if (l < aLow) { aLow = l; aIdx = i; }
+    const l = parseFloat(bearCandles[i].low);
+    if (l < aLow) { aLow = l; aIdx = i; }
   }
   if (aIdx === 0) aIdx = Math.floor(maxIdx / 2);
   
@@ -73,7 +77,6 @@ function buildSecularBearSequence(candles: any[], athIdx: number): WaveNode[] {
   return [w0, w1, w2, w3, w4, w5, wA, wB, wC];
 }
 
-// 🔥 BUILD 116 FIX: isCrypto Parameter erlaubt logarithmische FTX-Wicks in das W1-Territorium
 function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any[], isCrypto: boolean = false): { waves: WaveNode[], patchedCandles: any[] } {
   const c = JSON.parse(JSON.stringify(postAtlCandles)); 
   const w0: WaveNode = { label: "0", date: c[0].date, price: parseFloat(c[0].low) };
@@ -96,7 +99,6 @@ function buildIroncladEuclideanSequence(llmMonths: string[], postAtlCandles: any
   let w3 = getGlobalExtremum(c, w2.date, m[4] + "-31", 'peak'); w3.label = "3";
   let w4 = getGlobalExtremum(c, w3.date, m[5] + "-31", 'valley'); w4.label = "4";
   
-  // 🔥 DIE KRYPTO-BEFREIUNG: Kein Overlap-Verbot bei Krypto, solange W4 über W2 bleibt!
   if (!isCrypto && w4.price <= w1.price) throw new Error("OVERLAP_VIOLATION");
   if (isCrypto && w4.price <= w2.price) throw new Error("CRYPTO_W4_BELOW_W2_VIOLATION");
   
@@ -181,18 +183,18 @@ async function fetchKrakenCandles(symbol: string) {
 
   const tempCandles: any[] = []; const seenDates = new Set<string>();
   for (let i = 0; i < ohlcList.length; i++) {
-      const c = ohlcList[i]; const timeSec = typeof c[0] === 'number' ? c[0] : parseInt(c[0]);
-      const dateStr = new Date(timeSec * 1000).toISOString().split('T')[0];
-      if (seenDates.has(dateStr)) continue; seenDates.add(dateStr);
-      const o = parseFloat(c[1]); const h = parseFloat(c[2]); const l = parseFloat(c[3]); const close = parseFloat(c[4]);
-      if (isNaN(o) || isNaN(close) || (o === 0 && close === 0)) continue;
-      tempCandles.push({ date: dateStr, open: o.toFixed(4), high: h.toFixed(4), low: l.toFixed(4), close: close.toFixed(4), volume: parseFloat(c[6]) || 0 });
+    const c = ohlcList[i]; const timeSec = typeof c[0] === 'number' ? c[0] : parseInt(c[0]);
+    const dateStr = new Date(timeSec * 1000).toISOString().split('T')[0];
+    if (seenDates.has(dateStr)) continue; seenDates.add(dateStr);
+    const o = parseFloat(c[1]); const h = parseFloat(c[2]); const l = parseFloat(c[3]); const close = parseFloat(c[4]);
+    if (isNaN(o) || isNaN(close) || (o === 0 && close === 0)) continue;
+    tempCandles.push({ date: dateStr, open: o.toFixed(4), high: h.toFixed(4), low: l.toFixed(4), close: close.toFixed(4), volume: parseFloat(c[6]) || 0 });
   }
   tempCandles.sort((a, b) => a.date.localeCompare(b.date));
   let minLow = Infinity; let atlIndex = 0;
   for (let i = 0; i < tempCandles.length; i++) {
-      const currentLow = parseFloat(tempCandles[i].low);
-      if (currentLow < minLow && currentLow > 0) { minLow = currentLow; atlIndex = i; }
+    const currentLow = parseFloat(tempCandles[i].low);
+    if (currentLow < minLow && currentLow > 0) { minLow = currentLow; atlIndex = i; }
   }
   return { fullCandles: tempCandles, weeklyAnalysisCandles: tempCandles.slice(atlIndex), atlCandle: tempCandles[atlIndex] };
 }
@@ -217,7 +219,7 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   const isCrypto = cleanSym.includes("-USD") || cleanSym.includes("-EUR");
   
   if (isCrypto) {
-      try { marketData = await fetchKrakenCandles(cleanSym); } catch (e: any) { throw new Error(`Kraken Feed gescheitert: ${e.message}`); }
+    try { marketData = await fetchKrakenCandles(cleanSym); } catch (e: any) { throw new Error(`Kraken Feed gescheitert: ${e.message}`); }
   } else { marketData = await fetchVanillaYahooCandles(cleanSym); }
 
   const { weeklyAnalysisCandles, atlCandle } = marketData;
@@ -228,18 +230,18 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
 
   let globalAthPrice = 0; let globalAthIdx = 0;
   for (let i = 0; i < weeklyAnalysisCandles.length; i++) {
-      const h = parseFloat(weeklyAnalysisCandles[i].high);
-      if (h > globalAthPrice) { globalAthPrice = h; globalAthIdx = i; }
+    const h = parseFloat(weeklyAnalysisCandles[i].high);
+    if (h > globalAthPrice) { globalAthPrice = h; globalAthIdx = i; }
   }
   const athCandle = weeklyAnalysisCandles[globalAthIdx];
   const priceDropFromAthPct = ((globalAthPrice - currentPrice) / globalAthPrice) * 100;
   const daysSinceAth = (new Date(lastCandle.date).getTime() - new Date(athCandle.date).getTime()) / (1000 * 3600 * 24);
 
   if (priceDropFromAthPct > 60 && daysSinceAth > 400) {
-      const waves = buildSecularBearSequence(weeklyAnalysisCandles, globalAthIdx);
-      const py = await runPythonCritic(symbol, waves, weeklyAnalysisCandles);
-      if (!py.pngBuffer) throw new Error(`Python Veto: ${py.errorMessage}`);
-      return { buffer: py.pngBuffer, finalTrend: "MACRO_BEAR_DOWN", isHotSetup: false, killZoneStatus: `📉 **SÄKULARER BÄRENMARKT:** Abwärtstrend (-${priceDropFromAthPct.toFixed(1)}% vom ATH).`, isBreakoutSetup: false, breakoutStatus: "" };
+    const waves = buildSecularBearSequence(weeklyAnalysisCandles, globalAthIdx);
+    const py = await runPythonCritic(symbol, waves, weeklyAnalysisCandles);
+    if (!py.pngBuffer) throw new Error(`Python Veto: ${py.errorMessage}`);
+    return { buffer: py.pngBuffer, finalTrend: "MACRO_BEAR_DOWN", isHotSetup: false, killZoneStatus: `📉 **SÄKULARER BÄRENMARKT:** Abwärtstrend (-${priceDropFromAthPct.toFixed(1)}% vom ATH).`, isBreakoutSetup: false, breakoutStatus: "" };
   }
 
   const minifiedMarketStream = weeklyAnalysisCandles.map(c => `${c.date},${c.open},${c.high},${c.low},${c.close},${c.volume}`).join("|");
@@ -262,28 +264,26 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
     finalTrend = parsed.macro_trend;
 
     if (finalTrend === "COMPLEX_CORRECTION") {
-        const res = buildComplexCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
-        waves = res.waves; patchedCandles = res.patchedCandles; break;
+      const res = buildComplexCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
+      waves = res.waves; patchedCandles = res.patchedCandles; break;
     } else if (finalTrend === "CORRECTION_UP") {
-        const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
-        waves = res.waves; patchedCandles = res.patchedCandles; break;
+      const res = buildUpwardCorrectionSequence(parsed.rough_months, weeklyAnalysisCandles);
+      waves = res.waves; patchedCandles = res.patchedCandles; break;
     } else {
-        try {
-            // 🔥 BUILD 116: Übergabe von isCrypto verhindert Overlap-Sturz durch den FTX-Crash!
-            const res = buildIroncladEuclideanSequence(parsed.rough_months, weeklyAnalysisCandles, isCrypto);
-            waves = res.waves; patchedCandles = res.patchedCandles; break; 
-        } catch (e: any) {
-            if (e.message === "OVERLAP_VIOLATION" || e.message === "RETRACEMENT_VIOLATION" || e.message === "WAVE5_VALLEY_VIOLATION" || e.message === "CRYPTO_W4_BELOW_W2_VIOLATION") {
-                if (attempts < maxAttempts) {
-                    currentTemp += 0.35; currentPrompt = `${basePrompt}\n\nACHTUNG! GEOMETRIE-FEHLER:\n${e.message}\nWÄHLE ANDERE MONATE!`;
-                } else {
-                    // 🔥 SCHLUSS MIT VERRAT: Wenn KI auf IMPULSE_UP beharrt, baue mechanisch die ersten 6 Wellen!
-                    console.log("[GEO-ANPASSUNG] Geometrie-Konflikt gelöst: Erzwungener Impuls-Anker.");
-                    const res = buildSecularBearSequence(weeklyAnalysisCandles, globalAthIdx);
-                    waves = res.slice(0, 6); patchedCandles = weeklyAnalysisCandles; break;
-                }
-            } else throw e; 
-        }
+      try {
+        const res = buildIroncladEuclideanSequence(parsed.rough_months, weeklyAnalysisCandles, isCrypto);
+        waves = res.waves; patchedCandles = res.patchedCandles; break; 
+      } catch (e: any) {
+        if (e.message === "OVERLAP_VIOLATION" || e.message === "RETRACEMENT_VIOLATION" || e.message === "WAVE5_VALLEY_VIOLATION" || e.message === "CRYPTO_W4_BELOW_W2_VIOLATION") {
+          if (attempts < maxAttempts) {
+            currentTemp += 0.35; currentPrompt = `${basePrompt}\n\nACHTUNG! GEOMETRIE-FEHLER:\n${e.message}\nWÄHLE ANDERE MONATE!`;
+          } else {
+            console.log("[GEO-ANPASSUNG] Geometrie-Konflikt gelöst: Erzwungener Impuls-Anker.");
+            const res = buildSecularBearSequence(weeklyAnalysisCandles, globalAthIdx);
+            waves = res.slice(0, 6); patchedCandles = weeklyAnalysisCandles; break;
+          }
+        } else throw e; 
+      }
     }
   }
 
@@ -294,25 +294,25 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   let isBreakoutSetup = false; let breakoutStatus = "";
 
   if (finalTrend === "IMPULSE_UP" && waves.length >= 6) {
-      const w0 = waves[0].price; const w1 = waves[1]; const w3 = waves[3]; const w4 = waves[4].price; const w5 = waves[5].price;
-      
-      if (w5 > w0) {
-          const logW0 = Math.log(w0); const logW5 = Math.log(w5);
-          const logFib382 = Math.exp(logW5 - (0.382 * (logW5 - logW0)));
-          if (currentPrice <= logFib382 && currentPrice >= (w4 * 0.8)) {
-              isHotSetup = true; 
-              killZoneStatus = `🚨 **KILL-ZONE HIT:** Kurs (${currentPrice.toFixed(2)}$) befindet sich im tiefen logarithmischen Dip!`;
-          }
+    const w0 = waves[0].price; const w1 = waves[1]; const w3 = waves[3]; const w4 = waves[4].price; const w5 = waves[5].price;
+    
+    if (w5 > w0) {
+      const logW0 = Math.log(w0); const logW5 = Math.log(w5);
+      const logFib382 = Math.exp(logW5 - (0.382 * (logW5 - logW0)));
+      if (currentPrice <= logFib382 && currentPrice >= (w4 * 0.8)) {
+        isHotSetup = true; 
+        killZoneStatus = `🚨 **KILL-ZONE HIT:** Kurs (${currentPrice.toFixed(2)}$) befindet sich im tiefen logarithmischen Dip!`;
       }
+    }
 
-      if (w1 && currentPrice >= w1.price && currentPrice <= w1.price * 1.12) {
-          isBreakoutSetup = true;
-          breakoutStatus = `🚀 **AUSBRUCH BESTÄTIGT:** Kurs (${currentPrice.toFixed(2)}$) schließt über dem Welle-1-Widerstand (${w1.price.toFixed(2)}$)!`;
-      } else if (w3 && currentPrice >= w3.price && currentPrice <= w3.price * 1.12) {
-          isBreakoutSetup = true;
-          breakoutStatus = `🚀 **AUSBRUCH BESTÄTIGT:** Kurs (${currentPrice.toFixed(2)}$) schließt über dem Welle-3-Widerstand (${w3.price.toFixed(2)}$)!`;
-      }
+    if (w1 && currentPrice >= w1.price && currentPrice <= w1.price * 1.12) {
+      isBreakoutSetup = true;
+      breakoutStatus = `🚀 **AUSBRUCH BESTÄTIGT:** Kurs (${currentPrice.toFixed(2)}$) schließt über dem Welle-1-Widerstand (${w1.price.toFixed(2)}$)!`;
+    } else if (w3 && currentPrice >= w3.price && currentPrice <= w3.price * 1.12) {
+      isBreakoutSetup = true;
+      breakoutStatus = `🚀 **AUSBRUCH BESTÄTIGT:** Kurs (${currentPrice.toFixed(2)}$) schließt über dem Welle-3-Widerstand (${w3.price.toFixed(2)}$)!`;
+    }
   }
 
   return { buffer: py.pngBuffer, finalTrend, isHotSetup, killZoneStatus, isBreakoutSetup, breakoutStatus };
-      }
+}
