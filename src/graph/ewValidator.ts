@@ -6,29 +6,30 @@ import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import path from "path";
 import fs from "fs";
 
-// 1. Ordner für die SQLite-Datenbank sicherstellen
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const dbPath = path.join(DATA_DIR, "radar_state.db");
 const memory = new SqliteSaver({ dbPath });
 
-// 2. Erwartetes Output-Format von Gemini definieren
+// NEUES, STRIKTES SCHEMA
 const WaveCountSchema = z.object({
-  trend: z.enum(["bullish", "bearish"]),
-  points: z.object({
-    start: z.number().describe("Preis am Startpunkt (0) der Zählung"),
-    wave1: z.number().describe("Preis am Endpunkt von Welle 1"),
-    wave2: z.number().describe("Preis am Endpunkt von Welle 2"),
-    wave3: z.number().describe("Preis am Endpunkt von Welle 3"),
-    wave4: z.number().describe("Preis am Endpunkt von Welle 4"),
-    wave5: z.number().describe("Preis am (möglichen) Endpunkt von Welle 5"),
-  }),
-  analysis: z.string().describe("Kurze Begründung des Setups"),
+  asset: z.string(),
+  timeframe: z.string(),
+  current_price: z.number(),
+  hauptzaehlung: z.string().describe("Detaillierte Beschreibung der Hauptzählung"),
+  alternativzaehlung: z.string(),
+  wahrscheinlichkeit: z.number().describe("0-100"),
+  konfidenz: z.string(),
+  invalidation_level: z.number(),
+  target_1: z.number(),
+  target_2: z.number(),
+  target_3: z.number(),
+  risk_reward: z.number(),
+  historische_vergleiche: z.string(),
+  telegram_signal: z.enum(["YES", "NO"]),
+  begruendung: z.string().describe("Faktenbasiert, keine Emotionen, keine erfundenen Wellen"),
 });
 
-// 3. Status-Objekt des Graphen
 export const RadarState = Annotation.Root({
   symbol: Annotation<string>(),
   marketData: Annotation<any>(),
@@ -38,87 +39,47 @@ export const RadarState = Annotation.Root({
     reducer: (current: string[], next: string[]) => current.concat(next),
     default: () => [],
   }),
-  attempts: Annotation<number>({
-    reducer: (current: number, next: number) => current + next,
-    default: () => 0,
-  }),
 });
 
-// 4. Node: Analyse durch Gemini
 async function analyzeNode(state: typeof RadarState.State) {
-  console.log(`\n[Node: Analyze] Analysiere ${state.symbol} (Versuch ${state.attempts + 1})`);
-  
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY fehlt in der .env Datei");
-  }
-
-  // FIX: Korrekter Parameter 'model' statt altes 'modelName'
   const llm = new ChatGoogleGenerativeAI({
     model: "gemini-1.5-pro",
     apiKey: process.env.GEMINI_API_KEY,
-    temperature: 0.1,
+    temperature: 0,
   }).withStructuredOutput(WaveCountSchema);
 
-  let prompt = `Analysiere die Elliott-Wellen für ${state.symbol} basierend auf diesen Kerzendaten/Zusammenfassungen: ${JSON.stringify(state.marketData)}.`;
-  
-  if (state.errorLogs.length > 0) {
-    prompt += `\n\nACHTUNG: Deine vorherige Zählung war ungültig. Korrigiere zwingend diese Regelverstöße:\n- ${state.errorLogs.join("\n- ")}`;
-  }
+  const systemPrompt = `
+    Du bist ElliottScreener, ein institutioneller Elliott-Wellen-Research-Agent.
+    DEINE AUFGABE: Prüfe Marktdaten auf valide Elliott-Strukturen.
+    STRIKTE FILTER:
+    - Probability muss >= 70 sein.
+    - RiskReward muss >= 3 sein.
+    - Wenn keine belegbare Struktur: telegram_signal = 'NO'.
+    - Invalidation-Level MUSS zwingend definiert sein.
+  `;
 
-  const response = await llm.invoke(prompt);
+  const response = await llm.invoke([
+    { role: "system", content: systemPrompt },
+    { role: "user", content: `Analysiere ${state.symbol}. Daten: ${JSON.stringify(state.marketData)}` }
+  ]);
 
-  return { waveCount: response, attempts: 1 };
+  return { waveCount: response };
 }
 
-// 5. Node: Mathematische Validierung der Regeln
 async function validateNode(state: typeof RadarState.State) {
-  console.log(`[Node: Validate] Prüfe Elliott-Wellen-Regeln für ${state.symbol}...`);
   const count = state.waveCount;
+  if (!count) return { isValid: false, errorLogs: ["Keine Zählung."] };
   
-  if (!count) return { isValid: false, errorLogs: ["Keine Zählung generiert."] };
-
-  const errors: string[] = [];
-  const p = count.points;
-
-  if (count.trend === "bullish") {
-    if (p.wave2 <= p.start) errors.push(`Welle 2 (${p.wave2}) fällt unter Startpunkt (${p.start}).`);
-    
-    const len1 = p.wave1 - p.start;
-    const len3 = p.wave3 - p.wave2;
-    const len5 = p.wave5 - p.wave4;
-    
-    if (len3 < len1 && len3 < len5) {
-      errors.push(`Welle 3 (${len3.toFixed(2)}) ist die kürzeste Impulswelle. Das ist verboten.`);
-    }
-
-    if (p.wave4 <= p.wave1) {
-      errors.push(`Welle 4 (${p.wave4}) überschneidet Welle 1 (${p.wave1}).`);
-    }
-  }
-
-  if (errors.length > 0) {
-    console.warn(`[Warnung] Zählung fehlerhaft: ${errors.join(" ")}`);
-    return { isValid: false, errorLogs: errors };
-  }
-
-  console.log("[Erfolg] Die Zählung entspricht den Regeln!");
-  return { isValid: true, errorLogs: [] };
+  // Hier könnte noch eine mathematische Validierung der Targets vs Current Price erfolgen
+  console.log(`[Validation] Signal für ${state.symbol}: ${count.telegram_signal}`);
+  return { isValid: true };
 }
 
-// 6. Graphen zusammenbauen und kompilieren
 const builder = new StateGraph(RadarState)
   .addNode("analyze", analyzeNode)
   .addNode("validate", validateNode)
   .addEdge(START, "analyze")
-  .addEdge("analyze", "validate");
-
-builder.addConditionalEdges("validate", (state: typeof RadarState.State) => {
-  if (state.isValid) return END;
-  if (state.attempts >= 3) {
-    console.error(`[Abbruch] Konnte nach 3 Versuchen keine valide Zählung für ${state.symbol} finden.`);
-    return END;
-  }
-  return "analyze";
-});
+  .addEdge("analyze", "validate")
+  .addEdge("validate", END);
 
 export const ewAnalyzerWorkflow = builder.compile({ checkpointer: memory });
