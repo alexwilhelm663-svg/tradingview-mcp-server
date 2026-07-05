@@ -1,6 +1,4 @@
 // @ts-nocheck
-
-
 import { spawn } from "child_process";
 
 console.log("⚡ ========================================================");
