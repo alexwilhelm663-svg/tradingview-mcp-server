@@ -28,3 +28,13 @@ db.exec(`
 `);
 
 export default db;
+
+
+// Test-Zugriff beim Start
+try {
+  db.prepare("INSERT INTO trade_history (symbol, signal_type, entry_price) VALUES (?, ?, ?)")
+    .run("TEST", "INIT", 0.0);
+  console.log("✅ Datenbank-Schreibtest erfolgreich.");
+} catch (e) {
+  console.error("❌ Datenbank-Schreibfehler:", e);
+}
