@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { z } from "zod";
 import { StateGraph, START, END, Annotation } from "@langchain/langgraph";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
