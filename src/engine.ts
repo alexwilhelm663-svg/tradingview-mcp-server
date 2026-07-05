@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { ewAnalyzerWorkflow } from "./ewValidator";
+import { ewAnalyzerWorkflow } from "./graph/ewValidator";
 import db from "./db"; // Import aus deinem neuen Lern-Modul
 import fs from "fs";
 import path from "path";
