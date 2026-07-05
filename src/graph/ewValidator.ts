@@ -9,11 +9,10 @@ import fs from "fs";
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const memory = new SqliteSaver({ dbPath: path.join(DATA_DIR, "radar_state.db") });
 
-// OKF-Loader
+// OKF-Context Loader
 function getOKFContext() {
   const rules = fs.readFileSync(path.join(process.cwd(), 'knowledge/rules/elliott_rules.md'), 'utf-8');
-  const stats = fs.readFileSync(path.join(process.cwd(), 'knowledge/statistics/winrates.md'), 'utf-8');
-  return `REGELN:\n${rules}\n\nSTATISTIK:\n${stats}`;
+  return `### OKF-REGELN\n${rules}`;
 }
 
 const WaveCountSchema = z.object({
@@ -33,7 +32,7 @@ export const RadarState = Annotation.Root({
 
 async function analyzeNode(state: typeof RadarState.State) {
   const llm = new ChatGoogleGenerativeAI({ model: "gemini-1.5-pro", apiKey: process.env.GEMINI_API_KEY, temperature: 0 }).withStructuredOutput(WaveCountSchema);
-  const response = await llm.invoke([{ role: "system", content: `Du bist ElliottScreener V1. Nutze OKF-Basis:\n${getOKFContext()}` }, { role: "user", content: `Analysiere ${state.symbol}: ${JSON.stringify(state.marketData)}` }]);
+  const response = await llm.invoke([{ role: "system", content: `Nutze OKF-Basis:\n${getOKFContext()}` }, { role: "user", content: `Analysiere ${state.symbol}: ${JSON.stringify(state.marketData)}` }]);
   return { waveCount: response, attempts: 1 };
 }
 
