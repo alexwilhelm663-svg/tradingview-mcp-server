@@ -5,6 +5,7 @@ import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import path from "path";
 import fs from "fs";
 
+// 1. Ordner für die SQLite-Datenbank sicherstellen
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -12,27 +13,21 @@ if (!fs.existsSync(DATA_DIR)) {
 const dbPath = path.join(DATA_DIR, "radar_state.db");
 const memory = new SqliteSaver({ dbPath });
 
+// 2. Erwartetes Output-Format von Gemini definieren
 const WaveCountSchema = z.object({
   trend: z.enum(["bullish", "bearish"]),
-  status: z.enum(["in_progress", "completed"]).describe("Setze 'in_progress' wenn Welle 5 aktuell noch läuft oder der Kurs gerade über Welle 3 ausbricht. Setze 'completed' NUR wenn Welle 5 definitiv am Hoch abgeschlossen ist."),
   points: z.object({
-    start: z.number().describe("Preis am Startpunkt (0)"),
+    start: z.number().describe("Preis am Startpunkt (0) der Zählung"),
     wave1: z.number().describe("Preis am Endpunkt von Welle 1"),
     wave2: z.number().describe("Preis am Endpunkt von Welle 2"),
     wave3: z.number().describe("Preis am Endpunkt von Welle 3"),
     wave4: z.number().describe("Preis am Endpunkt von Welle 4"),
-    wave5: z.number().describe("Preis am Endpunkt von Welle 5 (oder kalkuliertes Extensionsziel falls noch in_progress)"),
-  }),
-  targets: z.object({
-    ext100: z.number().optional().describe("Fibonacci Extension 1.0 nach oben (nur bei in_progress)"),
-    ext1618: z.number().optional().describe("Fibonacci Extension 1.618 nach oben (nur bei in_progress)"),
-    ret382: z.number().optional().describe("Fib 0.382 Retracement nach unten (nur bei completed)"),
-    ret500: z.number().optional().describe("Fib 0.500 Retracement nach unten (nur bei completed)"),
-    ret618: z.number().optional().describe("Golden Pocket 0.618 nach unten (nur bei completed)"),
+    wave5: z.number().describe("Preis am (möglichen) Endpunkt von Welle 5"),
   }),
   analysis: z.string().describe("Kurze Begründung des Setups"),
 });
 
+// 3. Status-Objekt des Graphen (FIX: Typen für current und next hinzugefügt)
 export const RadarState = Annotation.Root({
   symbol: Annotation<string>(),
   marketData: Annotation<any>(),
@@ -48,6 +43,7 @@ export const RadarState = Annotation.Root({
   }),
 });
 
+// 4. Node: Analyse durch Gemini
 async function analyzeNode(state: typeof RadarState.State) {
   console.log(`\n[Node: Analyze] Analysiere ${state.symbol} (Versuch ${state.attempts + 1})`);
   
@@ -56,24 +52,23 @@ async function analyzeNode(state: typeof RadarState.State) {
   }
 
   const llm = new ChatGoogleGenerativeAI({
-    model: "gemini-1.5-pro",
+    modelName: "gemini-1.5-pro",
     apiKey: process.env.GEMINI_API_KEY,
     temperature: 0.1,
   }).withStructuredOutput(WaveCountSchema);
 
-  let prompt = `Analysiere die Elliott-Wellen für ${state.symbol} basierend auf diesen Daten: ${JSON.stringify(state.marketData)}.
-WICHTIG FÜR DEN STATUS:
-- Wenn der aktuelle Kurs nahe am Welle-3-Hoch liegt oder gerade über Welle 3 ausbricht, befindet sich der Markt in Welle 5 -> Setze status="in_progress" und berechne in 'targets' die Extensionen nach oben (ext100, ext1618).
-- Setze status="completed" NUR dann, wenn ein eindeutiges Top bei Welle 5 gebildet wurde und der Kurs bereits abdreht -> Berechne erst DANN die Retracements nach unten (ret382, ret500, ret618).`;
+  let prompt = `Analysiere die Elliott-Wellen für ${state.symbol} basierend auf diesen Kerzendaten/Zusammenfassungen: ${JSON.stringify(state.marketData)}.`;
   
   if (state.errorLogs.length > 0) {
-    prompt += `\n\nACHTUNG Regelverstöße beim vorherigen Versuch:\n- ${state.errorLogs.join("\n- ")}`;
+    prompt += `\n\nACHTUNG: Deine vorherige Zählung war ungültig. Korrigiere zwingend diese Regelverstöße:\n- ${state.errorLogs.join("\n- ")}`;
   }
 
   const response = await llm.invoke(prompt);
+
   return { waveCount: response, attempts: 1 };
 }
 
+// 5. Node: Mathematische Validierung der Regeln
 async function validateNode(state: typeof RadarState.State) {
   console.log(`[Node: Validate] Prüfe Elliott-Wellen-Regeln für ${state.symbol}...`);
   const count = state.waveCount;
@@ -91,7 +86,7 @@ async function validateNode(state: typeof RadarState.State) {
     const len5 = p.wave5 - p.wave4;
     
     if (len3 < len1 && len3 < len5) {
-      errors.push(`Welle 3 (${len3.toFixed(2)}) ist die kürzeste Impulswelle. Verboten.`);
+      errors.push(`Welle 3 (${len3.toFixed(2)}) ist die kürzeste Impulswelle. Das ist verboten.`);
     }
 
     if (p.wave4 <= p.wave1) {
@@ -108,15 +103,20 @@ async function validateNode(state: typeof RadarState.State) {
   return { isValid: true, errorLogs: [] };
 }
 
+// 6. Graphen zusammenbauen und kompilieren
 const builder = new StateGraph(RadarState)
   .addNode("analyze", analyzeNode)
   .addNode("validate", validateNode)
   .addEdge(START, "analyze")
   .addEdge("analyze", "validate");
 
+// FIX: Expliziter Typ für den 'state' Parameter in der Conditional Edge
 builder.addConditionalEdges("validate", (state: typeof RadarState.State) => {
   if (state.isValid) return END;
-  if (state.attempts >= 3) return END;
+  if (state.attempts >= 3) {
+    console.error(`[Abbruch] Konnte nach 3 Versuchen keine valide Zählung für ${state.symbol} finden.`);
+    return END;
+  }
   return "analyze";
 });
 
