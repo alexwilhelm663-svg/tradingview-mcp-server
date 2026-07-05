@@ -297,6 +297,11 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
   if (finalTrend === "IMPULSE_UP" && waves.length >= 6) {
     const w0 = waves[0].price; const w1 = waves[1]; const w3 = waves[3]; const w4 = waves[4].price; const w5 = waves[5].price;
     
+    // 🔥 DIE LOGIK-SPERRE: Welle 5 gilt als fertig, wenn Korrekturwellen A-B-C existieren (> 6) 
+    // ODER der Kurs bereits mehr als 8% unter das erkannte Welle-5-Top gefallen ist.
+    const isWave5Completed = waves.length > 6 || (currentPrice < w5 * 0.92);
+
+    // 1. DIP-SENSOR / KILL-ZONE (Greift logischerweise nach einer fertigen Welle 5 im Rücklauf)
     if (w5 > w0) {
       const logW0 = Math.log(w0); const logW5 = Math.log(w5);
       const logFib382 = Math.exp(logW5 - (0.382 * (logW5 - logW0)));
@@ -306,14 +311,18 @@ export async function analyzeAsset(symbol: string, genAI: GoogleGenerativeAI) {
       }
     }
 
-    if (w1 && currentPrice >= w1.price && currentPrice <= w1.price * 1.12) {
-      isBreakoutSetup = true;
-      breakoutStatus = `🚀 **AUSBRUCH BESTÄTIGT:** Kurs (${currentPrice.toFixed(2)}$) schließt über dem Welle-1-Widerstand (${w1.price.toFixed(2)}$)!`;
-    } else if (w3 && currentPrice >= w3.price && currentPrice <= w3.price * 1.12) {
-      isBreakoutSetup = true;
-      breakoutStatus = `🚀 **AUSBRUCH BESTÄTIGT:** Kurs (${currentPrice.toFixed(2)}$) schließt über dem Welle-3-Widerstand (${w3.price.toFixed(2)}$)!`;
+    // 2. BREAKOUT-ENGINE (Wird im Abwärtstrend blockiert! Sendet NUR noch, wenn Welle 5 aktiv läuft)
+    if (!isWave5Completed) {
+      if (w1 && currentPrice >= w1.price && currentPrice <= w1.price * 1.12) {
+        isBreakoutSetup = true;
+        breakoutStatus = `🚀 **AUSBRUCH BESTÄTIGT:** Kurs (${currentPrice.toFixed(2)}$) schließt über dem Welle-1-Widerstand (${w1.price.toFixed(2)}$)!`;
+      } else if (w3 && currentPrice >= w3.price && currentPrice <= w3.price * 1.12) {
+        isBreakoutSetup = true;
+        breakoutStatus = `🚀 **AUSBRUCH BESTÄTIGT:** Kurs (${currentPrice.toFixed(2)}$) schließt über dem Welle-3-Widerstand (${w3.price.toFixed(2)}$)!`;
+      }
     }
   }
 
   return { buffer: py.pngBuffer, finalTrend, isHotSetup, killZoneStatus, isBreakoutSetup, breakoutStatus };
-}
+                             }
+                        
