@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { analyzeAsset } from "./engine";
 import { getRadarWatchlist } from "./radarManager";
+import { updateStatistics } from "./stats"; // NEU: Import für das Lern-Modul
 
 const STATE_FILE = path.join(__dirname, "alert_state.json");
 
@@ -66,12 +67,10 @@ export async function runAutoScan(): Promise<void> {
   for (const symbol of currentWatchlist) {
     try {
       if (state[symbol] && state[symbol].includes(todayStr)) {
-        console.log(`[SKIP] ${symbol} wurde heute bereits gemeldet.`);
         continue;
       }
 
       console.log(`[SCAN] Analysiere ${symbol}...`);
-      // FIX: Nur noch 1 Argument (symbol)
       const result = await analyzeAsset(symbol);
 
       if (result.isHotSetup || result.isBreakoutSetup) {
@@ -81,14 +80,16 @@ export async function runAutoScan(): Promise<void> {
         if (!state[symbol]) state[symbol] = [];
         state[symbol].push(todayStr);
         saveState(state);
-      } else {
-        console.log(`[OK] ${symbol}: Kein aktives Setup (${result.finalTrend}).`);
       }
     } catch (err: any) {
       console.error(`[FEHLER] Scan fehlgeschlagen bei ${symbol}:`, err.message);
     }
   }
-  console.log(`[${new Date().toISOString()}] Automatischer Radar-Scan abgeschlossen.`);
+  
+  // LERNEFFEKT: Statistik nach jedem Scan-Durchlauf aktualisieren
+  updateStatistics(); 
+  
+  console.log(`[${new Date().toISOString()}] Automatischer Radar-Scan & Lern-Update abgeschlossen.`);
 }
 
 // Cron-Job: Läuft alle 4 Stunden
