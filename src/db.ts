@@ -2,19 +2,12 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 
-// Sicherstellen, dass das Data-Verzeichnis existiert
 const dataDir = path.join(process.cwd(), 'data');
-if (!fs.existsSync(dataDir)) {
-    console.log("📂 Erstelle Datenverzeichnis...");
-    fs.mkdirSync(dataDir, { recursive: true });
-}
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-// Datenbank-Pfad
-const dbPath = path.join(dataDir, 'trading_bot.db');
-const db = new Database(dbPath);
+const db = new Database(path.join(dataDir, 'trading_bot.db'));
 
-// Initialisierung erzwingen
-console.log(`💾 Initialisiere Datenbank unter: ${dbPath}`);
+// Tabelle anlegen
 db.exec(`
   CREATE TABLE IF NOT EXISTS trade_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,13 +21,3 @@ db.exec(`
 `);
 
 export default db;
-
-
-// Test-Zugriff beim Start
-try {
-  db.prepare("INSERT INTO trade_history (symbol, signal_type, entry_price) VALUES (?, ?, ?)")
-    .run("TEST", "INIT", 0.0);
-  console.log("✅ Datenbank-Schreibtest erfolgreich.");
-} catch (e) {
-  console.error("❌ Datenbank-Schreibfehler:", e);
-}
