@@ -1,7 +1,6 @@
 // @ts-nocheck
-import { runAnalysisEngine } from "./engine";
+import { analyzeAsset } from "./engine";
 
-// Beispiel-Hilfsfunktion für das Zeichnen (simuliert deinen SVG/Matplotlib Chart-Builder)
 function generateChartConfig(chartData: any) {
   return {
     symbol: chartData.symbol,
@@ -18,14 +17,13 @@ export async function executeRadarScan(symbols: string[], fetchMarketData: (sym:
   for (const symbol of symbols) {
     try {
       const data = await fetchMarketData(symbol);
-      const { error, result } = await runAnalysisEngine(symbol, data.currentPrice, data);
+      const { error, result } = await analyzeAsset(symbol, data.currentPrice, data);
 
       if (error || !result) {
         console.log(`[Radar] Überspringe ${symbol}: ${error}`);
         continue;
       }
 
-      // Wenn ein echter Ausbruch oder ein relevantes Setup vorliegt -> Hit speichern
       if (result.alertType !== "NONE") {
         hits.push({
           symbol,
