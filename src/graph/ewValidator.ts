@@ -12,7 +12,6 @@ if (!fs.existsSync(DATA_DIR)) {
 const dbPath = path.join(DATA_DIR, "radar_state.db");
 const memory = new SqliteSaver({ dbPath });
 
-// NEU: Schema trennt strikt zwischen laufender Welle 5 und abgeschlossener Welle 5
 const WaveCountSchema = z.object({
   trend: z.enum(["bullish", "bearish"]),
   status: z.enum(["in_progress", "completed"]).describe("Setze 'in_progress' wenn Welle 5 aktuell noch läuft oder der Kurs gerade über Welle 3 ausbricht. Setze 'completed' NUR wenn Welle 5 definitiv am Hoch abgeschlossen ist."),
