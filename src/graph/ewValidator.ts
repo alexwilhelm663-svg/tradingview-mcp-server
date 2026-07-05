@@ -52,7 +52,7 @@ async function analyzeNode(state: typeof RadarState.State) {
   }
 
   const llm = new ChatGoogleGenerativeAI({
-    modelName: "gemini-1.5-pro",
+    model: "gemini-1.5-pro",
     apiKey: process.env.GEMINI_API_KEY,
     temperature: 0.1,
   }).withStructuredOutput(WaveCountSchema);
