@@ -1,10 +1,9 @@
 // @ts-nocheck
 import { ewAnalyzerWorkflow } from "./graph/ewValidator";
 
-export async function runAnalysisEngine(symbol: string, currentPrice: number, marketSummary: any) {
+export async function analyzeAsset(symbol: string, currentPrice: number = 0, marketSummary: any = {}) {
   console.log(`[Engine] Starte Analyse für ${symbol} bei Kurs $${currentPrice}`);
 
-  // 1. LangGraph Workflow ausführen
   const config = { configurable: { thread_id: `thread-${symbol}-${Date.now()}` } };
   const inputState = {
     symbol,
@@ -25,7 +24,6 @@ export async function runAnalysisEngine(symbol: string, currentPrice: number, ma
   let alertType = "NONE";
   let alertMsg = "";
 
-  // 2. LOGIK-KORREKTUR: Breakouts nur melden, wenn Welle 5 noch aktiv ist!
   if (waveCount.status === "in_progress") {
     if (currentPrice > p.wave3) {
       alertType = "BREAKOUT_WAVE_3";
@@ -35,17 +33,14 @@ export async function runAnalysisEngine(symbol: string, currentPrice: number, ma
       alertMsg = `⏳ **SETUP AKTIV:** Kurs im Welle-4 Pullback. Nächstes Ziel ist Ausbruch über ${p.wave3}$.`;
     }
   } else if (waveCount.status === "completed") {
-    // Wenn Welle 5 schon fertig ist, gibt es KEINEN Welle-3-Breakout-Alarm mehr!
     alertType = "CORRECTION_ACTIVE";
     alertMsg = `📉 **IMPULS ABGESCHLOSSEN:** Welle 5 am Top (${p.wave5}$) beendet. Korrekturrücklauf in Richtung Golden Pocket (${t.ret618 || "N/A"}$) erwartet.`;
   }
 
-  // 3. Chart-Metadaten dynamisch für das Zeichnen aufbereiten
   const chartConfig = {
     symbol,
     points: p,
     status: waveCount.status,
-    // Wenn in_progress -> zeichne Extensionen nach oben, sonst Retracements nach unten
     drawLevels: waveCount.status === "in_progress" 
       ? { type: "EXTENSION", ext100: t.ext100, ext1618: t.ext1618 }
       : { type: "RETRACEMENT", ret382: t.ret382, ret500: t.ret500, ret618: t.ret618 }
