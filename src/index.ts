@@ -130,3 +130,4 @@ bot.on('text', async (ctx) => {
 const server = http.createServer((req, res) => res.end("Bot active"));
 server.listen(PORT, () => console.log(`Server läuft auf Port ${PORT}`));
 bot.launch();
+
