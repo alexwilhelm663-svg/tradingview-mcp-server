@@ -14,7 +14,6 @@ console.log("🚀 Bot V110.1: Hybrid Dual-Hunter (Lern-Modus aktiv)...");
 // 🗄️ DATENBANK-INITIALISIERUNG
 // ==========================================
 try {
-    // Erstellt die Tabellen automatisch, falls sie (z. B. nach einem Render-Deploy) fehlen
     db.exec(`
         CREATE TABLE IF NOT EXISTS config (
             key TEXT PRIMARY KEY,
@@ -27,6 +26,11 @@ try {
         CREATE TABLE IF NOT EXISTS alerts (
             symbol TEXT PRIMARY KEY,
             last_alert_timestamp INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS trade_history (
+            symbol TEXT,
+            signal_type TEXT,
+            entry_price REAL
         );
     `);
     console.log("✅ Datenbank-Tabellen erfolgreich geprüft/erstellt.");
@@ -108,13 +112,30 @@ bot.command('watchlist', (ctx) => {
     try {
         const rows = db.prepare("SELECT symbol FROM watchlist").all();
         if (rows.length === 0) {
-            return ctx.reply("Deine Watchlist ist aktuell leer.");
+            return ctx.reply("Deine Watchlist ist aktuell leer. Nutze /add <Symbol>, um etwas hinzuzufügen.");
         }
         const symbols = rows.map(r => r.symbol).join(', ');
         ctx.reply(`📋 **Aktuelle Watchlist:**\n${symbols}`);
     } catch (error) {
         console.error("Datenbankfehler bei /watchlist:", error);
         ctx.reply("❌ Fehler beim Abrufen der Watchlist.");
+    }
+});
+
+bot.command('add', (ctx) => {
+    try {
+        const args = ctx.message.text.split(' ');
+        const symbol = args[1]?.toUpperCase();
+        
+        if (!symbol) {
+            return ctx.reply("⚠️ Bitte gib ein Symbol an. Beispiel: /add BTC-USD");
+        }
+
+        db.prepare("INSERT OR REPLACE INTO watchlist (symbol, source) VALUES (?, ?)").run(symbol, 'MANUAL');
+        ctx.reply(`✅ ${symbol} wurde erfolgreich zur Watchlist hinzugefügt!`);
+    } catch (error) {
+        console.error("Datenbankfehler bei /add:", error);
+        ctx.reply("❌ Fehler beim Hinzufügen des Symbols.");
     }
 });
 
@@ -131,11 +152,10 @@ bot.command('analyse', async (ctx) => {
     try {
         const res = await analyzeAsset(symbol);
         
-        // Prüfen, ob die Engine ein Bild zurückgegeben hat
         if (res.buffer) {
             await ctx.replyWithPhoto({ source: res.buffer }, { caption: `Analyse für ${symbol} abgeschlossen.` });
         } else {
-            await ctx.reply(`Analyse für ${symbol} abgeschlossen. (Kein Chart generiert)`);
+            await ctx.reply(`Analyse für ${symbol} abgeschlossen. (Kein Chart generiert, Buffer ist leer)`);
         }
     } catch (error) {
         console.error("Fehler im /analyse Befehl:", error);
