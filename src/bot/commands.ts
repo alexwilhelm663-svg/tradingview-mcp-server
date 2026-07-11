@@ -1,0 +1,95 @@
+import { Telegraf } from "telegraf";
+import { analyzeAsset } from "../core/engine";
+import { addToWatchlist, removeFromWatchlist, viewWatchlist } from "../core/watchlist";
+import db from "../core/db";
+
+/**
+ * Registriert alle Bot-Commands am uebergebenen Telegraf-Objekt.
+ * runScan wird vom Composition Root (index.ts) injiziert, damit /scan
+ * und der Cron-Zyklus exakt dieselbe Logik nutzen.
+ */
+export function registerCommands(
+  bot: Telegraf,
+  runScan: (chatId: number) => Promise<void>
+): void {
+  bot.command("start", (ctx) => {
+    db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('chat_id', ?)").run(
+      String(ctx.chat.id)
+    );
+    return ctx.reply(
+      "🤖 **ElliotEugen Trading Bot bereit.**\n\n" +
+        "• `/radar` – aktuelle Watchlist\n" +
+        "• `/add <SYMBOL>` – Asset hinzufügen\n" +
+        "• `/remove <SYMBOL>` – Asset entfernen\n" +
+        "• `/analyse <SYMBOL>` – sofortige EW-Analyse mit Chart\n" +
+        "• `/scan` – manueller Radar-Durchlauf\n\n" +
+        "✅ Chat-ID für automatische Alerts gespeichert.",
+      { parse_mode: "Markdown" }
+    );
+  });
+
+  bot.command("radar", (ctx) => ctx.reply(viewWatchlist(), { parse_mode: "Markdown" }));
+  bot.command("watchlist", (ctx) => ctx.reply(viewWatchlist(), { parse_mode: "Markdown" }));
+
+  bot.command("add", (ctx) => {
+    const arg = ctx.message.text.split(" ")[1];
+    if (!arg) {
+      return ctx.reply("⚠️ Bitte Symbol angeben: `/add BTC-USD`", { parse_mode: "Markdown" });
+    }
+    return ctx.reply(addToWatchlist(arg), { parse_mode: "Markdown" });
+  });
+
+  bot.command("remove", (ctx) => {
+    const arg = ctx.message.text.split(" ")[1];
+    if (!arg) {
+      return ctx.reply("⚠️ Bitte Symbol angeben: `/remove TSLA`", { parse_mode: "Markdown" });
+    }
+    return ctx.reply(removeFromWatchlist(arg), { parse_mode: "Markdown" });
+  });
+
+  bot.command("scan", async (ctx) => {
+    await ctx.reply("⚙️ Starte manuellen Radar-Scan...");
+    await runScan(ctx.chat.id);
+    await ctx.reply("✅ Radar-Scan abgeschlossen!");
+  });
+
+  bot.command("analyse", async (ctx) => {
+    const arg = ctx.message.text.split(" ")[1];
+    if (!arg) {
+      return ctx.reply("⚠️ Bitte Symbol angeben: `/analyse NVDA`", { parse_mode: "Markdown" });
+    }
+    const symbol = arg.trim().toUpperCase();
+    const status = await ctx.reply(`🔄 Analysiere **${symbol}** nach Elliott-Wellen...`, {
+      parse_mode: "Markdown",
+    });
+
+    try {
+      const r = await analyzeAsset(symbol);
+
+      if (!r.analysis) {
+        await ctx.reply(
+          `⚠️ Für **${symbol}** war keine valide Analyse möglich (Daten- oder Validierungsfehler). Details stehen im Server-Log.`,
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      let caption = `📊 **EW Master Analyse: ${symbol}**\nMakro-Trend: \`${r.finalTrend}\`\n\n`;
+      if (r.isHotSetup) caption += `${r.killZoneStatus}\n`;
+      if (r.isBreakoutSetup) caption += `${r.breakoutStatus}\n`;
+      if (!r.isHotSetup && !r.isBreakoutSetup) caption += "⚪ Aktuell in keiner Trigger-Zone.";
+
+      if (r.buffer) {
+        await ctx.replyWithPhoto({ source: r.buffer }, { caption, parse_mode: "Markdown" });
+      } else {
+        await ctx.reply(caption, { parse_mode: "Markdown" });
+      }
+    } catch (err: any) {
+      await ctx.reply(`❌ Fehler bei ${symbol}: \`${err?.message ?? err}\``, {
+        parse_mode: "Markdown",
+      });
+    } finally {
+      ctx.deleteMessage(status.message_id).catch(() => {});
+    }
+  });
+}

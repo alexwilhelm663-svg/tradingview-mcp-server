@@ -1,106 +1,102 @@
-// @ts-nocheck
-import { ewAnalyzerWorkflow } from "./graph/ewValidator";
-import db from "./db";
-import fs from "fs";
-import path from "path";
+import "dotenv/config";
+import { Telegraf } from "telegraf";
+import http from "http";
+import cron from "node-cron";
+import db from "./core/db";
+import { analyzeAsset } from "./core/engine";
+import { getWatchlist } from "./core/watchlist";
+import { resolveOpenTrades } from "./core/outcome";
+import { updateStatistics } from "./core/stats";
+import { registerCommands } from "./bot/commands";
 
-export interface AnalysisResult {
-  buffer: Buffer | null;
-  signal: string;
-  finalTrend: string;
-  isHotSetup: boolean;
-  killZoneStatus: string;
-  isBreakoutSetup: boolean;
-  breakoutStatus: string;
-  analysis: any;
+const token = process.env.TELEGRAM_BOT_TOKEN;
+if (!token) throw new Error("TELEGRAM_BOT_TOKEN ist nicht gesetzt!");
+
+const bot = new Telegraf(token, { handlerTimeout: 9_000_000 });
+const PORT = Number(process.env.PORT) || 10000;
+const COOLDOWN_MS = 7 * 24 * 3600 * 1000; // 7 Tage pro Symbol
+
+console.log("🚀 EW Quant Hunter V111: konsolidierter Composition Root startet...");
+
+function getActiveChatId(): number | null {
+  const row = db.prepare("SELECT value FROM config WHERE key = 'chat_id'").get() as
+    | { value: string }
+    | undefined;
+  return row ? parseInt(row.value, 10) : null;
 }
 
-export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
-  try {
-    const statsPath = path.join(process.cwd(), 'knowledge/statistics/winrates.md');
-    const stats = fs.existsSync(statsPath) ? fs.readFileSync(statsPath, 'utf-8') : "Keine Statistik verfügbar.";
+async function runRadarScan(targetChatId: number): Promise<void> {
+  const watchlist = getWatchlist();
+  console.log(`[SCAN] ${new Date().toISOString()} – ${watchlist.length} Assets...`);
+  const now = Date.now();
 
-    // Daten abrufen
-    const marketData = await fetchMarketData(symbol);
-    const candles = marketData.weeklyAnalysisCandles;
-    const currentPrice = parseFloat(candles[candles.length - 1].close);
+  for (const symbol of watchlist) {
+    try {
+      const rec = db
+        .prepare("SELECT last_alert_timestamp FROM alerts WHERE symbol = ?")
+        .get(symbol) as { last_alert_timestamp: number } | undefined;
+      if (rec && now - rec.last_alert_timestamp < COOLDOWN_MS) continue;
 
-    // Workflow ausführen
-    const finalState = await ewAnalyzerWorkflow.invoke({
-      symbol: symbol,
-      marketData: candles,
-      systemContext: `Aktuelle Performance-Daten: ${stats}. Nutze diese, um die Wahrscheinlichkeit für ein Setup zu validieren.`
-    });
+      const res = await analyzeAsset(symbol);
+      if (res.signal !== "YES") continue;
 
-    if (!finalState.isValid || !finalState.waveCount) {
-      throw new Error("Analyse-Engine lieferte kein valides Resultat.");
+      const caption = res.isBreakoutSetup
+        ? `🚀 **HIT: ${symbol}**\n${res.breakoutStatus}`
+        : `🎯 **HIT: ${symbol}**\n${res.killZoneStatus}`;
+
+      db.prepare(
+        "INSERT OR REPLACE INTO alerts (symbol, last_alert_timestamp) VALUES (?, ?)"
+      ).run(symbol, now);
+
+      if (res.buffer) {
+        await bot.telegram.sendPhoto(
+          targetChatId,
+          { source: res.buffer },
+          { caption, parse_mode: "Markdown" }
+        );
+      } else {
+        await bot.telegram.sendMessage(targetChatId, caption, { parse_mode: "Markdown" });
+      }
+    } catch (err: any) {
+      console.error(`[SCAN] Fehler bei ${symbol}:`, err?.message ?? err);
     }
-
-    const p = finalState.waveCount.points;
-
-    // Setup-Logik
-    let isHotSetup = false;
-    let killZoneStatus = "";
-    let isBreakoutSetup = false;
-    let breakoutStatus = "";
-
-    if (p.wave5 > p.start && currentPrice <= p.wave5 * 0.7) {
-      isHotSetup = true;
-      killZoneStatus = `🚨 KILL-ZONE HIT: Kurs befindet sich im Dip.`;
-    }
-
-    if (currentPrice >= p.wave1 && currentPrice <= p.wave1 * 1.1) {
-      isBreakoutSetup = true;
-      breakoutStatus = `🚀 AUSBRUCH über Welle-1-Niveau!`;
-    }
-
-    // DB Protokollierung
-    if (isHotSetup || isBreakoutSetup) {
-      const stmt = db.prepare("INSERT INTO trade_history (symbol, signal_type, entry_price) VALUES (?, ?, ?)");
-      stmt.run(symbol, isHotSetup ? 'HOT' : 'BREAKOUT', currentPrice);
-    }
-
-    // UNIVERSAL-EXTRAKTOR: Hier wird der Buffer abgegriffen
-    // Wir prüfen die Struktur, die dein Graph/MCP-Server liefert
-    let chartBuffer: Buffer | null = null;
-    
-    // Pfade prüfen, wo das Bild liegen muss
-    if (finalState.buffer) {
-        chartBuffer = finalState.buffer;
-    } else if (finalState.analysis?.image) {
-        chartBuffer = finalState.analysis.image;
-    } else if (finalState.analysis?.buffer) {
-        chartBuffer = finalState.analysis.buffer;
-    } else if (finalState.image) {
-        chartBuffer = finalState.image;
-    }
-
-    // Logging nur im Fehlerfall, um den Logstream sauber zu halten
-    if (!chartBuffer) {
-        console.warn(`[WARN] Buffer leer für ${symbol}. Verfügbare Keys:`, Object.keys(finalState));
-    }
-
-    return {
-      buffer: chartBuffer,
-      signal: (isHotSetup || isBreakoutSetup) ? "YES" : "NO",
-      finalTrend: finalState.waveCount.trend,
-      isHotSetup,
-      killZoneStatus,
-      isBreakoutSetup,
-      breakoutStatus,
-      analysis: finalState.waveCount
-    };
-  } catch (e) {
-    console.error(`Analysefehler [${symbol}]:`, e);
-    return {
-      buffer: null,
-      signal: "NO",
-      finalTrend: "NONE",
-      isHotSetup: false,
-      killZoneStatus: "",
-      isBreakoutSetup: false,
-      breakoutStatus: "",
-      analysis: null
-    };
   }
 }
+
+registerCommands(bot, runRadarScan);
+
+// Stuendlicher Zyklus: erst Outcomes aufloesen, dann scannen, dann Statistik erneuern.
+// Reihenfolge ist wichtig: so lernt der naechste Scan aus frisch geschlossenen Trades.
+cron.schedule("0 * * * *", async () => {
+  console.log("⏰ Automatischer Zyklus startet...");
+  try {
+    await resolveOpenTrades();
+    const chatId = getActiveChatId();
+    if (chatId) {
+      await runRadarScan(chatId);
+    } else {
+      console.log("⚠️ Kein Scan: Chat-ID fehlt (einmal /start an den Bot senden).");
+    }
+    updateStatistics();
+  } catch (err: any) {
+    console.error("❌ Zyklus-Fehler:", err?.message ?? err);
+  }
+});
+
+// Dummy-HTTP-Server: Render braucht einen offenen Port
+const server = http.createServer((_req, res) => res.end("Bot active"));
+server.listen(PORT, () => console.log(`🌐 Health-Server auf Port ${PORT}`));
+
+bot.launch().then(() => console.log("✅ Telegram Polling gestartet."));
+
+// Graceful Shutdown gegen 409-Konflikte bei Redeploys
+process.once("SIGINT", () => {
+  bot.stop("SIGINT");
+  server.close();
+  process.exit(0);
+});
+process.once("SIGTERM", () => {
+  bot.stop("SIGTERM");
+  server.close();
+  process.exit(0);
+});

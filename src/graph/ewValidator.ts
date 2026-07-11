@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { z } from "zod";
 import { StateGraph, START, END, Annotation } from "@langchain/langgraph";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
@@ -6,58 +5,119 @@ import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import path from "path";
 import fs from "fs";
 
-// Sicherstellen, dass das Data-Verzeichnis existiert
 const DATA_DIR = path.join(process.cwd(), "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const memory = new SqliteSaver({ dbPath: path.join(DATA_DIR, "radar_state.db") });
+// Fix: Original nutzte `new SqliteSaver({ dbPath })` - das ist nicht die API
+// und liefert einen funktionslosen Saver. Korrekt ist fromConnString().
+const memory = SqliteSaver.fromConnString(path.join(DATA_DIR, "radar_state.db"));
 
-// Kontext-Loader
-function getOKFContext() {
-  const rulesPath = path.join(process.cwd(), 'knowledge/rules/elliott_rules.md');
-  return fs.existsSync(rulesPath) ? fs.readFileSync(rulesPath, 'utf-8') : "Keine Regeln gefunden.";
+function getOKFContext(): string {
+  const rulesPath = path.join(process.cwd(), "knowledge/rules/elliott_rules.md");
+  return fs.existsSync(rulesPath)
+    ? fs.readFileSync(rulesPath, "utf-8")
+    : "Keine Regeln gefunden.";
 }
+
+export const WavePointSchema = z.object({
+  label: z
+    .string()
+    .describe('Wellen-Label: "0","1","2","3","4","5" oder "A","B","C","W","X","Y"'),
+  date: z
+    .string()
+    .describe("Datum des Wellenpunkts (YYYY-MM-DD), muss exakt einem Kerzendatum entsprechen"),
+  price: z.number().describe("Preis am Wellenpunkt"),
+});
+export type WavePoint = z.infer<typeof WavePointSchema>;
 
 const WaveCountSchema = z.object({
   trend: z.enum(["bullish", "bearish"]),
-  points: z.object({ start: z.number(), wave1: z.number(), wave2: z.number(), wave3: z.number(), wave4: z.number(), wave5: z.number() }),
+  points: z
+    .array(WavePointSchema)
+    .min(3)
+    .describe("Chronologisch sortierte Wellenpunkte, beginnend mit Welle 0"),
   analysis: z.string(),
 });
+export type WaveCount = z.infer<typeof WaveCountSchema>;
 
 export const RadarState = Annotation.Root({
   symbol: Annotation<string>(),
   marketData: Annotation<any>(),
-  systemContext: Annotation<string>(), // NEU: Kontext aus engine.ts
-  waveCount: Annotation<z.infer<typeof WaveCountSchema> | null>(),
+  systemContext: Annotation<string>(),
+  waveCount: Annotation<WaveCount | null>(),
   isValid: Annotation<boolean>(),
   errorLogs: Annotation<string[]>({ reducer: (c, n) => c.concat(n), default: () => [] }),
   attempts: Annotation<number>({ reducer: (c, n) => c + n, default: () => 0 }),
 });
 
+function pt(wc: WaveCount, label: string): WavePoint | undefined {
+  return wc.points.find((p) => p.label === label);
+}
+
 async function analyzeNode(state: typeof RadarState.State) {
-  const llm = new ChatGoogleGenerativeAI({ 
-    model: "gemini-1.5-pro", 
-    apiKey: process.env.GEMINI_API_KEY, 
-    temperature: 0 
+  const llm = new ChatGoogleGenerativeAI({
+    // Per Env umstellbar (z.B. auf gemini-2.0-flash), Default wie bisher
+    model: process.env.GEMINI_MODEL ?? "gemini-1.5-pro",
+    apiKey: process.env.GEMINI_API_KEY,
+    temperature: 0,
   }).withStructuredOutput(WaveCountSchema);
 
-  // System-Prompt vereint OKF-Regeln und den dynamischen Performance-Kontext
-  const systemPrompt = `Du bist ein erfahrener Elliott-Wave-Trader.
-  OKF-BASIS: ${getOKFContext()}
-  PERFORMANCE-KONTEXT: ${state.systemContext}`;
+  const systemPrompt = `Du bist ein erfahrener Elliott-Wave-Analyst.
+REGELWERK (OKF-BASIS):
+${getOKFContext()}
+
+PERFORMANCE-KONTEXT: ${state.systemContext}
+
+Liefere eine chronologische Wellenzaehlung als Punkte-Array.
+Jeder Punkt braucht label, date (exakt aus den Kursdaten) und price.`;
+
+  // Retry-Feedback: dem Modell sagen, WARUM die letzte Zaehlung abgelehnt wurde
+  const feedback =
+    state.errorLogs.length > 0
+      ? `\n\nDeine letzte Zaehlung wurde abgelehnt. Korrigiere folgende Verstoesse:\n- ${state.errorLogs.join("\n- ")}`
+      : "";
 
   const response = await llm.invoke([
-    { role: "system", content: systemPrompt }, 
-    { role: "user", content: `Analysiere ${state.symbol}: ${JSON.stringify(state.marketData)}` }
+    ["system", systemPrompt],
+    ["human", `Analysiere ${state.symbol}. Kursdaten (Weekly): ${JSON.stringify(state.marketData)}${feedback}`],
   ]);
-  
-  return { waveCount: response, attempts: 1 };
+
+  return { waveCount: response as WaveCount, attempts: 1 };
 }
 
 async function validateNode(state: typeof RadarState.State) {
-  const p = state.waveCount?.points;
+  const wc = state.waveCount;
   const errors: string[] = [];
-  if (p && (p.wave2 <= p.start || p.wave4 <= p.wave1)) errors.push("Geometrie-Verstoß");
+
+  if (!wc || wc.points.length < 3) {
+    return { isValid: false, errorLogs: ["Keine oder zu wenige Wellenpunkte geliefert."] };
+  }
+
+  // Gesetz 1: keine Zeitspruenge
+  for (let i = 1; i < wc.points.length; i++) {
+    if (wc.points[i].date < wc.points[i - 1].date) {
+      errors.push(
+        `Zeitsprung: ${wc.points[i].label} (${wc.points[i].date}) liegt vor ${wc.points[i - 1].label} (${wc.points[i - 1].date}).`
+      );
+      break;
+    }
+  }
+
+  // Impuls-Geometrie (richtungsneutral ueber dir)
+  const dir = wc.trend === "bullish" ? 1 : -1;
+  const w0 = pt(wc, "0");
+  const w1 = pt(wc, "1");
+  const w2 = pt(wc, "2");
+  const w3 = pt(wc, "3");
+  const w4 = pt(wc, "4");
+
+  if (w0 && w1 && w2 && dir * (w2.price - w0.price) <= 0)
+    errors.push("Regel-Verstoss: Welle 2 retraced Welle 1 zu mehr als 100%.");
+  if (w1 && w3 && dir * (w3.price - w1.price) <= 0)
+    errors.push("Regel-Verstoss: Welle 3 ueberschreitet das Ende von Welle 1 nicht.");
+  if (w1 && w4 && dir * (w4.price - w1.price) <= 0)
+    errors.push("Regel-Verstoss: Welle 4 ueberlappt das Preisgebiet von Welle 1.");
+
   return errors.length > 0 ? { isValid: false, errorLogs: errors } : { isValid: true };
 }
 
@@ -67,6 +127,8 @@ const builder = new StateGraph(RadarState)
   .addEdge(START, "analyze")
   .addEdge("analyze", "validate");
 
-builder.addConditionalEdges("validate", (s) => (s.isValid || s.attempts >= 3 ? END : "analyze"));
+builder.addConditionalEdges("validate", (s: typeof RadarState.State) =>
+  s.isValid || s.attempts >= 3 ? END : "analyze"
+);
 
 export const ewAnalyzerWorkflow = builder.compile({ checkpointer: memory });
