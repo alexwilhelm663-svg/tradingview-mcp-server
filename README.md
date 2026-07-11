@@ -1,38 +1,34 @@
-# ElliotEugen Bot 📈
+# EW Quant Hunter (Bot V110.1: Hybrid Dual-Hunter)
 
-Ein hochpräziser Telegram-Bot für automatisierte technische Analysen basierend auf dem **Elliott-Wellen-Prinzip**. Der Bot kombiniert modernste KI-Modelle mit fraktaler Datenreihenanalyse, um Marktstrukturen objektiv zu bewerten und visualisierte Prognosen zu erstellen.
-
-## 🤖 Funktionsweise
-Der Bot fungiert als autonomer technischer Analyst:
-1.  **Datenbeschaffung:** Abfrage historischer Kursdaten via `yahoo-finance2` (V3 API).
-2.  **Mathematische Analyse:** Ein lokales Gemini-Modell analysiert die Daten unter strikter Einhaltung der mathematischen und strukturellen Regeln der Elliott-Wellen-Theorie (Impulse, Korrekturen, Fibonacci-Verhältnisse).
-3.  **Visualisierung:** Automatisierte Generierung von Candlestick-Diagrammen mittels Python-Backend (`mplfinance`, `matplotlib`) mit eingezeichneter Wellen-Struktur.
-4.  **Interaktivität:** Der Bot speichert den Analyse-Kontext für gezielte Rückfragen zu spezifischen Wellen oder Fibonacci-Kurszielen.
+Ein Node.js-basierter Telegram-Bot für automatisierte quantitative Finanzanalysen, Elliott-Wellen-Tracking und automatische Chart-Generierung. Der Bot läuft als hybrider Dienst, der sowohl auf manuelle Befehle reagiert als auch im Hintergrund automatisierte Markt-Scans (Radar) durchführt.
 
 ## 🚀 Features
-* **Striktes Regelwerk:** Implementierung der absoluten Gesetze für Motiv- und Korrekturwellen (Alternation, Extension, Fibonacci-Retracements).
-* **Intelligentes Routing:** Automatischer Webhook-Betrieb (via Render) für latenzfreie Kommunikation.
-* **Fehler-Scanner:** Integrierte Diagnose-Pipeline für Python-basierte Grafik-Abstürze direkt im Chat.
-* **Flexibilität:** Analyse für verschiedene Zeitintervalle (1D, 1W, 1M) möglich.
 
-## 🛠 Tech-Stack
-* **Runtime:** Node.js (TypeScript)
-* **KI:** Google Gemini 2.5 Flash
-* **Finanzdaten:** Yahoo Finance API (V3)
-* **Visualisierung:** Python, Pandas, Matplotlib, Mplfinance
-* **Hosting:** Render (Cloud-Deployment)
+* **On-Demand Analysen:** Direkte Abfrage von Finanzinstrumenten (z.B. Krypto, Aktien) via Telegram-Befehl mit sofortiger Chart-Ausgabe.
+* **Automatisierter Radar-Scan:** Stündlicher Cronjob, der eine vordefinierte Watchlist auf Elliott-Wellen-Setups (Breakouts & Hot Setups) prüft.
+* **Smart Alerting:** Integriertes SQLite-Alert-Management mit einem 7-Tage-Cooldown pro Asset, um Spam im Telegram-Chat zu verhindern.
+* **Render-Ready:** Vollständig optimiert für das Hosting auf Render.com inklusive Dummy-HTTP-Server (gegen Port-Timeouts) und Graceful Shutdown (`SIGTERM`/`SIGINT`), um Bot-Konflikte bei Deployments zu vermeiden.
 
-## 📋 Befehle
-| Befehl | Beschreibung |
-| :--- | :--- |
-| `/analyse [Symbol]` | Startet die Elliott-Wellen-Analyse für das angegebene Symbol. |
-| `[Frage]` | Direkte Rückfragen an den Bot zur letzten Analyse werden kontextbezogen beantwortet. |
+## 🛠️ Tech-Stack
 
-## ⚙️ Elliott-Wellen-Regelwerk (Auszug)
-Der Bot arbeitet nach einem formalisierten System-Prompt, der folgende Regeln erzwingt:
-* **Impuls-Gesetze:** Welle 3 darf niemals die kürzeste sein; kein Overlap zwischen Welle 1 und 4.
-* **Korrektur-Kategorien:** Differenzierung zwischen Zigzags, Flats, Triangles und Combinations.
-* **Richtlinien:** Anwendung von Fibonacci-Verhältnissen (0.382, 0.618, 1.618) sowie Channeling-Methoden zur Kurszielbestimmung.
+* **Backend:** Node.js, TypeScript
+* **Bot-Framework:** Telegraf (Telegram Bot API)
+* **Datenbank:** SQLite (`better-sqlite3` oder ähnlich) für Konfiguration, Watchlist und Alerts
+* **Scheduling:** `node-cron`
+* **Infrastruktur:** Express / HTTP-Modul für Health-Checks
 
----
-*Disclaimer: Dieser Bot ist ein technisches Hilfsmittel zur Analyse von Marktstrukturen. Er stellt keine Anlageberatung dar.*
+## 🤖 Telegram Befehle
+
+Sobald der Bot läuft, stehen in Telegram folgende Befehle zur Verfügung:
+
+* `/start` – Initialisiert den Bot und speichert die aktuelle Chat-ID in der Datenbank. **Wichtig:** Muss als Erstes ausgeführt werden, damit der automatische Radar-Scan weiß, wohin er die Alarme senden soll.
+* `/watchlist` – Gibt eine Liste aller Symbole aus, die sich aktuell in der SQLite-Datenbank befinden und vom Radar überwacht werden.
+* `/analyse [SYMBOL]` – Startet eine sofortige, manuelle Analyse für ein spezifisches Asset (z. B. `/analyse btc-usd`). Der Bot berechnet das Setup und antwortet mit dem generierten Chart-Screenshot.
+
+## ⚙️ Setup & Installation
+
+### 1. Umgebungsvariablen (.env)
+Erstelle eine `.env`-Datei im Hauptverzeichnis mit folgenden Werten:
+```env
+TELEGRAM_BOT_TOKEN=dein_telegram_bot_token
+PORT=10000
