@@ -17,17 +17,14 @@ export interface AnalysisResult {
 
 export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
   try {
-    // 1. Lerneffekt: Statistik laden für den System-Kontext
     const statsPath = path.join(process.cwd(), 'knowledge/statistics/winrates.md');
     const stats = fs.existsSync(statsPath) ? fs.readFileSync(statsPath, 'utf-8') : "Keine Statistik verfügbar.";
 
-    // 2. Daten abrufen
     const marketData = await fetchMarketData(symbol);
     const candles = marketData.weeklyAnalysisCandles;
     const currentPrice = parseFloat(candles[candles.length - 1].close);
 
-    // 3. Workflow ausführen mit injiziertem Performance-Kontext
-    // Hier zieht sich dein Graph die Daten und das Bild über den TradingView MCP Server
+    // Workflow ausführen
     const finalState = await ewAnalyzerWorkflow.invoke({
       symbol: symbol,
       marketData: candles,
@@ -40,7 +37,7 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
 
     const p = finalState.waveCount.points;
     
-    // 4. Setup-Logik
+    // Setup-Logik
     let isHotSetup = false; let killZoneStatus = "";
     let isBreakoutSetup = false; let breakoutStatus = "";
 
@@ -54,15 +51,25 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         breakoutStatus = `🚀 AUSBRUCH über Welle-1-Niveau!`;
     }
 
-    // 5. Lern-Modul: Signal in DB protokollieren
+    // Protokollierung
     if (isHotSetup || isBreakoutSetup) {
       const stmt = db.prepare("INSERT INTO trade_history (symbol, signal_type, entry_price) VALUES (?, ?, ?)");
       stmt.run(symbol, isHotSetup ? 'HOT' : 'BREAKOUT', currentPrice);
     }
 
-    // 6. 🚀 CHART ÜBERGEBEN (Das Bild kommt direkt aus deinem MCP-Workflow!)
-    // Hier wird das Bild direkt aus dem State-Graphen extrahiert
-    const chartBuffer = finalState.buffer || finalState.screenshot || finalState.image || null;
+    // 🚀 FIXED: Buffer-Extraktion
+    // Wir prüfen die Struktur, die in deinem Workflow erfolgreich erzeugt wird.
+    // Wenn 'finalState.buffer' direkt existiert, nehmen wir es.
+    // Andernfalls schauen wir in 'finalState.analysis', wo die Daten aus deinem MCP-Server oft liegen.
+    let chartBuffer: Buffer | null = null;
+    
+    if (finalState.buffer) {
+        chartBuffer = finalState.buffer;
+    } else if (finalState.analysis && finalState.analysis.image) {
+        chartBuffer = finalState.analysis.image;
+    } else if (finalState.image) {
+        chartBuffer = finalState.image;
+    }
 
     return {
       buffer: chartBuffer,
