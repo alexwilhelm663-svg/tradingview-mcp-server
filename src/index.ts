@@ -10,68 +10,115 @@ const PORT = process.env.PORT || 10000;
 
 console.log("🚀 Bot V110.1: Hybrid Dual-Hunter (Lern-Modus aktiv)...");
 
+// ==========================================
+// 🗄️ DATENBANK-INITIALISIERUNG
+// ==========================================
+try {
+    // Erstellt die Tabellen automatisch, falls sie (z. B. nach einem Render-Deploy) fehlen
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS config (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
+        CREATE TABLE IF NOT EXISTS watchlist (
+            symbol TEXT PRIMARY KEY,
+            source TEXT
+        );
+        CREATE TABLE IF NOT EXISTS alerts (
+            symbol TEXT PRIMARY KEY,
+            last_alert_timestamp INTEGER
+        );
+    `);
+    console.log("✅ Datenbank-Tabellen erfolgreich geprüft/erstellt.");
+} catch (err) {
+    console.error("❌ Fehler beim Initialisieren der Datenbank:", err);
+}
+
+// ==========================================
+// ⚙️ HILFSFUNKTIONEN
+// ==========================================
 function getActiveChatId(): number | null {
-    const row = db.prepare("SELECT value FROM config WHERE key = 'chat_id'").get();
-    return row ? parseInt(row.value) : null;
+    try {
+        const row = db.prepare("SELECT value FROM config WHERE key = 'chat_id'").get();
+        return row ? parseInt(row.value) : null;
+    } catch (e) {
+        console.error("Fehler beim Lesen der Chat-ID:", e);
+        return null;
+    }
 }
 
 function updateChatId(id: number) {
     db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)").run('chat_id', id.toString());
 }
 
+// ==========================================
+// 📡 RADAR-SCAN LOGIK
+// ==========================================
 async function runRadarScan(targetChatId: number) {
-  const rows = db.prepare("SELECT symbol, source FROM watchlist").all();
-  if (rows.length === 0) return;
+    try {
+        const rows = db.prepare("SELECT symbol, source FROM watchlist").all();
+        if (rows.length === 0) return;
 
-  const now = Date.now();
-  const SEVEN_DAYS_MS = 7 * 24 * 3600 * 1000;
+        const now = Date.now();
+        const SEVEN_DAYS_MS = 7 * 24 * 3600 * 1000;
 
-  for (const row of rows) {
-      try {
-          const record = db.prepare("SELECT last_alert_timestamp FROM alerts WHERE symbol = ?").get(row.symbol);
-          if (record && (now - record.last_alert_timestamp) < SEVEN_DAYS_MS) continue;
+        for (const row of rows) {
+            try {
+                const record = db.prepare("SELECT last_alert_timestamp FROM alerts WHERE symbol = ?").get(row.symbol);
+                if (record && (now - record.last_alert_timestamp) < SEVEN_DAYS_MS) continue;
 
-          const res = await analyzeAsset(row.symbol);
-          
-          if (res.signal === "YES") {
-              if (res.isHotSetup || (res.isBreakoutSetup && row.source === 'SCREEN')) {
-                  const msgCaption = res.isHotSetup ? `🎯 **HIT: ${row.symbol}**\n${res.killZoneStatus}` : `🚀 **HIT: ${row.symbol}**\n${res.breakoutStatus}`;
-                  
-                  db.prepare("INSERT OR REPLACE INTO alerts (symbol, last_alert_timestamp) VALUES (?, ?)").run(row.symbol, now);
-                  
-                  if (res.buffer) {
-                      await bot.telegram.sendPhoto(targetChatId, { source: res.buffer }, { caption: msgCaption });
-                  } else {
-                      await bot.telegram.sendMessage(targetChatId, msgCaption);
-                  }
-              }
-          }
-      } catch (err) { console.error(`Fehler bei ${row.symbol}:`, err); }
-  }
+                const res = await analyzeAsset(row.symbol);
+                
+                if (res.signal === "YES") {
+                    if (res.isHotSetup || (res.isBreakoutSetup && row.source === 'SCREEN')) {
+                        const msgCaption = res.isHotSetup ? `🎯 **HIT: ${row.symbol}**\n${res.killZoneStatus}` : `🚀 **HIT: ${row.symbol}**\n${res.breakoutStatus}`;
+                        
+                        db.prepare("INSERT OR REPLACE INTO alerts (symbol, last_alert_timestamp) VALUES (?, ?)").run(row.symbol, now);
+                        
+                        if (res.buffer) {
+                            await bot.telegram.sendPhoto(targetChatId, { source: res.buffer }, { caption: msgCaption });
+                        } else {
+                            await bot.telegram.sendMessage(targetChatId, msgCaption);
+                        }
+                    }
+                }
+            } catch (err) { 
+                console.error(`Fehler bei ${row.symbol}:`, err); 
+            }
+        }
+    } catch (error) {
+        console.error("Kritischer Datenbank-Fehler im Radar-Scan:", error);
+    }
 }
 
 // ==========================================
-// 🤖 BOT COMMANDS (Das hat komplett gefehlt!)
+// 🤖 BOT COMMANDS
 // ==========================================
-
 bot.command('start', (ctx) => {
-    updateChatId(ctx.chat.id);
-    ctx.reply("✅ Bot ist aktiv und diese Chat-ID wurde für Alerts gespeichert!");
-});
-
-// Reagiert auf deinen Befehl im Screenshot: /watchlist
-bot.command('watchlist', (ctx) => {
-    const rows = db.prepare("SELECT symbol FROM watchlist").all();
-    if (rows.length === 0) {
-        return ctx.reply("Deine Watchlist ist aktuell leer.");
+    try {
+        updateChatId(ctx.chat.id);
+        ctx.reply("✅ Bot ist aktiv und diese Chat-ID wurde für Alerts gespeichert!");
+    } catch (error) {
+        console.error("Datenbankfehler bei /start:", error);
+        ctx.reply("❌ Fehler beim Speichern der Chat-ID. Bitte Logs prüfen.");
     }
-    const symbols = rows.map(r => r.symbol).join(', ');
-    ctx.reply(`📋 **Aktuelle Watchlist:**\n${symbols}`);
 });
 
-// Reagiert auf deinen Befehl im Screenshot: /analyse btc-usd
+bot.command('watchlist', (ctx) => {
+    try {
+        const rows = db.prepare("SELECT symbol FROM watchlist").all();
+        if (rows.length === 0) {
+            return ctx.reply("Deine Watchlist ist aktuell leer.");
+        }
+        const symbols = rows.map(r => r.symbol).join(', ');
+        ctx.reply(`📋 **Aktuelle Watchlist:**\n${symbols}`);
+    } catch (error) {
+        console.error("Datenbankfehler bei /watchlist:", error);
+        ctx.reply("❌ Fehler beim Abrufen der Watchlist.");
+    }
+});
+
 bot.command('analyse', async (ctx) => {
-    // Schneidet den Text nach "/analyse " aus (z.B. "btc-usd")
     const args = ctx.message.text.split(' ');
     const symbol = args[1]?.toUpperCase();
 
@@ -82,27 +129,23 @@ bot.command('analyse', async (ctx) => {
     ctx.reply(`⏳ Starte Analyse für ${symbol}... Bitte warten.`);
     
     try {
-        // Hier rufst du deine Engine auf
         const res = await analyzeAsset(symbol);
         
-        // Simples Feedback an dich
+        // Prüfen, ob die Engine ein Bild zurückgegeben hat
         if (res.buffer) {
             await ctx.replyWithPhoto({ source: res.buffer }, { caption: `Analyse für ${symbol} abgeschlossen.` });
         } else {
             await ctx.reply(`Analyse für ${symbol} abgeschlossen. (Kein Chart generiert)`);
         }
     } catch (error) {
-        console.error(error);
+        console.error("Fehler im /analyse Befehl:", error);
         ctx.reply(`❌ Fehler bei der Analyse von ${symbol}. Check die Render Logs.`);
     }
 });
 
-
 // ==========================================
-// ⏰ CRON-JOB (Damit runRadarScan auch mal startet)
+// ⏰ CRON-JOB
 // ==========================================
-
-// Läuft aktuell als Beispiel alle 60 Minuten. (Format: Minute Stunde Tag Monat Wochentag)
 cron.schedule('0 * * * *', async () => {
     console.log("⏰ Starte automatischen Radar-Scan...");
     const chatId = getActiveChatId();
@@ -113,18 +156,27 @@ cron.schedule('0 * * * *', async () => {
     }
 });
 
-
 // ==========================================
 // 🌐 SERVER & START & CRASH-SCHUTZ
 // ==========================================
-
 const server = http.createServer((req, res) => res.end("Bot active"));
 server.listen(PORT, () => console.log(`Server läuft auf Port ${PORT}`));
 
 bot.launch().then(() => {
     console.log("✅ Telegram Polling erfolgreich gestartet.");
+}).catch((err) => {
+    console.error("❌ Fehler beim Bot-Launch:", err);
 });
 
-// Verhindert den "409 Conflict" Absturz beim nächsten Render-Deploy
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+// Verhindert den 409 Conflict bei Render Deployments
+process.once('SIGINT', () => {
+    console.log("🛑 SIGINT empfangen. Bot wird beendet.");
+    bot.stop('SIGINT');
+    process.exit(0);
+});
+
+process.once('SIGTERM', () => {
+    console.log("🛑 SIGTERM empfangen. Bot wird beendet.");
+    bot.stop('SIGTERM');
+    process.exit(0);
+});
