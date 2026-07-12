@@ -20,7 +20,7 @@ const PORT = Number(process.env.PORT) || 10000;
 const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const COOLDOWN_MS = 7 * 24 * 3600 * 1000; // 7 Tage pro Symbol
 
-console.log("🚀 EW Quant Hunter V112.2: Fib-Cluster Engine (Doktrin + Log-Konvention) startet...");
+console.log("🚀 EW Quant Hunter V112.3: Fib-Cluster Engine (Impuls-Pflicht) startet...");
 
 function getActiveChatId(): number | null {
   const row = db.prepare("SELECT value FROM config WHERE key = 'chat_id'").get() as
