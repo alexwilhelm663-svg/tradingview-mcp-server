@@ -20,7 +20,7 @@ const PORT = Number(process.env.PORT) || 10000;
 const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const COOLDOWN_MS = 7 * 24 * 3600 * 1000; // 7 Tage pro Symbol
 
-console.log("🚀 EW Quant Hunter V112: Fib-Cluster Engine startet...");
+console.log("🚀 EW Quant Hunter V112.1: Fib-Cluster Engine startet...");
 
 function getActiveChatId(): number | null {
   const row = db.prepare("SELECT value FROM config WHERE key = 'chat_id'").get() as
@@ -64,6 +64,8 @@ async function runRadarScan(targetChatId: number): Promise<void> {
     } catch (err: any) {
       console.error(`[SCAN] Fehler bei ${symbol}:`, err?.message ?? err);
     }
+    // Free-Tier-RPM schonen (Gemini-Quota gilt pro Minute UND pro Tag)
+    await new Promise((r) => setTimeout(r, 5000));
   }
 }
 

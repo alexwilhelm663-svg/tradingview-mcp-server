@@ -46,7 +46,7 @@ export const RadarState = Annotation.Root({
   systemContext: Annotation<string>(),
   waveCount: Annotation<WaveCount | null>(),
   isValid: Annotation<boolean>(),
-  errorLogs: Annotation<string[]>({ reducer: (c, n) => c.concat(n), default: () => [] }),
+  errorLogs: Annotation<string[]>({ reducer: (_c, n) => n, default: () => [] }),
   attempts: Annotation<number>({ reducer: (c, n) => c + n, default: () => 0 }),
 });
 
@@ -55,6 +55,26 @@ function pt(wc: WaveCount, label: string): WavePoint | undefined {
 }
 
 // Toleranzen fuer die Pivot-Konformitaet der LLM-Punkte
+/** Wartet bei Rate-Limits (429) die von der API genannte Zeit ab und versucht es erneut. */
+async function invokeWithBackoff<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      const rateLimited = msg.includes("429") || msg.includes("Too Many Requests");
+      if (i < maxRetries && rateLimited) {
+        const m = msg.match(/retry in ([0-9.]+)s/i);
+        const waitMs = m ? Math.ceil(parseFloat(m[1]) * 1000) + 1000 : 30_000;
+        console.warn(`[LLM] Rate-Limit – warte ${Math.round(waitMs / 1000)}s (Retry ${i + 1}/${maxRetries})...`);
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 const PIVOT_PRICE_TOL = 0.06; // 6% Preisabweichung
 const PIVOT_DAYS_TOL = 45; // 45 Tage Datumsabweichung
 
@@ -73,7 +93,7 @@ function nearestPivotError(point: WavePoint, pivots: Pivot[]): string | null {
 
 async function analyzeNode(state: typeof RadarState.State) {
   const llm = new ChatGoogleGenerativeAI({
-    model: process.env.GEMINI_MODEL ?? "gemini-1.5-pro",
+    model: process.env.GEMINI_MODEL ?? "gemini-2.5-flash",
     apiKey: process.env.GEMINI_API_KEY,
     temperature: 0,
   }).withStructuredOutput(WaveCountSchema);
@@ -82,29 +102,44 @@ async function analyzeNode(state: typeof RadarState.State) {
     .map((p) => `${p.kind} ${p.date} @ ${p.price.toFixed(2)}`)
     .join("\n");
 
+  // Kompakter Kurskontext statt 260 Rohkerzen: Pivots tragen die Struktur,
+  // die letzten 12 Wochen liefern den aktuellen Stand. (~90% weniger Input-Tokens)
+  const candles: any[] = Array.isArray(state.marketData) ? state.marketData : [];
+  const recent = candles
+    .slice(-12)
+    .map((c: any) => `${c.date} H ${Number(c.high).toFixed(2)} L ${Number(c.low).toFixed(2)} C ${Number(c.close).toFixed(2)}`)
+    .join("\n");
+  const lastClose = candles.length > 0 ? Number(candles[candles.length - 1].close).toFixed(2) : "n/a";
+
   const systemPrompt = `Du bist ein erfahrener Elliott-Wave-Analyst.
 REGELWERK (OKF-BASIS):
 ${getOKFContext()}
 
 PERFORMANCE-KONTEXT: ${state.systemContext}
 
-DETERMINISTISCHE ZIGZAG-PIVOTS (Anker-Pflicht):
+ZIGZAG-PIVOTS (die EINZIGEN erlaubten Wellenpunkte):
 ${pivotList || "keine"}
 
-Liefere eine chronologische Wellenzaehlung als Punkte-Array.
-Jeder Punkt braucht label, date (exakt aus den Kursdaten) und price.
-WICHTIG: Jeder Wellenpunkt MUSS an einem der obigen Pivots verankert sein
-(gleiches Datum/Preisniveau). Erfinde keine Zwischenextreme.`;
+AUSGABEVERTRAG (hart):
+1. Jeder Punkt in "points" MUSS exakt ein (date, price)-Paar aus der Pivot-Liste sein. Keine anderen Punkte.
+2. "points" streng chronologisch aufsteigend nach Datum, beginnend mit Welle 0.
+3. Impulse (bullish): Hochs (H) fuer 1/3/5, Tiefs (L) fuer 0/2/4.
+4. Pruefe VOR der Antwort: W2 > W0? W3 > Ende W1? W4 > Ende W1 (kein Overlap)? Daten aufsteigend?`;
 
-  const feedback =
-    state.errorLogs.length > 0
-      ? `\n\nDeine letzte Zaehlung wurde abgelehnt. Korrigiere folgende Verstoesse:\n- ${state.errorLogs.join("\n- ")}`
+  const rejected =
+    state.errorLogs.length > 0 && state.waveCount
+      ? `\n\nDeine letzte Zaehlung wurde ABGELEHNT:\n${JSON.stringify(state.waveCount.points)}\nVerstoesse:\n- ${state.errorLogs.join("\n- ")}\nKorrigiere GENAU diese Punkte und pruefe den Ausgabevertrag erneut.`
       : "";
 
-  const response = await llm.invoke([
-    ["system", systemPrompt],
-    ["human", `Analysiere ${state.symbol}. Kursdaten (Weekly): ${JSON.stringify(state.marketData)}${feedback}`],
-  ]);
+  const response = await invokeWithBackoff(() =>
+    llm.invoke([
+      ["system", systemPrompt],
+      [
+        "human",
+        `Analysiere ${state.symbol}. Aktueller Kurs: ${lastClose}. Letzte 12 Wochenkerzen:\n${recent}${rejected}`,
+      ],
+    ])
+  );
 
   return { waveCount: response as WaveCount, attempts: 1 };
 }
@@ -149,7 +184,7 @@ async function validateNode(state: typeof RadarState.State) {
     if (err) errors.push(err);
   }
 
-  return errors.length > 0 ? { isValid: false, errorLogs: errors } : { isValid: true };
+  return errors.length > 0 ? { isValid: false, errorLogs: errors } : { isValid: true, errorLogs: [] };
 }
 
 const builder = new StateGraph(RadarState)
