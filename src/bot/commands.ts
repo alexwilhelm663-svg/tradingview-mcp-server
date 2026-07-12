@@ -3,6 +3,11 @@ import { analyzeAsset } from "../core/engine";
 import { addToWatchlist, removeFromWatchlist, viewWatchlist } from "../core/watchlist";
 import db from "../core/db";
 
+// In-Flight-Sperren: verhindern parallele Laeufe desselben Auftrags
+// (z.B. durch doppelt zugestellte Updates oder ungeduldige Nutzer).
+const analysesInFlight = new Set<string>();
+let scanInFlight = false;
+
 /**
  * Registriert alle Bot-Commands am uebergebenen Telegraf-Objekt.
  * runScan wird vom Composition Root (index.ts) injiziert, damit /scan
@@ -48,9 +53,17 @@ export function registerCommands(
   });
 
   bot.command("scan", async (ctx) => {
-    await ctx.reply("⚙️ Starte manuellen Radar-Scan...");
-    await runScan(ctx.chat.id);
-    await ctx.reply("✅ Radar-Scan abgeschlossen!");
+    if (scanInFlight) {
+      return ctx.reply("⏳ Ein Radar-Scan läuft bereits – bitte warten.");
+    }
+    scanInFlight = true;
+    try {
+      await ctx.reply("⚙️ Starte manuellen Radar-Scan...");
+      await runScan(ctx.chat.id);
+      await ctx.reply("✅ Radar-Scan abgeschlossen!");
+    } finally {
+      scanInFlight = false;
+    }
   });
 
   bot.command("analyse", async (ctx) => {
@@ -59,6 +72,16 @@ export function registerCommands(
       return ctx.reply("⚠️ Bitte Symbol angeben: `/analyse NVDA`", { parse_mode: "Markdown" });
     }
     const symbol = arg.trim().toUpperCase();
+
+    const key = `${ctx.chat.id}:${symbol}`;
+    if (analysesInFlight.has(key)) {
+      return ctx.reply(
+        `⏳ Analyse für **${symbol}** läuft bereits – das Ergebnis kommt gleich.`,
+        { parse_mode: "Markdown" }
+      );
+    }
+    analysesInFlight.add(key);
+
     const status = await ctx.reply(`🔄 Analysiere **${symbol}** nach Elliott-Wellen...`, {
       parse_mode: "Markdown",
     });
@@ -89,6 +112,7 @@ export function registerCommands(
         parse_mode: "Markdown",
       });
     } finally {
+      analysesInFlight.delete(key);
       ctx.deleteMessage(status.message_id).catch(() => {});
     }
   });
