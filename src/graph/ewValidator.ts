@@ -79,6 +79,45 @@ const PIVOT_PRICE_TOL = 0.06; // 6% Preisabweichung
 const PIVOT_DAYS_TOL = 45; // 45 Tage Datumsabweichung
 
 /**
+ * Struktur-Vertrag (V112.3), gilt IMMER - schliesst die Reward-Hacking-Luecke,
+ * dass rein korrektive Zaehlungen (W-X-Y / A-B-C ohne Impuls) alle Pruefungen
+ * passieren: die vollstaendige Impulszaehlung 0-5 ist Pflicht, Korrektur-Labels
+ * sind nur als Anhang NACH Welle 5 erlaubt. Zusaetzlich muss das trend-Feld
+ * zur Impulsrichtung (W5 vs. W0) passen.
+ */
+export function structuralErrors(wc: WaveCount): string[] {
+  const errs: string[] = [];
+  const required = ["0", "1", "2", "3", "4", "5"];
+  const missing = required.filter((l) => !wc.points.some((x) => x.label === l));
+  if (missing.length > 0) {
+    errs.push(
+      `Unvollstaendig: Die Antwort MUSS die komplette Impulszaehlung ${required.join(",")} enthalten - es fehlen: ${missing.join(",")}. Korrektur-Labels (A/B/C bzw. W/X/Y) sind nur ZUSAETZLICH nach Welle 5 erlaubt, niemals als Ersatz.`
+    );
+    return errs;
+  }
+  const w0 = wc.points.find((x) => x.label === "0");
+  const w5 = wc.points.find((x) => x.label === "5");
+  if (w0 && w5) {
+    const impliedBullish = w5.price > w0.price;
+    if ((wc.trend === "bullish") !== impliedBullish) {
+      errs.push(
+        `Trend-Widerspruch: trend="${wc.trend}", aber der Impuls laeuft von ${w0.price} nach ${w5.price}. Setze trend passend zur Impulsrichtung.`
+      );
+    }
+    const idx5 = wc.points.findIndex((x) => x.label === "5");
+    const badTail = wc.points
+      .slice(0, idx5)
+      .filter((x) => ["A", "B", "C", "W", "X", "Y"].includes(x.label));
+    if (badTail.length > 0) {
+      errs.push(
+        `Struktur-Verstoss: Korrektur-Labels (${badTail.map((x) => x.label).join(",")}) stehen vor Welle 5. Die Korrektur folgt NACH dem Impuls.`
+      );
+    }
+  }
+  return errs;
+}
+
+/**
  * Saekulare Doktrin (V112.2), nur in der strikten Phase (Versuch 1-2):
  *  - Welle 0 am globalen Extrem der Pivot-Liste verankern
  *  - keine Trunkierung (W5 muss das W3-Extrem ueberschreiten)
@@ -155,11 +194,12 @@ ${pivotList || "keine"}
 
 AUSGABEVERTRAG (hart):
 1. Jeder Punkt in "points" MUSS exakt ein (date, price)-Paar aus der Pivot-Liste sein. Keine anderen Punkte.
-2. "points" streng chronologisch aufsteigend nach Datum, beginnend mit Welle 0.
+2. "points" enthaelt IMMER die VOLLSTAENDIGE Impulszaehlung 0,1,2,3,4,5 des Makro-Zyklus - eine Antwort ohne alle sechs Impuls-Labels wird abgelehnt. Die laufende Korrektur (A,B,C bzw. W,X,Y) darf NUR ZUSAETZLICH nach Welle 5 folgen. Streng chronologisch aufsteigend.
 3. Impulse (bullish): Hochs (H) fuer 1/3/5, Tiefs (L) fuer 0/2/4.
 4. Pruefe VOR der Antwort: W2 > W0? W3 > Ende W1? W4 > Ende W1 (kein Overlap)? Daten aufsteigend?
 5. SAEKULARE DOKTRIN: Welle 0 = tiefstes L-Pivot der GESAMTEN Liste (bullish) bzw. hoechstes H-Pivot (bearish).
-6. KEINE TRUNKIERUNG: Welle 5 muss das Welle-3-Extrem ueberschreiten. Endet der Markt darunter, war das W3-Extrem die Welle 5 eines frueher endenden Impulses - zaehle entsprechend.`;
+6. KEINE TRUNKIERUNG: Welle 5 muss das Welle-3-Extrem ueberschreiten. Endet der Markt darunter, war das W3-Extrem die Welle 5 eines frueher endenden Impulses - zaehle entsprechend.
+7. "trend" beschreibt die Richtung des Impulses 0->5 (bullish wenn W5 > W0, sonst bearish) - NICHT die Richtung der laufenden Korrektur.`;
 
   const rejected =
     state.errorLogs.length > 0 && state.waveCount
@@ -185,6 +225,12 @@ async function validateNode(state: typeof RadarState.State) {
 
   if (!wc || wc.points.length < 3) {
     return { isValid: false, errorLogs: ["Keine oder zu wenige Wellenpunkte geliefert."] };
+  }
+
+  // NEU (V112.3): Struktur-Vertrag - Impulszaehlung 0-5 ist Pflicht (immer)
+  const structErrs = structuralErrors(wc);
+  if (structErrs.length > 0) {
+    return { isValid: false, errorLogs: structErrs };
   }
 
   // Gesetz 1: keine Zeitspruenge
