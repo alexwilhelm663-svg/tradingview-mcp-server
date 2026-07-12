@@ -15,12 +15,11 @@ if (!token) throw new Error("TELEGRAM_BOT_TOKEN ist nicht gesetzt!");
 
 const bot = new Telegraf(token, { handlerTimeout: 9_000_000 });
 const PORT = Number(process.env.PORT) || 10000;
-// Wird von Render automatisch gesetzt (z.B. https://xyz.onrender.com).
-// Vorhanden -> Webhook-Modus. Fehlt (lokal) -> Polling-Fallback.
+// Wird von Render automatisch gesetzt. Vorhanden -> Webhook, sonst Polling (lokal).
 const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const COOLDOWN_MS = 7 * 24 * 3600 * 1000; // 7 Tage pro Symbol
 
-console.log("🚀 EW Quant Hunter V111.1: Composition Root startet...");
+console.log("🚀 EW Quant Hunter V111.2: Composition Root startet...");
 
 function getActiveChatId(): number | null {
   const row = db.prepare("SELECT value FROM config WHERE key = 'chat_id'").get() as
@@ -69,8 +68,7 @@ async function runRadarScan(targetChatId: number): Promise<void> {
 
 registerCommands(bot, runRadarScan);
 
-// Stuendlicher Zyklus: erst Outcomes aufloesen, dann scannen, dann Statistik erneuern.
-// Hinweis Free-Tier: laeuft nur, wenn die Instanz zur vollen Stunde wach ist.
+// Stuendlicher Zyklus: Outcomes aufloesen -> scannen -> Statistik erneuern.
 cron.schedule("0 * * * *", async () => {
   console.log("⏰ Automatischer Zyklus startet...");
   try {
@@ -87,33 +85,78 @@ cron.schedule("0 * * * *", async () => {
   }
 });
 
+// ── Update-Deduplizierung ────────────────────────────────────────────
+// Telegram liefert Updates erneut, wenn kein rechtzeitiges 200 kommt
+// (z.B. waehrend Deploys/Cold-Starts). update_ids sind monoton steigend;
+// ein kleines Sliding-Window-Set reicht als Duplikat-Filter.
+const seenUpdates = new Set<number>();
+const SEEN_LIMIT = 1000;
+
+function isNewUpdate(id: number): boolean {
+  if (seenUpdates.has(id)) return false;
+  seenUpdates.add(id);
+  if (seenUpdates.size > SEEN_LIMIT) {
+    const oldest = seenUpdates.values().next().value;
+    if (oldest !== undefined) seenUpdates.delete(oldest);
+  }
+  return true;
+}
+
 let server: http.Server;
 
 async function start(): Promise<void> {
   if (EXTERNAL_URL) {
-    // ── Webhook-Modus ────────────────────────────────────────────────
-    // Telegram pusht Updates als eingehende POSTs -> zaehlt bei Render
-    // als Traffic (weckt Free-Instanzen) und macht getUpdates-409s
-    // bei Deploy-Overlaps unmoeglich.
+    // ── Webhook-Modus mit Sofort-ACK ─────────────────────────────────
+    // KRITISCH: Telegram erwartet binnen Sekunden ein 200. Handler wie
+    // /analyse laufen aber minutenlang. Deshalb: Update entgegennehmen,
+    // SOFORT bestaetigen, dann asynchron verarbeiten. Sonst liefert
+    // Telegram dasselbe Update endlos neu (Analyse-Schleife!).
     const secretPath =
       "/telegraf/" +
       crypto.createHash("sha256").update(token!).digest("hex").slice(0, 32);
 
-    const handler = await bot.createWebhook({
-      domain: EXTERNAL_URL,
-      path: secretPath,
-    });
+    // botInfo explizit setzen, da wir handleUpdate() direkt aufrufen
+    // (normalerweise erledigt das bot.launch()).
+    bot.botInfo = await bot.telegram.getMe();
+    await bot.telegram.setWebhook(`${EXTERNAL_URL}${secretPath}`);
 
     server = http.createServer((req, res) => {
       if (req.method === "POST" && req.url === secretPath) {
-        return (handler as unknown as http.RequestListener)(req, res);
+        let body = "";
+        req.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        req.on("end", () => {
+          // 1. Sofort quittieren -> keine Telegram-Retries
+          res.statusCode = 200;
+          res.end();
+
+          // 2. Danach asynchron verarbeiten
+          let update: any;
+          try {
+            update = JSON.parse(body);
+          } catch {
+            console.error("[WEBHOOK] Ungueltiger Request-Body verworfen.");
+            return;
+          }
+          if (typeof update?.update_id === "number" && !isNewUpdate(update.update_id)) {
+            console.log(`[WEBHOOK] Duplikat verworfen: update_id ${update.update_id}`);
+            return;
+          }
+          bot
+            .handleUpdate(update)
+            .catch((err: any) =>
+              console.error("[WEBHOOK] Update-Fehler:", err?.message ?? err)
+            );
+        });
+        return;
       }
-      // Alles andere (UptimeRobot-Pings, Render-Port-Scan, Browser) -> Health
+      // Alles andere (Pings, Port-Scan, Browser) -> Health-Antwort
       res.end("Bot active");
     });
 
     server.listen(PORT, () =>
-      console.log(`🌐 Webhook-Modus aktiv auf Port ${PORT} (${EXTERNAL_URL})`)
+      console.log(`🌐 Webhook-Modus (Sofort-ACK) aktiv auf Port ${PORT} (${EXTERNAL_URL})`)
     );
   } else {
     // ── Polling-Fallback (lokale Entwicklung) ────────────────────────
@@ -130,14 +173,14 @@ start().catch((err: any) => {
   process.exit(1);
 });
 
-// Graceful Shutdown. Der Webhook bleibt bei Telegram registriert,
-// damit Updates waehrend Deploy/Spin-down gepuffert werden.
+// Graceful Shutdown. Der Webhook bleibt registriert, damit Telegram
+// Updates waehrend Deploy/Spin-down puffert und nachliefert.
 function shutdown(signal: string): void {
   console.log(`${signal} empfangen, fahre herunter...`);
   try {
     bot.stop(signal);
   } catch {
-    /* im Webhook-Modus ggf. nicht gestartet */
+    /* im Webhook-Modus nicht gestartet */
   }
   if (server) server.close();
   process.exit(0);
