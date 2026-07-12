@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { Telegraf } from "telegraf";
 import http from "http";
+import crypto from "crypto";
 import cron from "node-cron";
 import db from "./core/db";
 import { analyzeAsset } from "./core/engine";
@@ -14,9 +15,12 @@ if (!token) throw new Error("TELEGRAM_BOT_TOKEN ist nicht gesetzt!");
 
 const bot = new Telegraf(token, { handlerTimeout: 9_000_000 });
 const PORT = Number(process.env.PORT) || 10000;
+// Wird von Render automatisch gesetzt (z.B. https://xyz.onrender.com).
+// Vorhanden -> Webhook-Modus. Fehlt (lokal) -> Polling-Fallback.
+const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const COOLDOWN_MS = 7 * 24 * 3600 * 1000; // 7 Tage pro Symbol
 
-console.log("🚀 EW Quant Hunter V111: konsolidierter Composition Root startet...");
+console.log("🚀 EW Quant Hunter V111.1: Composition Root startet...");
 
 function getActiveChatId(): number | null {
   const row = db.prepare("SELECT value FROM config WHERE key = 'chat_id'").get() as
@@ -66,7 +70,7 @@ async function runRadarScan(targetChatId: number): Promise<void> {
 registerCommands(bot, runRadarScan);
 
 // Stuendlicher Zyklus: erst Outcomes aufloesen, dann scannen, dann Statistik erneuern.
-// Reihenfolge ist wichtig: so lernt der naechste Scan aus frisch geschlossenen Trades.
+// Hinweis Free-Tier: laeuft nur, wenn die Instanz zur vollen Stunde wach ist.
 cron.schedule("0 * * * *", async () => {
   console.log("⏰ Automatischer Zyklus startet...");
   try {
@@ -83,20 +87,60 @@ cron.schedule("0 * * * *", async () => {
   }
 });
 
-// Dummy-HTTP-Server: Render braucht einen offenen Port
-const server = http.createServer((_req, res) => res.end("Bot active"));
-server.listen(PORT, () => console.log(`🌐 Health-Server auf Port ${PORT}`));
+let server: http.Server;
 
-bot.launch().then(() => console.log("✅ Telegram Polling gestartet."));
+async function start(): Promise<void> {
+  if (EXTERNAL_URL) {
+    // ── Webhook-Modus ────────────────────────────────────────────────
+    // Telegram pusht Updates als eingehende POSTs -> zaehlt bei Render
+    // als Traffic (weckt Free-Instanzen) und macht getUpdates-409s
+    // bei Deploy-Overlaps unmoeglich.
+    const secretPath =
+      "/telegraf/" +
+      crypto.createHash("sha256").update(token!).digest("hex").slice(0, 32);
 
-// Graceful Shutdown gegen 409-Konflikte bei Redeploys
-process.once("SIGINT", () => {
-  bot.stop("SIGINT");
-  server.close();
-  process.exit(0);
+    const handler = await bot.createWebhook({
+      domain: EXTERNAL_URL,
+      path: secretPath,
+    });
+
+    server = http.createServer((req, res) => {
+      if (req.method === "POST" && req.url === secretPath) {
+        return (handler as unknown as http.RequestListener)(req, res);
+      }
+      // Alles andere (UptimeRobot-Pings, Render-Port-Scan, Browser) -> Health
+      res.end("Bot active");
+    });
+
+    server.listen(PORT, () =>
+      console.log(`🌐 Webhook-Modus aktiv auf Port ${PORT} (${EXTERNAL_URL})`)
+    );
+  } else {
+    // ── Polling-Fallback (lokale Entwicklung) ────────────────────────
+    server = http.createServer((_req, res) => res.end("Bot active"));
+    server.listen(PORT, () => console.log(`🌐 Health-Server auf Port ${PORT}`));
+
+    await bot.telegram.deleteWebhook({ drop_pending_updates: false });
+    bot.launch().then(() => console.log("✅ Telegram Polling gestartet (lokaler Modus)."));
+  }
+}
+
+start().catch((err: any) => {
+  console.error("❌ Start-Fehler:", err?.message ?? err);
+  process.exit(1);
 });
-process.once("SIGTERM", () => {
-  bot.stop("SIGTERM");
-  server.close();
+
+// Graceful Shutdown. Der Webhook bleibt bei Telegram registriert,
+// damit Updates waehrend Deploy/Spin-down gepuffert werden.
+function shutdown(signal: string): void {
+  console.log(`${signal} empfangen, fahre herunter...`);
+  try {
+    bot.stop(signal);
+  } catch {
+    /* im Webhook-Modus ggf. nicht gestartet */
+  }
+  if (server) server.close();
   process.exit(0);
-});
+}
+process.once("SIGINT", () => shutdown("SIGINT"));
+process.once("SIGTERM", () => shutdown("SIGTERM"));
