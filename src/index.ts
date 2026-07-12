@@ -7,6 +7,7 @@ import db from "./core/db";
 import { analyzeAsset } from "./core/engine";
 import { getWatchlist } from "./core/watchlist";
 import { resolveOpenTrades } from "./core/outcome";
+import { resolvePendingSetups } from "./core/setups";
 import { updateStatistics } from "./core/stats";
 import { registerCommands } from "./bot/commands";
 
@@ -19,7 +20,7 @@ const PORT = Number(process.env.PORT) || 10000;
 const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const COOLDOWN_MS = 7 * 24 * 3600 * 1000; // 7 Tage pro Symbol
 
-console.log("🚀 EW Quant Hunter V111.2: Composition Root startet...");
+console.log("🚀 EW Quant Hunter V112: Fib-Cluster Engine startet...");
 
 function getActiveChatId(): number | null {
   const row = db.prepare("SELECT value FROM config WHERE key = 'chat_id'").get() as
@@ -45,7 +46,7 @@ async function runRadarScan(targetChatId: number): Promise<void> {
 
       const caption = res.isBreakoutSetup
         ? `🚀 **HIT: ${symbol}**\n${res.breakoutStatus}`
-        : `🎯 **HIT: ${symbol}**\n${res.killZoneStatus}`;
+        : `🟡 **NEUES SETUP: ${symbol}**\n${res.clusterInfo}`;
 
       db.prepare(
         "INSERT OR REPLACE INTO alerts (symbol, last_alert_timestamp) VALUES (?, ?)"
@@ -74,7 +75,11 @@ cron.schedule("0 * * * *", async () => {
   try {
     await resolveOpenTrades();
     const chatId = getActiveChatId();
+    const setupEvents = await resolvePendingSetups();
     if (chatId) {
+      for (const ev of setupEvents) {
+        await bot.telegram.sendMessage(chatId, ev.text, { parse_mode: "Markdown" }).catch(() => {});
+      }
       await runRadarScan(chatId);
     } else {
       console.log("⚠️ Kein Scan: Chat-ID fehlt (einmal /start an den Bot senden).");

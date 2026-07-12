@@ -4,12 +4,11 @@ import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import path from "path";
 import fs from "fs";
+import type { Pivot } from "../core/zigzag";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-// Fix: Original nutzte `new SqliteSaver({ dbPath })` - das ist nicht die API
-// und liefert einen funktionslosen Saver. Korrekt ist fromConnString().
 const memory = SqliteSaver.fromConnString(path.join(DATA_DIR, "radar_state.db"));
 
 function getOKFContext(): string {
@@ -43,6 +42,7 @@ export type WaveCount = z.infer<typeof WaveCountSchema>;
 export const RadarState = Annotation.Root({
   symbol: Annotation<string>(),
   marketData: Annotation<any>(),
+  pivots: Annotation<Pivot[]>({ reducer: (_c, n) => n, default: () => [] }),
   systemContext: Annotation<string>(),
   waveCount: Annotation<WaveCount | null>(),
   isValid: Annotation<boolean>(),
@@ -54,13 +54,33 @@ function pt(wc: WaveCount, label: string): WavePoint | undefined {
   return wc.points.find((p) => p.label === label);
 }
 
+// Toleranzen fuer die Pivot-Konformitaet der LLM-Punkte
+const PIVOT_PRICE_TOL = 0.06; // 6% Preisabweichung
+const PIVOT_DAYS_TOL = 45; // 45 Tage Datumsabweichung
+
+function nearestPivotError(point: WavePoint, pivots: Pivot[]): string | null {
+  if (pivots.length === 0) return null;
+  const pDate = new Date(point.date).getTime();
+  const ok = pivots.some((piv) => {
+    const priceDiff = Math.abs(piv.price - point.price) / piv.price;
+    const daysDiff = Math.abs(new Date(piv.date).getTime() - pDate) / 86_400_000;
+    return priceDiff <= PIVOT_PRICE_TOL && daysDiff <= PIVOT_DAYS_TOL;
+  });
+  return ok
+    ? null
+    : `Punkt "${point.label}" (${point.date}, ${point.price}) liegt an keinem markanten ZigZag-Pivot – verankere ihn an einem der vorgegebenen Pivots.`;
+}
+
 async function analyzeNode(state: typeof RadarState.State) {
   const llm = new ChatGoogleGenerativeAI({
-    // Per Env umstellbar (z.B. auf gemini-2.0-flash), Default wie bisher
     model: process.env.GEMINI_MODEL ?? "gemini-1.5-pro",
     apiKey: process.env.GEMINI_API_KEY,
     temperature: 0,
   }).withStructuredOutput(WaveCountSchema);
+
+  const pivotList = state.pivots
+    .map((p) => `${p.kind} ${p.date} @ ${p.price.toFixed(2)}`)
+    .join("\n");
 
   const systemPrompt = `Du bist ein erfahrener Elliott-Wave-Analyst.
 REGELWERK (OKF-BASIS):
@@ -68,10 +88,14 @@ ${getOKFContext()}
 
 PERFORMANCE-KONTEXT: ${state.systemContext}
 
-Liefere eine chronologische Wellenzaehlung als Punkte-Array.
-Jeder Punkt braucht label, date (exakt aus den Kursdaten) und price.`;
+DETERMINISTISCHE ZIGZAG-PIVOTS (Anker-Pflicht):
+${pivotList || "keine"}
 
-  // Retry-Feedback: dem Modell sagen, WARUM die letzte Zaehlung abgelehnt wurde
+Liefere eine chronologische Wellenzaehlung als Punkte-Array.
+Jeder Punkt braucht label, date (exakt aus den Kursdaten) und price.
+WICHTIG: Jeder Wellenpunkt MUSS an einem der obigen Pivots verankert sein
+(gleiches Datum/Preisniveau). Erfinde keine Zwischenextreme.`;
+
   const feedback =
     state.errorLogs.length > 0
       ? `\n\nDeine letzte Zaehlung wurde abgelehnt. Korrigiere folgende Verstoesse:\n- ${state.errorLogs.join("\n- ")}`
@@ -103,7 +127,7 @@ async function validateNode(state: typeof RadarState.State) {
     }
   }
 
-  // Impuls-Geometrie (richtungsneutral ueber dir)
+  // Impuls-Geometrie (richtungsneutral)
   const dir = wc.trend === "bullish" ? 1 : -1;
   const w0 = pt(wc, "0");
   const w1 = pt(wc, "1");
@@ -117,6 +141,13 @@ async function validateNode(state: typeof RadarState.State) {
     errors.push("Regel-Verstoss: Welle 3 ueberschreitet das Ende von Welle 1 nicht.");
   if (w1 && w4 && dir * (w4.price - w1.price) <= 0)
     errors.push("Regel-Verstoss: Welle 4 ueberlappt das Preisgebiet von Welle 1.");
+
+  // NEU (V112): Pivot-Konformitaet – jeder Punkt muss an einem echten Swing liegen.
+  // Verhindert falsch verankerte A/B-Beine und unmoegliche C-Projektionen.
+  for (const point of wc.points) {
+    const err = nearestPivotError(point, state.pivots);
+    if (err) errors.push(err);
+  }
 
   return errors.length > 0 ? { isValid: false, errorLogs: errors } : { isValid: true };
 }

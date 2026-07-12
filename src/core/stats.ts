@@ -25,7 +25,8 @@ last_updated: ${new Date().toISOString()}
 # Setup Erfolgsbilanz
 - Abgeschlossene Signale: ${total}
 - Gesamt-Trefferquote: ${winRate}%
-- HOT-Setups (Kill-Zone): ${byType("HOT")}
+- CLUSTER-Setups (Fib-Konfluenz): ${byType("CLUSTER")}
+- HOT-Setups (Alt, Kill-Zone): ${byType("HOT")}
 - BREAKOUT-Setups (Welle 3): ${byType("BREAKOUT")}
 - Status: ${Number(winRate) > 70 ? "OPTIMIERT" : "LERNPHASE"}`;
 

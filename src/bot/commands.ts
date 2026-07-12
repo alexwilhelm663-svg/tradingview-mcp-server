@@ -1,6 +1,7 @@
 import { Telegraf } from "telegraf";
 import { analyzeAsset } from "../core/engine";
 import { addToWatchlist, removeFromWatchlist, viewWatchlist } from "../core/watchlist";
+import { listSetups } from "../core/setups";
 import db from "../core/db";
 
 // In-Flight-Sperren: verhindern parallele Laeufe desselben Auftrags
@@ -27,6 +28,7 @@ export function registerCommands(
         "• `/add <SYMBOL>` – Asset hinzufügen\n" +
         "• `/remove <SYMBOL>` – Asset entfernen\n" +
         "• `/analyse <SYMBOL>` – sofortige EW-Analyse mit Chart\n" +
+        "• `/setups` – Setup-Status (PENDING/CONFIRMED)\n" +
         "• `/scan` – manueller Radar-Durchlauf\n\n" +
         "✅ Chat-ID für automatische Alerts gespeichert.",
       { parse_mode: "Markdown" }
@@ -34,6 +36,7 @@ export function registerCommands(
   });
 
   bot.command("radar", (ctx) => ctx.reply(viewWatchlist(), { parse_mode: "Markdown" }));
+  bot.command("setups", (ctx) => ctx.reply(listSetups(), { parse_mode: "Markdown" }));
   bot.command("watchlist", (ctx) => ctx.reply(viewWatchlist(), { parse_mode: "Markdown" }));
 
   bot.command("add", (ctx) => {
@@ -98,9 +101,9 @@ export function registerCommands(
       }
 
       let caption = `📊 **EW Master Analyse: ${symbol}**\nMakro-Trend: \`${r.finalTrend}\`\n\n`;
-      if (r.isHotSetup) caption += `${r.killZoneStatus}\n`;
+      if (r.clusterInfo) caption += `${r.clusterInfo}\n`;
       if (r.isBreakoutSetup) caption += `${r.breakoutStatus}\n`;
-      if (!r.isHotSetup && !r.isBreakoutSetup) caption += "⚪ Aktuell in keiner Trigger-Zone.";
+      if (!r.clusterInfo && !r.isBreakoutSetup) caption += "⚪ Aktuell in keiner Trigger-Zone.";
 
       if (r.buffer) {
         await ctx.replyWithPhoto({ source: r.buffer }, { caption, parse_mode: "Markdown" });

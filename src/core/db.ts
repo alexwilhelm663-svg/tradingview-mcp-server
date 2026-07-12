@@ -32,6 +32,20 @@ db.exec(`
     symbol TEXT PRIMARY KEY,
     last_alert_timestamp INTEGER
   );
+  CREATE TABLE IF NOT EXISTS setups (
+    symbol TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    direction TEXT DEFAULT 'LONG',
+    cluster_floor REAL,
+    cluster_ceiling REAL,
+    cluster_score INTEGER,
+    trigger_level REAL,
+    invalidation REAL,
+    c_low REAL,
+    levels TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Migration: Spalten auf Bestands-DBs nachruesten (Fehler = Spalte existiert schon)
