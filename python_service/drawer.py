@@ -8,6 +8,7 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
+
 def main():
     try:
         input_data = sys.stdin.read()
@@ -100,99 +101,121 @@ def main():
                 fontsize=10,
             )
 
-        # 2. LOGARITHMIC TARGET MATRIX (Bullen-Impuls)
-        if len(waves) == 6 and not is_correction_macro:
-            w0 = waves[0]["price"]; w4 = waves[4]["price"]; w5 = waves[5]["price"]
-            w5_date = pd.to_datetime(waves[5]["date"]); end_date = df.index[-1]
+        # 2. ENGINE-LEVEL (V112.2): Cluster-Zonen & Marker der Fib-Engine.
+        # Die Engine ist die Single Source of Truth fuer alle Level
+        # (linear + log, Konvention steht im Label). drawer.py rechnet
+        # keine eigenen Fibs mehr, wenn Cluster mitgeliefert werden.
+        clusters = payload.get("clusters")
+        markers = payload.get("markers", []) or []
+        end_date = df.index[-1]
+        last_wave_date = pd.to_datetime(waves[-1]["date"])
+        xmin = last_wave_date if last_wave_date < end_date else df.index[int(len(df) * 0.6)]
 
-            if w5_date < end_date and w5 > w0:
-                log_w0 = np.log(w0); log_w5 = np.log(w5)
-                log_diff = log_w5 - log_w0
+        # Label-Kollisionsschutz: keine zwei Beschriftungen naeher als
+        # 3% (log-Abstand) auf der y-Achse.
+        used_label_ys = []
 
-                f382 = np.exp(log_w5 - (0.382 * log_diff))
-                f500 = np.exp(log_w5 - (0.500 * log_diff))
-                f618 = np.exp(log_w5 - (0.618 * log_diff))
+        def can_label(y):
+            for uy in used_label_ys:
+                if abs(np.log(y) - np.log(uy)) < 0.03:
+                    return False
+            used_label_ys.append(y)
+            return True
 
-                ax.hlines(y=f382, xmin=w5_date, xmax=end_date, colors="#f59e0b", linestyles=":", linewidth=1.5, zorder=3)
-                ax.annotate(f"Fib 0.382 ({f382:.2f}$)", (end_date, f382), xytext=(5, 0), textcoords="offset points", color="#f59e0b", fontsize=8, va="center")
+        if clusters is not None:
+            y_lo = df["low"].min() * 0.5
+            y_hi = df["high"].max() * 1.1
+            drawn = 0
+            for cl in sorted(clusters, key=lambda c: -int(c.get("score", 1))):
+                if drawn >= 6:
+                    break
+                floor = float(cl["floor"])
+                ceiling = float(cl["ceiling"])
+                score = int(cl.get("score", 1))
+                if ceiling < y_lo or floor > y_hi:
+                    continue
+                labels = ", ".join(cl.get("labels", [])[:3])
 
-                ax.hlines(y=f500, xmin=w5_date, xmax=end_date, colors="#f59e0b", linestyles=":", linewidth=1.5, zorder=3)
-                ax.annotate(f"Fib 0.500 ({f500:.2f}$)", (end_date, f500), xytext=(5, 0), textcoords="offset points", color="#f59e0b", fontsize=8, va="center")
+                if score >= 2:
+                    color = "#0f766e" if score >= 3 else "#b45309"
+                    ax.fill_between(
+                        [xmin, end_date],
+                        [floor] * 2,
+                        [max(ceiling, floor * 1.004)] * 2,
+                        color=color,
+                        alpha=min(0.10 + 0.04 * score, 0.28),
+                        zorder=3,
+                    )
+                    ax.hlines(y=floor, xmin=xmin, xmax=end_date, colors=color,
+                              linestyles="-", linewidth=1.0, zorder=4)
+                    if can_label(ceiling):
+                        ax.annotate(
+                            f"{floor:.2f}-{ceiling:.2f} | Score {score}: {labels}",
+                            (end_date, ceiling), xytext=(5, 0),
+                            textcoords="offset points", color=color,
+                            fontsize=8, va="center", fontweight="bold",
+                        )
+                else:
+                    mid = (floor + ceiling) / 2.0
+                    ax.hlines(y=mid, xmin=xmin, xmax=end_date, colors="#94a3b8",
+                              linestyles=":", linewidth=1.0, zorder=3)
+                    if can_label(mid):
+                        ax.annotate(
+                            f"{mid:.2f} | {labels}",
+                            (end_date, mid), xytext=(5, 0),
+                            textcoords="offset points", color="#64748b",
+                            fontsize=7, va="center",
+                        )
+                drawn += 1
 
-                ax.hlines(y=f618, xmin=w5_date, xmax=end_date, colors="#ef4444", linestyles="--", linewidth=1.5, zorder=3)
-                ax.annotate(f"Fib 0.618 Golden Pocket ({f618:.2f}$)", (end_date, f618), xytext=(5, 0), textcoords="offset points", color="#ef4444", fontsize=8, va="center", fontweight="bold")
+            for m in markers[:4]:
+                price = float(m["price"])
+                label = str(m.get("label", ""))
+                style = "--" if label.lower().startswith("trigger") else "-."
+                color = "#16a34a" if label.lower().startswith("trigger") else "#ef4444"
+                ax.hlines(y=price, xmin=xmin, xmax=end_date, colors=color,
+                          linestyles=style, linewidth=1.5, zorder=5)
+                if can_label(price):
+                    ax.annotate(
+                        f"{label} ({price:.2f}$)",
+                        (end_date, price), xytext=(5, 0),
+                        textcoords="offset points", color=color,
+                        fontsize=9, va="center", fontweight="bold",
+                    )
+        else:
+            # Legacy-Fallback (Standalone ohne Engine-Payload):
+            # kompakter Log-Golden-Pocket wie in V110.
+            if len(waves) == 6 and not is_correction_macro:
+                w0 = waves[0]["price"]
+                w5 = waves[5]["price"]
+                w5_date = pd.to_datetime(waves[5]["date"])
 
-                ax.fill_between([w5_date, end_date], [w4] * 2, [f618] * 2, color="#ef4444", alpha=0.05, zorder=1)
-
-        # 🔥 3. THE DEEP ABYSS MATRIX (V105 - Logarithmische Erweiterung)
-        node_A = next((w for w in waves if w["label"] == "A"), None)
-        node_B = next((w for w in waves if w["label"] == "B"), None)
-
-        if node_A and node_B:
-            idx_A = waves.index(node_A)
-            if idx_A > 0:
-                p_start_A = waves[idx_A - 1]["price"]; p_A = node_A["price"]; p_B = node_B["price"]
-
-                if p_start_A > p_A:
-                    log_start_A = np.log(p_start_A); log_A = np.log(p_A); log_B = np.log(p_B)
-                    log_drop_A = log_start_A - log_A
-
-                    # Die 5 Ebenen des Schmerzes
-                    t_618 = np.exp(log_B - (0.618 * log_drop_A))
-                    t_100 = np.exp(log_B - (1.000 * log_drop_A))
-                    t_1618 = np.exp(log_B - (1.618 * log_drop_A))
-                    t_2618 = np.exp(log_B - (2.618 * log_drop_A)) # Neu
-                    t_3618 = np.exp(log_B - (3.618 * log_drop_A)) # Neu
-
-                    date_B = pd.to_datetime(node_B["date"])
-                    end_date = df.index[-1]
-
-                    if date_B <= end_date:
-                        # 0.618 Minimalziel (immer dezent)
-                        ax.hlines(y=t_618, xmin=date_B, xmax=end_date, colors="#c084fc", linestyles=":", linewidth=1.2, zorder=4)
-                        ax.annotate(f"C = 0.618 A ({t_618:.2f}$)", (end_date, t_618), xytext=(5, 0), textcoords="offset points", color="#c084fc", fontsize=8, va="center")
-
-                        # Dynamische Eskalations-Stufen
-                        if current_price < t_2618:
-                            # Stufe 4: 2.618 gebrochen -> 3.618 DOOMSDAY aktiv
-                            ax.hlines(y=t_1618, xmin=date_B, xmax=end_date, colors="#ef4444", linestyles=":", linewidth=1.0, zorder=4)
-                            ax.hlines(y=t_2618, xmin=date_B, xmax=end_date, colors="#ef4444", linestyles="--", linewidth=1.2, zorder=4)
-                            ax.annotate(f"C=2.618A ({t_2618:.2f}$) [Broken]", (end_date, t_2618), xytext=(5, 0), textcoords="offset points", color="#ef4444", fontsize=8, va="center")
-                            
-                            ax.hlines(y=t_3618, xmin=date_B, xmax=end_date, colors="#450a0a", linestyles="-.", linewidth=2.0, zorder=4)
-                            ax.annotate(f"C=3.618A ({t_3618:.2f}$) [DOOMSDAY]", (end_date, t_3618), xytext=(5, 0), textcoords="offset points", color="#450a0a", fontsize=9, fontweight="bold", va="center")
-                            ax.fill_between([date_B, end_date], [t_2618]*2, [t_3618]*2, color="#450a0a", alpha=0.06, zorder=1)
-
-                        elif current_price < t_1618:
-                            # Stufe 3: 1.618 gebrochen -> 2.618 LIQUIDATION aktiv
-                            ax.hlines(y=t_100, xmin=date_B, xmax=end_date, colors="#ef4444", linestyles=":", linewidth=1.0, zorder=4)
-                            ax.hlines(y=t_1618, xmin=date_B, xmax=end_date, colors="#ef4444", linestyles="--", linewidth=1.2, zorder=4)
-                            ax.annotate(f"C=1.618A ({t_1618:.2f}$) [Broken]", (end_date, t_1618), xytext=(5, 0), textcoords="offset points", color="#ef4444", fontsize=8, va="center")
-                            
-                            ax.hlines(y=t_2618, xmin=date_B, xmax=end_date, colors="#7f1d1d", linestyles="-.", linewidth=1.8, zorder=4)
-                            ax.annotate(f"C=2.618A ({t_2618:.2f}$) [Liquidation Target]", (end_date, t_2618), xytext=(5, 0), textcoords="offset points", color="#7f1d1d", fontsize=9, fontweight="bold", va="center")
-                            ax.fill_between([date_B, end_date], [t_1618]*2, [t_2618]*2, color="#7f1d1d", alpha=0.05, zorder=1)
-
-                        elif current_price < t_100:
-                            # Stufe 2: 1.000 gebrochen -> 1.618 CAPITULATION aktiv
-                            ax.hlines(y=t_100, xmin=date_B, xmax=end_date, colors="#ef4444", linestyles="--", linewidth=1.2, zorder=4)
-                            ax.annotate(f"C=1.000A ({t_100:.2f}$) [Broken]", (end_date, t_100), xytext=(5, 0), textcoords="offset points", color="#ef4444", fontsize=8, va="center")
-                            
-                            ax.hlines(y=t_1618, xmin=date_B, xmax=end_date, colors="#9f1239", linestyles="-.", linewidth=1.8, zorder=4)
-                            ax.annotate(f"C=1.618A ({t_1618:.2f}$) [Capitulation Target]", (end_date, t_1618), xytext=(5, 0), textcoords="offset points", color="#9f1239", fontsize=9, fontweight="bold", va="center")
-                            ax.fill_between([date_B, end_date], [t_100]*2, [t_1618]*2, color="#9f1239", alpha=0.04, zorder=1)
-                        else:
-                            # Stufe 1: Normalzustand (1.000 ist aktiv)
-                            ax.hlines(y=t_100, xmin=date_B, xmax=end_date, colors="#ec4899", linestyles="--", linewidth=1.6, zorder=4)
-                            ax.annotate(f"C = 1.000 A ({t_100:.2f}$) [Target]", (end_date, t_100), xytext=(5, 0), textcoords="offset points", color="#ec4899", fontsize=9, va="center", fontweight="bold")
-
-                            ax.hlines(y=t_1618, xmin=date_B, xmax=end_date, colors="#9f1239", linestyles="-.", linewidth=1.0, zorder=4)
-                            ax.annotate(f"C = 1.618 A ({t_1618:.2f}$)", (end_date, t_1618), xytext=(5, 0), textcoords="offset points", color="#9f1239", fontsize=8, va="center")
+                if w5_date < end_date and w5 > w0:
+                    log_diff = np.log(w5) - np.log(w0)
+                    for f, color, ls, bold in [
+                        (0.382, "#f59e0b", ":", False),
+                        (0.500, "#f59e0b", ":", False),
+                        (0.618, "#ef4444", "--", True),
+                    ]:
+                        level = np.exp(np.log(w5) - f * log_diff)
+                        ax.hlines(y=level, xmin=w5_date, xmax=end_date, colors=color,
+                                  linestyles=ls, linewidth=1.5, zorder=3)
+                        if can_label(level):
+                            ax.annotate(
+                                f"logFib {f} ({level:.2f}$)",
+                                (end_date, level), xytext=(5, 0),
+                                textcoords="offset points", color=color, fontsize=8,
+                                va="center",
+                                fontweight="bold" if bold else "normal",
+                            )
 
         ax.set_yscale("log")
         ax.grid(True, which="major", ls="-", alpha=0.2)
         ax.grid(True, which="minor", ls=":", alpha=0.1)
-        ax.set_title(f"{symbol} - Self-Healing EW Master (Log-Vector Core)", loc="left", fontweight="bold", fontsize=12)
+        ax.set_title(
+            f"{symbol} - Self-Healing EW Master (Log-Vector Core)",
+            loc="left", fontweight="bold", fontsize=12,
+        )
         plt.subplots_adjust(right=0.92)
 
         buf = io.BytesIO()
@@ -204,6 +227,6 @@ def main():
         print(str(e), file=sys.stderr)
         sys.exit(1)
 
+
 if __name__ == "__main__":
     main()
-        

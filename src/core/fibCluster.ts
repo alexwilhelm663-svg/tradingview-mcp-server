@@ -28,18 +28,24 @@ export function longLevelCandidates(p: {
 }): LevelCandidate[] {
   const out: LevelCandidate[] = [];
   const imp = p.w5 - p.w0;
-  if (imp > 0) {
+  // Duale Konvention: linear UND logarithmisch. Landen beide Ableitungen
+  // derselben Ratio in einer Zone, ist das echte Konfluenz ueber Konventionen.
+  if (imp > 0 && p.w0 > 0) {
+    const logRange = Math.log(p.w5) - Math.log(p.w0);
     for (const f of [0.5, 0.618, 0.786, 0.886]) {
       out.push({ price: p.w5 - f * imp, label: `Retr ${f}` });
+      out.push({ price: Math.exp(Math.log(p.w5) - f * logRange), label: `logRetr ${f}` });
     }
   }
   if (p.w4 != null && p.w4 > 0) out.push({ price: p.w4, label: "W4-Zone" });
-  if (p.aLow != null && p.bHigh != null) {
+  if (p.aLow != null && p.aLow > 0 && p.bHigh != null) {
     const A = p.w5 - p.aLow;
+    const logA = Math.log(p.w5) - Math.log(p.aLow);
     if (A > 0) {
       for (const k of [0.618, 1.0, 1.236, 1.618]) {
-        const price = p.bHigh - k * A;
-        if (price > 0) out.push({ price, label: `C=${k}·A` });
+        const lin = p.bHigh - k * A;
+        if (lin > 0) out.push({ price: lin, label: `C=${k}·A` });
+        out.push({ price: Math.exp(Math.log(p.bHigh) - k * logA), label: `logC=${k}·A` });
       }
     }
   }

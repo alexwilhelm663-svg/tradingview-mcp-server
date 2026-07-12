@@ -8,10 +8,24 @@ export interface ChartWave {
   price: number;
 }
 
+export interface ChartCluster {
+  floor: number;
+  ceiling: number;
+  score: number;
+  labels: string[];
+}
+
+export interface ChartMarker {
+  price: number;
+  label: string;
+}
+
 export interface ChartPayload {
   symbol: string;
   waves: ChartWave[];
   candles: Candle[];
+  clusters?: ChartCluster[];
+  markers?: ChartMarker[];
 }
 
 /**

@@ -78,6 +78,39 @@ async function invokeWithBackoff<T>(fn: () => Promise<T>, maxRetries = 2): Promi
 const PIVOT_PRICE_TOL = 0.06; // 6% Preisabweichung
 const PIVOT_DAYS_TOL = 45; // 45 Tage Datumsabweichung
 
+/**
+ * Saekulare Doktrin (V112.2), nur in der strikten Phase (Versuch 1-2):
+ *  - Welle 0 am globalen Extrem der Pivot-Liste verankern
+ *  - keine Trunkierung (W5 muss das W3-Extrem ueberschreiten)
+ * In Versuch 3 entfaellt beides (Best-Effort statt Totalausfall).
+ */
+export function doctrineErrors(wc: WaveCount, pivots: Pivot[], strict: boolean): string[] {
+  const errs: string[] = [];
+  if (!strict || pivots.length === 0) return errs;
+  const dir = wc.trend === "bullish" ? 1 : -1;
+  const w0 = wc.points.find((x) => x.label === "0");
+  const w3 = wc.points.find((x) => x.label === "3");
+  const w5 = wc.points.find((x) => x.label === "5");
+
+  const pool = pivots.filter((x) => x.kind === (dir === 1 ? "L" : "H"));
+  if (w0 && pool.length > 0) {
+    const anchor = pool.reduce((m, x) =>
+      dir === 1 ? (x.price < m.price ? x : m) : (x.price > m.price ? x : m)
+    );
+    if (Math.abs(w0.price - anchor.price) / anchor.price > PIVOT_PRICE_TOL) {
+      errs.push(
+        `Doktrin-Verstoss: Welle 0 (${w0.date}, ${w0.price}) ist nicht das ${dir === 1 ? "tiefste L" : "hoechste H"}-Pivot. Verankere Welle 0 am Pivot ${anchor.kind} ${anchor.date} @ ${anchor.price.toFixed(2)} (saekulare Trend-Doktrin).`
+      );
+    }
+  }
+  if (w3 && w5 && dir * (w5.price - w3.price) < 0) {
+    errs.push(
+      `Trunkierung: Welle 5 (${w5.price}) endet ${dir === 1 ? "unter" : "ueber"} dem Welle-3-Extrem (${w3.price}). Waehle den Zaehlrahmen so, dass Welle 5 das Welle-3-Extrem ueberschreitet (ggf. endet der Impuls frueher).`
+    );
+  }
+  return errs;
+}
+
 function nearestPivotError(point: WavePoint, pivots: Pivot[]): string | null {
   if (pivots.length === 0) return null;
   const pDate = new Date(point.date).getTime();
@@ -124,7 +157,9 @@ AUSGABEVERTRAG (hart):
 1. Jeder Punkt in "points" MUSS exakt ein (date, price)-Paar aus der Pivot-Liste sein. Keine anderen Punkte.
 2. "points" streng chronologisch aufsteigend nach Datum, beginnend mit Welle 0.
 3. Impulse (bullish): Hochs (H) fuer 1/3/5, Tiefs (L) fuer 0/2/4.
-4. Pruefe VOR der Antwort: W2 > W0? W3 > Ende W1? W4 > Ende W1 (kein Overlap)? Daten aufsteigend?`;
+4. Pruefe VOR der Antwort: W2 > W0? W3 > Ende W1? W4 > Ende W1 (kein Overlap)? Daten aufsteigend?
+5. SAEKULARE DOKTRIN: Welle 0 = tiefstes L-Pivot der GESAMTEN Liste (bullish) bzw. hoechstes H-Pivot (bearish).
+6. KEINE TRUNKIERUNG: Welle 5 muss das Welle-3-Extrem ueberschreiten. Endet der Markt darunter, war das W3-Extrem die Welle 5 eines frueher endenden Impulses - zaehle entsprechend.`;
 
   const rejected =
     state.errorLogs.length > 0 && state.waveCount
@@ -178,11 +213,13 @@ async function validateNode(state: typeof RadarState.State) {
     errors.push("Regel-Verstoss: Welle 4 ueberlappt das Preisgebiet von Welle 1.");
 
   // NEU (V112): Pivot-Konformitaet – jeder Punkt muss an einem echten Swing liegen.
-  // Verhindert falsch verankerte A/B-Beine und unmoegliche C-Projektionen.
   for (const point of wc.points) {
     const err = nearestPivotError(point, state.pivots);
     if (err) errors.push(err);
   }
+
+  // NEU (V112.2): Saekulare Doktrin (strikt in Versuch 1-2, Best-Effort in Versuch 3)
+  errors.push(...doctrineErrors(wc, state.pivots, state.attempts < 3));
 
   return errors.length > 0 ? { isValid: false, errorLogs: errors } : { isValid: true, errorLogs: [] };
 }
