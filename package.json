@@ -1,6 +1,6 @@
 {
   "name": "ew-quant-hunter",
-  "version": "111.0.0",
+  "version": "112.1.0",
   "description": "Elliott Wave Trading Bot (konsolidierter Composition Root)",
   "main": "dist/index.js",
   "scripts": {
