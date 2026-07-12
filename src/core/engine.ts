@@ -111,6 +111,8 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
     // 4a. Fib-Cluster-Logik (ersetzt die alte Kill-Zone)
     let pendingCreated = false;
     let clusterInfo = "";
+    let chartClusters: { floor: number; ceiling: number; score: number; labels: string[] }[] | undefined;
+    let chartMarkers: { price: number; label: string }[] = [];
 
     if (w0 && w5 && wc.trend === "bullish" && currentPrice < w5.price) {
       const legs = correctionLegs(pivots, candles, w5.date);
@@ -130,11 +132,20 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         .sort((a, b) => a - b)[0] ?? null;
 
       // Konfluenz-Pflicht: ein einzelnes Level ist kein Cluster
+      chartClusters = clusters.slice(0, 8).map((cl) => ({
+        floor: cl.floor,
+        ceiling: cl.ceiling,
+        score: cl.score,
+        labels: cl.labels,
+      }));
+      if (overhead != null) chartMarkers.push({ price: overhead, label: "Trigger" });
+
       const inZone = clusters.find(
         (cl) => cl.score >= 2 && currentPrice >= cl.floor * 0.97 && currentPrice <= cl.ceiling * 1.03
       );
 
       if (inZone && legs.cLow != null) {
+        chartMarkers.push({ price: inZone.floor * 0.97, label: "Invalidierung" });
         const res = upsertPendingSetup(symbol, inZone, overhead, legs.cLow);
         pendingCreated = res === "created";
         clusterInfo =
@@ -170,7 +181,13 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
     }
 
     // 5. Chart rendern
-    const buffer = await renderChart({ symbol, waves: wc.points, candles });
+    const buffer = await renderChart({
+      symbol,
+      waves: wc.points,
+      candles,
+      clusters: chartClusters,
+      markers: chartMarkers,
+    });
 
     return {
       buffer,
