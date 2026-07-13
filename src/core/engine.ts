@@ -3,10 +3,10 @@ import path from "path";
 import db from "./db";
 import { fetchMarketData, Candle } from "./marketData";
 import { renderChart } from "./chart";
-import { zigzag, Pivot } from "./zigzag";
+import type { Pivot } from "./zigzag";
 import { longLevelCandidates, clusterLevels } from "./fibCluster";
 import { upsertPendingSetup } from "./setups";
-import { findBestImpulse, WaveCount, WavePoint } from "./impulseFinder";
+import { findImpulseAdaptive, WaveCount, WavePoint } from "./impulseFinder";
 import { getCommentary } from "./commentary";
 
 export interface AnalysisResult {
@@ -105,16 +105,16 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
     // 1. Marktdaten (Weekly, 5 Jahre) + deterministische Pivots
     const { weeklyAnalysisCandles: candles } = await fetchMarketData(symbol);
     const currentPrice = candles[candles.length - 1].close;
-    const pivots = zigzag(candles, 25);
 
-    // 2. Deterministische Impulszaehlung (V113): kein LLM im kritischen Pfad
-    const impulse = findBestImpulse(pivots);
-    if (!impulse) {
-      console.warn(`[ENGINE] ${symbol}: keine regelkonforme Impulszaehlung aus ${pivots.length} Pivots ableitbar.`);
+    // 2. Deterministische Impulszaehlung (V113.1): adaptive Aufloesungs-Leiter
+    const adaptive = findImpulseAdaptive(candles);
+    if (!adaptive) {
+      console.warn(`[ENGINE] ${symbol}: keine regelkonforme Impulszaehlung auf keiner ZigZag-Stufe (25/18/12/8%) ableitbar.`);
       return EMPTY;
     }
+    const { result: impulse, pivots, threshold } = adaptive;
     const wc = impulse.count;
-    console.log(`[ENGINE] ${symbol}: ${wc.trend}-Impuls, Score ${impulse.score}/${impulse.maxScore}${impulse.doctrineAnchor ? " (Doktrin-Anker)" : " (Fallback-Anker)"}`);
+    console.log(`[ENGINE] ${symbol}: ${wc.trend}-Impuls, Score ${impulse.score}/${impulse.maxScore}${impulse.doctrineAnchor ? " (Doktrin-Anker)" : " (Fallback-Anker)"} · ZigZag ${threshold}%`);
 
     const w0 = pt(wc, "0");
     const w1 = pt(wc, "1");
