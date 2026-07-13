@@ -4,9 +4,10 @@ import db from "./db";
 import { fetchMarketData, Candle } from "./marketData";
 import { renderChart } from "./chart";
 import { zigzag, Pivot } from "./zigzag";
-import { longLevelCandidates, clusterLevels, FibCluster } from "./fibCluster";
+import { longLevelCandidates, clusterLevels } from "./fibCluster";
 import { upsertPendingSetup } from "./setups";
-import { ewAnalyzerWorkflow, WaveCount, WavePoint } from "../graph/ewValidator";
+import { findBestImpulse, WaveCount, WavePoint } from "./impulseFinder";
+import { getCommentary } from "./commentary";
 
 export interface AnalysisResult {
   buffer: Buffer | null;
@@ -51,71 +52,87 @@ function weeklyAtrPct(c: Candle[], n = 14): number {
   return k > 0 ? (sum / k) * 100 : 4;
 }
 
-/** A-Tief, B-Hoch und C-Tief der laufenden Korrektur nach dem Impuls-Top. */
-function correctionLegs(
-  pivots: Pivot[],
-  candles: Candle[],
-  topDate: string
-): { aLow: number | null; bHigh: number | null; cLow: number | null } {
-  const post = pivots.filter((p) => p.date > topDate);
-  const aPivot = post.find((p) => p.kind === "L");
-  if (!aPivot) return { aLow: null, bHigh: null, cLow: null };
+interface CorrectionLegs {
+  aLow: number | null;
+  aDate: string | null;
+  bHigh: number | null;
+  bDate: string | null;
+  cLow: number | null;
+  cDate: string | null;
+}
 
-  const bCandidates = post.filter((p) => p.kind === "H" && p.date > aPivot.date);
-  if (bCandidates.length === 0) return { aLow: aPivot.price, bHigh: null, cLow: null };
-  const bPivot = bCandidates.reduce((m, p) => (p.price > m.price ? p : m));
+/** A-Tief, B-Hoch und bisheriges C-Tief der laufenden Korrektur nach dem Impuls-Top. */
+function correctionLegs(pivots: Pivot[], candles: Candle[], topDate: string): CorrectionLegs {
+  const empty: CorrectionLegs = {
+    aLow: null, aDate: null, bHigh: null, bDate: null, cLow: null, cDate: null,
+  };
+  const post = pivots.filter((p) => p.date > topDate);
+  const lows = post.filter((p) => p.kind === "L");
+  if (lows.length === 0) return empty;
+
+  const highs = post.filter((p) => p.kind === "H");
+  if (highs.length === 0) {
+    // Korrektur noch ohne Gegenbewegung: bisheriges A-Tief melden
+    const running = lows.reduce((m, p) => (p.price < m.price ? p : m));
+    return { ...empty, aLow: running.price, aDate: running.date };
+  }
+  // B = hoechstes H nach dem Top; A = TIEFSTES L zwischen Top und B
+  // (nicht das erste L - das war der V112-Bug, der die C-Projektionen
+  // an einem Ein-Wochen-Dip verankerte).
+  const bPivot = highs.reduce((m, p) => (p.price > m.price ? p : m));
+  const aCandidates = lows.filter((p) => p.date < bPivot.date);
+  if (aCandidates.length === 0) return empty;
+  const aPivot = aCandidates.reduce((m, p) => (p.price < m.price ? p : m));
 
   const afterB = candles.filter((k) => k.date > bPivot.date);
-  const cLow = afterB.length > 0 ? Math.min(...afterB.map((k) => k.low)) : null;
-  return { aLow: aPivot.price, bHigh: bPivot.price, cLow };
+  let cLow: number | null = null;
+  let cDate: string | null = null;
+  for (const k of afterB) {
+    if (cLow === null || k.low < cLow) {
+      cLow = k.low;
+      cDate = k.date;
+    }
+  }
+  return {
+    aLow: aPivot.price, aDate: aPivot.date,
+    bHigh: bPivot.price, bDate: bPivot.date,
+    cLow, cDate,
+  };
 }
 
 export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
   try {
-    // 1. Lern-Kontext laden
-    const statsPath = path.join(process.cwd(), "knowledge/statistics/winrates.md");
-    const stats = fs.existsSync(statsPath)
-      ? fs.readFileSync(statsPath, "utf-8")
-      : "Keine Statistik verfuegbar.";
-
-    // 2. Marktdaten (Weekly, 5 Jahre) + deterministische Pivots
+    // 1. Marktdaten (Weekly, 5 Jahre) + deterministische Pivots
     const { weeklyAnalysisCandles: candles } = await fetchMarketData(symbol);
     const currentPrice = candles[candles.length - 1].close;
     const pivots = zigzag(candles, 25);
 
-    // 3. LangGraph-Workflow (LLM-Zaehlung, an Pivots verankert & validiert)
-    const finalState = await ewAnalyzerWorkflow.invoke(
-      {
-        symbol,
-        marketData: candles,
-        pivots,
-        systemContext: `Aktuelle Performance-Daten:\n${stats}\nNutze diese, um die Wahrscheinlichkeit des Setups zu gewichten.`,
-      },
-      { configurable: { thread_id: `${symbol}-${Date.now()}` } }
-    );
-
-    if (!finalState.isValid || !finalState.waveCount) {
-      console.warn(
-        `[ENGINE] ${symbol}: keine valide Zaehlung nach ${finalState.attempts} Versuchen. Fehler: ${finalState.errorLogs.join(" | ")}`
-      );
+    // 2. Deterministische Impulszaehlung (V113): kein LLM im kritischen Pfad
+    const impulse = findBestImpulse(pivots);
+    if (!impulse) {
+      console.warn(`[ENGINE] ${symbol}: keine regelkonforme Impulszaehlung aus ${pivots.length} Pivots ableitbar.`);
       return EMPTY;
     }
+    const wc = impulse.count;
+    console.log(`[ENGINE] ${symbol}: ${wc.trend}-Impuls, Score ${impulse.score}/${impulse.maxScore}${impulse.doctrineAnchor ? " (Doktrin-Anker)" : " (Fallback-Anker)"}`);
 
-    const wc = finalState.waveCount as WaveCount;
     const w0 = pt(wc, "0");
     const w1 = pt(wc, "1");
     const w2 = pt(wc, "2");
     const w4 = pt(wc, "4");
     const w5 = pt(wc, "5");
 
-    // 4a. Fib-Cluster-Logik (ersetzt die alte Kill-Zone)
+    // 3a. Fib-Cluster-Logik (bullische Korrektur nach abgeschlossenem Impuls)
     let pendingCreated = false;
     let clusterInfo = "";
     let chartClusters: { floor: number; ceiling: number; score: number; labels: string[] }[] | undefined;
     let chartMarkers: { price: number; label: string }[] = [];
+    let legs: CorrectionLegs = {
+      aLow: null, aDate: null, bHigh: null, bDate: null, cLow: null, cDate: null,
+    };
 
     if (w0 && w5 && wc.trend === "bullish" && currentPrice < w5.price) {
-      const legs = correctionLegs(pivots, candles, w5.date);
+      legs = correctionLegs(pivots, candles, w5.date);
       const cands = longLevelCandidates({
         w0: w0.price,
         w5: w5.price,
@@ -131,7 +148,6 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         .filter((p) => p > currentPrice * 1.01)
         .sort((a, b) => a - b)[0] ?? null;
 
-      // Konfluenz-Pflicht: ein einzelnes Level ist kein Cluster
       chartClusters = clusters.slice(0, 8).map((cl) => ({
         floor: cl.floor,
         ceiling: cl.ceiling,
@@ -140,6 +156,7 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       }));
       if (overhead != null) chartMarkers.push({ price: overhead, label: "Trigger" });
 
+      // Konfluenz-Pflicht: ein einzelnes Level ist kein Cluster
       const inZone = clusters.find(
         (cl) => cl.score >= 2 && currentPrice >= cl.floor * 0.97 && currentPrice <= cl.ceiling * 1.03
       );
@@ -166,10 +183,10 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       }
     }
 
-    // 4b. Breakout-Setup (unveraendert: hat einen echten Trigger + Fib-Target)
+    // 3b. Breakout-Setup (unveraendert: echter Trigger + Fib-Target)
     let isBreakoutSetup = false;
     let breakoutStatus = "";
-    if (w1 && currentPrice >= w1.price && currentPrice <= w1.price * 1.1) {
+    if (w1 && wc.trend === "bullish" && currentPrice >= w1.price && currentPrice <= w1.price * 1.1) {
       isBreakoutSetup = true;
       breakoutStatus = `🚀 AUSBRUCH ueber Welle-1-Niveau (${w1.price.toFixed(2)})!`;
       if (w0 && w2) {
@@ -180,10 +197,25 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       }
     }
 
-    // 5. Chart rendern
+    // 4. Optionale LLM-Zweitmeinung (ausserhalb des kritischen Pfads)
+    const comment = await getCommentary(symbol, wc, currentPrice, clusterInfo);
+    if (comment) wc.analysis += `\n💬 ${comment}`;
+
+    // 5. Chart: Impuls + Korrektur-Anhang + Engine-Level rendern
+    const chartWaves: WavePoint[] = [...wc.points];
+    if (legs.aLow != null && legs.aDate != null) {
+      chartWaves.push({ label: "A", date: legs.aDate, price: legs.aLow });
+      if (legs.bHigh != null && legs.bDate != null) {
+        chartWaves.push({ label: "B", date: legs.bDate, price: legs.bHigh });
+        if (legs.cLow != null && legs.cDate != null && legs.cLow < legs.bHigh) {
+          chartWaves.push({ label: "C", date: legs.cDate, price: legs.cLow });
+        }
+      }
+    }
+
     const buffer = await renderChart({
       symbol,
-      waves: wc.points,
+      waves: chartWaves,
       candles,
       clusters: chartClusters,
       markers: chartMarkers,

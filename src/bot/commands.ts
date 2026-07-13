@@ -104,6 +104,12 @@ export function registerCommands(
       if (r.clusterInfo) caption += `${r.clusterInfo}\n`;
       if (r.isBreakoutSetup) caption += `${r.breakoutStatus}\n`;
       if (!r.clusterInfo && !r.isBreakoutSetup) caption += "⚪ Aktuell in keiner Trigger-Zone.";
+      if (r.analysis.analysis) {
+        const info = r.analysis.analysis.length > 450
+          ? r.analysis.analysis.slice(0, 447) + "..."
+          : r.analysis.analysis;
+        caption += `\n\n${info}`;
+      }
 
       if (r.buffer) {
         await ctx.replyWithPhoto({ source: r.buffer }, { caption, parse_mode: "Markdown" });
