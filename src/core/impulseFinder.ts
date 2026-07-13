@@ -1,4 +1,5 @@
-import type { Pivot } from "./zigzag";
+import { zigzag, Pivot } from "./zigzag";
+import type { Candle } from "./marketData";
 
 export interface WavePoint {
   label: string;
@@ -17,6 +18,32 @@ export interface ImpulseResult {
   score: number;
   maxScore: number;
   doctrineAnchor: boolean;
+}
+
+export interface AdaptiveImpulse {
+  result: ImpulseResult;
+  pivots: Pivot[];
+  threshold: number;
+}
+
+/**
+ * Aufloesungs-Leiter (V113.1): Der fixe 25%-ZigZag ist an High-Beta-Titeln
+ * geeicht - Low-Vol-Megacaps (AAPL: ~3-4% Wochen-ATR) liefern damit zu
+ * wenige Pivots fuer ein 6-Punkte-Skelett. Die Leiter verfeinert die
+ * Aufloesung NUR, wenn die groebere Stufe keinen Impuls findet:
+ * Alles, was bei 25% funktioniert, bleibt byte-identisch.
+ */
+export function findImpulseAdaptive(candles: Candle[]): AdaptiveImpulse | null {
+  for (const threshold of [25, 18, 12, 8]) {
+    const pivots = zigzag(candles, threshold);
+    if (pivots.length < 6) continue;
+    const result = findBestImpulse(pivots);
+    if (result) {
+      result.count.analysis += ` · ZigZag ${threshold}%`;
+      return { result, pivots, threshold };
+    }
+  }
+  return null;
 }
 
 /**
