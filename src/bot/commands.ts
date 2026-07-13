@@ -104,17 +104,18 @@ export function registerCommands(
       if (r.clusterInfo) caption += `${r.clusterInfo}\n`;
       if (r.isBreakoutSetup) caption += `${r.breakoutStatus}\n`;
       if (!r.clusterInfo && !r.isBreakoutSetup) caption += "⚪ Aktuell in keiner Trigger-Zone.";
-      if (r.analysis.analysis) {
-        const info = r.analysis.analysis.length > 450
-          ? r.analysis.analysis.slice(0, 447) + "..."
-          : r.analysis.analysis;
-        caption += `\n\n${info}`;
-      }
+      if (r.analysis.analysis) caption += `\n\n${r.analysis.analysis}`;
 
       if (r.buffer) {
         await ctx.replyWithPhoto({ source: r.buffer }, { caption, parse_mode: "Markdown" });
       } else {
         await ctx.reply(caption, { parse_mode: "Markdown" });
+      }
+
+      // LLM-Kommentar separat: kein Caption-Limit, kein Abschneiden
+      if (r.commentary) {
+        const note = r.commentary.length > 3900 ? r.commentary.slice(0, 3897) + "..." : r.commentary;
+        await ctx.reply(`💬 ${note}`);
       }
     } catch (err: any) {
       await ctx.reply(`❌ Fehler bei ${symbol}: \`${err?.message ?? err}\``, {
