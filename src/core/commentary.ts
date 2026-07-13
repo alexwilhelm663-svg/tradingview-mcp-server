@@ -18,7 +18,7 @@ export async function getCommentary(
 
   const prompt =
     `Du bist Elliott-Wave-Analyst. Die Zaehlung wurde bereits deterministisch validiert - ` +
-    `bewerte sie NUR qualitativ in maximal 50 Woertern (Deutsch): Charakter der laufenden Bewegung, ` +
+    `bewerte sie NUR qualitativ in HOECHSTENS 50 Woertern (Deutsch, harte Grenze - laengere Antworten werden abgeschnitten): Charakter der laufenden Bewegung, ` +
     `groesstes Risiko fuer die Zaehlung. Keine neuen Wellenpunkte, keine Kursziele erfinden.\n` +
     `${symbol} @ ${currentPrice.toFixed(2)} | trend=${wc.trend}\n` +
     `Punkte: ${JSON.stringify(wc.points)}\n` +
@@ -27,7 +27,7 @@ export async function getCommentary(
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
   const body = JSON.stringify({
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.3, maxOutputTokens: 250 },
+    generationConfig: { temperature: 0.3, maxOutputTokens: 140 },
   });
 
   for (let attempt = 0; attempt < 2; attempt++) {

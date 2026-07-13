@@ -18,6 +18,7 @@ export interface AnalysisResult {
   isBreakoutSetup: boolean;
   breakoutStatus: string;
   analysis: WaveCount | null;
+  commentary: string | null;
 }
 
 const EMPTY: AnalysisResult = {
@@ -29,6 +30,7 @@ const EMPTY: AnalysisResult = {
   isBreakoutSetup: false,
   breakoutStatus: "",
   analysis: null,
+  commentary: null,
 };
 
 function pt(wc: WaveCount, label: string): WavePoint | undefined {
@@ -197,9 +199,10 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       }
     }
 
-    // 4. Optionale LLM-Zweitmeinung (ausserhalb des kritischen Pfads)
-    const comment = await getCommentary(symbol, wc, currentPrice, clusterInfo);
-    if (comment) wc.analysis += `\n💬 ${comment}`;
+    // 4. Optionale LLM-Zweitmeinung (ausserhalb des kritischen Pfads).
+    // Eigenes Feld: geht als separate Telegram-Nachricht raus, damit die
+    // Foto-Caption (1024-Zeichen-Limit) nie mehr abgeschnitten wird.
+    const commentary = await getCommentary(symbol, wc, currentPrice, clusterInfo);
 
     // 5. Chart: Impuls + Korrektur-Anhang + Engine-Level rendern
     const chartWaves: WavePoint[] = [...wc.points];
@@ -230,6 +233,7 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       isBreakoutSetup,
       breakoutStatus,
       analysis: wc,
+      commentary,
     };
   } catch (err: any) {
     console.error(`[ENGINE] Analysefehler ${symbol}:`, err?.message ?? err);
