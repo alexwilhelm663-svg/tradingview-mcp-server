@@ -49,9 +49,17 @@ db.exec(`
 `);
 
 // Migration: Spalten auf Bestands-DBs nachruesten (Fehler = Spalte existiert schon)
-for (const col of ["invalidation REAL", "target REAL"]) {
+const tradeCols = ["invalidation REAL", "target REAL", "confidence REAL", "flags TEXT"];
+for (const col of tradeCols) {
   try {
     db.exec(`ALTER TABLE trade_history ADD COLUMN ${col}`);
+  } catch {
+    /* Spalte vorhanden */
+  }
+}
+for (const col of ["llm_confidence REAL", "llm_flags TEXT", "det_flags TEXT"]) {
+  try {
+    db.exec(`ALTER TABLE setups ADD COLUMN ${col}`);
   } catch {
     /* Spalte vorhanden */
   }

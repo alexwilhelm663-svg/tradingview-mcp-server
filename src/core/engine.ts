@@ -5,9 +5,10 @@ import { fetchMarketData, Candle } from "./marketData";
 import { renderChart } from "./chart";
 import type { Pivot } from "./zigzag";
 import { longLevelCandidates, clusterLevels } from "./fibCluster";
-import { upsertPendingSetup } from "./setups";
+import { upsertPendingSetup, SetupMeta } from "./setups";
 import { findImpulseAdaptive, WaveCount, WavePoint } from "./impulseFinder";
-import { getCommentary } from "./commentary";
+import { getCritique, Critique } from "./commentary";
+import { assessQuality } from "./quality";
 
 export interface AnalysisResult {
   buffer: Buffer | null;
@@ -116,7 +117,28 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
     }
     const { result: impulse, pivots, threshold } = adaptive;
     const wc = impulse.count;
-    console.log(`[ENGINE] ${symbol}: ${wc.trend}-Impuls, Score ${impulse.score}/${impulse.maxScore}${impulse.doctrineAnchor ? " (Doktrin-Anker)" : " (Fallback-Anker)"} · ZigZag ${threshold}%`);
+
+    // 2b. Deterministische Qualitaets-Checks (V114 Stufe 1):
+    // Divergenz + Subwellen-Struktur erweitern den Score, Negativbefunde werden Flags.
+    const quality = assessQuality(candles, wc, threshold);
+    wc.analysis += ` · ${quality.summary}`;
+    const totalScore = impulse.score + quality.bonus;
+    const totalMax = impulse.maxScore + quality.maxBonus;
+    console.log(`[ENGINE] ${symbol}: ${wc.trend}-Impuls, Score ${totalScore}/${totalMax}${impulse.doctrineAnchor ? " (Doktrin-Anker)" : " (Fallback-Anker)"} · ZigZag ${threshold}%${quality.flags.length > 0 ? " · ⚠️ " + quality.flags.join(",") : ""}`);
+
+    // Stufe 2 (V114): strukturierte LLM-Kritik - optional, ausserhalb des
+    // kritischen Pfads. Wirkt NUR als Vorsichts-Asymmetrie: schwache Kritik
+    // hebt die Setup-Anforderungen an, aendert aber nie die Zaehlung.
+    const critique: Critique | null = await getCritique(
+      symbol, wc, currentPrice, quality.summary, quality.flags
+    );
+    if (critique) {
+      console.log(
+        `[KRITIK] ${symbol}: Confidence ${critique.confidence}${critique.flags.length > 0 ? " · " + critique.flags.join(",") : ""}`
+      );
+    }
+    const cautious = critique != null && (critique.confidence < 40 || critique.flags.length >= 2);
+    const minClusterScore = cautious ? 3 : 2;
 
     const w0 = pt(wc, "0");
     const w1 = pt(wc, "1");
@@ -158,14 +180,20 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       }));
       if (overhead != null) chartMarkers.push({ price: overhead, label: "Trigger" });
 
-      // Konfluenz-Pflicht: ein einzelnes Level ist kein Cluster
-      const inZone = clusters.find(
-        (cl) => cl.score >= 2 && currentPrice >= cl.floor * 0.97 && currentPrice <= cl.ceiling * 1.03
-      );
+      // Konfluenz-Pflicht: ein einzelnes Level ist kein Cluster.
+      // Bei schwacher Kritik (cautious) steigt die Anforderung auf Score >= 3.
+      const inRange = (cl: { floor: number; ceiling: number }): boolean =>
+        currentPrice >= cl.floor * 0.97 && currentPrice <= cl.ceiling * 1.03;
+      const baselineZone = clusters.find((cl) => cl.score >= 2 && inRange(cl));
+      const inZone = clusters.find((cl) => cl.score >= minClusterScore && inRange(cl));
 
       if (inZone && legs.cLow != null) {
         chartMarkers.push({ price: inZone.floor * 0.97, label: "Invalidierung" });
-        const res = upsertPendingSetup(symbol, inZone, overhead, legs.cLow);
+        const res = upsertPendingSetup(symbol, inZone, overhead, legs.cLow, {
+          llmConfidence: critique?.confidence ?? null,
+          llmFlags: critique?.flags ?? [],
+          detFlags: quality.flags,
+        });
         pendingCreated = res === "created";
         clusterInfo =
           `🟡 **PENDING**: Kurs im Fib-Cluster ${inZone.floor.toFixed(2)}–${inZone.ceiling.toFixed(2)} ` +
@@ -177,11 +205,16 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
           .filter((cl) => cl.score >= 2 && cl.ceiling < currentPrice)
           .sort((a, b) => b.ceiling - a.ceiling)[0] ??
           clusters.filter((cl) => cl.ceiling < currentPrice).sort((a, b) => b.ceiling - a.ceiling)[0];
-        clusterInfo = below
+        const gateNote =
+          cautious && baselineZone
+            ? `🛡️ Score-2-Zone ${baselineZone.floor.toFixed(2)}–${baselineZone.ceiling.toFixed(2)} übersprungen ` +
+              `(Kritik: Confidence ${critique!.confidence}${critique!.flags.length > 0 ? ", " + critique!.flags.join(", ") : ""}) – konservatives Gating verlangt Score ≥ 3.\n`
+            : "";
+        clusterInfo = gateNote + (below
           ? `⚪ Kein aktives Setup. Nächster Long-Cluster darunter: ${below.floor.toFixed(2)}–${below.ceiling.toFixed(2)} ` +
             `(Score ${below.score}: ${below.labels.join(", ")})` +
             (overhead != null ? ` · Overhead-Trigger: ${overhead.toFixed(2)}` : "")
-          : "⚪ Kein Fib-Cluster unterhalb des Kurses ableitbar.";
+          : "⚪ Kein Fib-Cluster unterhalb des Kurses ableitbar.");
       }
     }
 
@@ -194,15 +227,21 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       if (w0 && w2) {
         const target = w2.price + 1.618 * (w1.price - w0.price);
         db.prepare(
-          "INSERT INTO trade_history (symbol, signal_type, entry_price, invalidation, target) VALUES (?, 'BREAKOUT', ?, ?, ?)"
-        ).run(symbol, currentPrice, w2.price, target);
+          "INSERT INTO trade_history (symbol, signal_type, entry_price, invalidation, target, confidence, flags) VALUES (?, 'BREAKOUT', ?, ?, ?, ?, ?)"
+        ).run(
+          symbol, currentPrice, w2.price, target,
+          critique?.confidence ?? null,
+          JSON.stringify([...quality.flags, ...(critique?.flags ?? [])])
+        );
       }
     }
 
-    // 4. Optionale LLM-Zweitmeinung (ausserhalb des kritischen Pfads).
-    // Eigenes Feld: geht als separate Telegram-Nachricht raus, damit die
-    // Foto-Caption (1024-Zeichen-Limit) nie mehr abgeschnitten wird.
-    const commentary = await getCommentary(symbol, wc, currentPrice, clusterInfo);
+    // 4. Kritik fuer die Anzeige formatieren (separate Telegram-Nachricht)
+    const commentary = critique
+      ? `Kritik (Confidence ${critique.confidence}%)` +
+        (critique.flags.length > 0 ? `: ⚠️ ${critique.flags.join(", ")}` : "") +
+        (critique.note ? ` — ${critique.note}` : "")
+      : null;
 
     // 5. Chart: Impuls + Korrektur-Anhang + Engine-Level rendern
     const chartWaves: WavePoint[] = [...wc.points];
