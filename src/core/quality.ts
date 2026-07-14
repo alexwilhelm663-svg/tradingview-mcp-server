@@ -80,6 +80,72 @@ export function assessQuality(
   subCheck(w2?.date, w3?.date, "W3");
   subCheck(w4?.date, w5?.date, "W5");
 
+  const idx = (d?: string): number => (d ? candles.findIndex((c) => c.date === d) : -1);
+  const w0 = point("0");
+  const w1 = point("1");
+  const i0 = idx(w0?.date);
+  const i1 = idx(w1?.date);
+  const i2 = idx(w2?.date);
+  const i4 = idx(w4?.date);
+
+  // ── 3. Kanal-Check (GL-4): W4 respektiert die 0-2-Basislinie (Log-Raum) ──
+  if (w0 && w2 && w3 && w4 && i0 >= 0 && i2 > i0 && i3 > i2 && i4 > i3) {
+    const l = (pr: number): number => dir * Math.log(pr);
+    const m = (l(w2.price) - l(w0.price)) / (i2 - i0);
+    const base = (i: number): number => l(w0.price) + m * (i - i0);
+    const width = l(w3.price) - base(i3);
+    if (width > 0) {
+      maxBonus += 1;
+      const d4 = (l(w4.price) - base(i4)) / width;
+      if (d4 >= -0.1 && d4 <= 0.35) {
+        bonus += 1;
+        parts.push("Kanal ✓");
+      } else if (d4 < -0.15) {
+        flags.push("KANAL_VERLETZT");
+        parts.push("Kanal –");
+      } else {
+        parts.push("Kanal ~"); // deutlich ueber der Basislinie: neutral-schwach, kein Flag
+      }
+    }
+  }
+
+  // ── 4. Volumen (GL-5): W3-Dominanz und W5-Erschoepfung ──
+  const legVol = (from: number, to: number): number | null => {
+    if (from < 0 || to <= from) return null;
+    const seg = candles.slice(from + 1, to + 1).map((c) => c.volume ?? 0);
+    if (seg.length === 0 || seg.every((v) => v === 0)) return null;
+    return seg.reduce((s, v) => s + v, 0) / seg.length;
+  };
+  const v1 = legVol(i0, i1);
+  const v3 = legVol(i2, i3);
+  const v5 = legVol(i4, i5);
+  if (v1 != null && v3 != null && v5 != null) {
+    maxBonus += 1;
+    if (v3 >= v1 && v3 >= v5) {
+      bonus += 1;
+      parts.push("Volumen ✓ (W3-Dominanz)");
+    } else {
+      flags.push("VOLUMEN_W3_SCHWACH");
+      parts.push("Volumen –");
+    }
+  }
+
+  // ── 5. Fib-Zeit (GL-7): Dauer-Relationen der Antriebswellen ──
+  if (i0 >= 0 && i1 > i0 && i2 > i1 && i3 > i2 && i4 > i3 && i5 > i4) {
+    maxBonus += 1;
+    const d1 = i1 - i0;
+    const d3 = i3 - i2;
+    const d5 = i5 - i4;
+    const fibs = [0.382, 0.618, 1.0, 1.618, 2.618];
+    const near = (r: number): boolean => fibs.some((f) => Math.abs(r - f) / f <= 0.12);
+    if (d1 > 0 && d3 > 0 && d5 > 0 && (near(d3 / d1) || near(d5 / d3) || near(d5 / d1))) {
+      bonus += 1;
+      parts.push("Fib-Zeit ✓");
+    } else {
+      parts.push("Fib-Zeit –"); // Soft-Guideline: kein Flag (GL-7)
+    }
+  }
+
   return {
     bonus,
     maxBonus,
