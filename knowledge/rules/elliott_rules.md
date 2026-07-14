@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 3.0
+version: 3.1
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -147,10 +147,13 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 | HR-2 | `impulseFinder` (L3 nie kürzeste, Log-Länge) |
 | HR-5 | teilw.: Substruktur-Check `quality.assessQuality` (W3/W5-Segmente) |
 | DG-1…DG-3 | **offen** (§9) — Overlap-Verbot macht Diagonalen derzeit unauffindbar |
-| KO-2/KO-3/KO-4-Klassifikation | **offen** (§9); A/B/C-Beine: `engine.correctionLegs` |
+| KO-2/KO-3-Klassifikation | `correction.classifyCorrection` (B/A-Ratio) + KO-Ziel-Injektion in die Cluster-Kandidaten; A/B/C-Beine: `engine.correctionLegs` |
+| KO-4 | teilw.: Triangle-**Verdacht** in `correction.classifyCorrection` (Vollklassifikation §9) |
 | KO-6 / FB-8 | `fibCluster.longLevelCandidates` + `clusterLevels` (dual, ATR-adaptiv) |
 | GL-1, GL-2, GL-3, FB-1, FB-2 | `impulseFinder.scoreImpulse` (Scoring) |
-| GL-4, GL-5, GL-7 | **offen** (§9) |
+| GL-4 | `quality.assessQuality` (W4 an 0-2-Basislinie, Log-Raum) |
+| GL-5 | `quality.assessQuality` (W3-Volumendominanz; Yahoo-Weekly-Volumen) |
+| GL-7 | `quality.assessQuality` (Dauer-Relationen W1/W3/W5, Bonus ohne Flag) |
 | GL-6 | `quality.assessQuality` (Oszillator-Divergenz) |
 | FB-5/FB-6-Projektionen | `fibCluster` (C = k·A, linear + log) |
 | VG-1…VG-3 | `impulseFinder` (Reihenfolge, Geometrie, Segment-Extreme) |
@@ -164,15 +167,13 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 
 1. **Diagonal-Finder** (DG-1/2): Overlap-toleranter Keil-Sucher mit
    Konvergenz-Bedingung der 2-4-/1-3-Linien; Ending Diagonal als eigenes
-   Terminal-Signal.
-2. **Korrektur-Klassifikator** (KO-2…KO-5): Zigzag/Flat/Triangle
-   deterministisch unterscheiden (B/A-Ratio, Substruktur), Ziele
-   musterabhängig statt generisch.
-3. **Kanal-Check** (GL-4): Abstand W4/W5 zu 0-2-Basislinie und Parallelen
-   als Score-Komponente.
-4. **Volumen** (GL-5): Yahoo liefert Weekly-Volumen — W3-Volumendominanz
-   und W5-Erschöpfung als Checks.
-5. **Fib-Zeit** (GL-7): Zeitrelationen als Score-Komponente.
+   Terminal-Signal. Bewusst eigene Design-Runde: ändert die
+   Kern-Suchsemantik (Overlap) und ist erst an einem Live-Keil verifizierbar.
+2. **Triangle-Vollklassifikation & Running Flat** (KO-3/KO-4): aus dem
+   Verdachts-Hinweis eine belastbare a–e-Zählung mit Thrust-Projektion
+   machen; Running Flat erst nach Abschluss klassifizierbar.
+3. **Kanal-Projektion** (GL-4): aktuell nur W4-Basislinien-Check —
+   W5-Zielprojektion über die 2-4-Parallele ergänzen.
 
 ---
 *Kanon-Referenzen: Elliott (1938), Frost/Prechter „Elliott Wave Principle".

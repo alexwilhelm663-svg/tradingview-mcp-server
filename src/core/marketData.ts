@@ -4,6 +4,7 @@ export interface Candle {
   high: number;
   low: number;
   close: number;
+  volume?: number;
 }
 
 export interface MarketData {
@@ -43,6 +44,7 @@ export async function fetchMarketData(
       high: Number(quote.high[i]),
       low: Number(quote.low[i]),
       close: Number(quote.close[i]),
+      volume: Number(quote.volume?.[i] ?? 0),
     });
   }
 

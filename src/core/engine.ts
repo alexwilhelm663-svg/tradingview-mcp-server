@@ -8,6 +8,7 @@ import { longLevelCandidates, clusterLevels } from "./fibCluster";
 import { upsertPendingSetup, SetupMeta } from "./setups";
 import { findImpulseAdaptive, WaveCount, WavePoint } from "./impulseFinder";
 import { getCritique, Critique } from "./commentary";
+import { classifyCorrection, CorrectionRead } from "./correction";
 import { assessQuality } from "./quality";
 
 export interface AnalysisResult {
@@ -127,6 +128,8 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
     console.log(`[ENGINE] ${symbol}: ${wc.trend}-Impuls, Score ${totalScore}/${totalMax}${impulse.doctrineAnchor ? " (Doktrin-Anker)" : " (Fallback-Anker)"} · ZigZag ${threshold}%${quality.flags.length > 0 ? " · ⚠️ " + quality.flags.join(",") : ""}`);
 
     // Stufe 2 (V114): strukturierte LLM-Kritik - optional, ausserhalb des
+    // Hinweis V115: Die Korrektur-Lesart (KO-2/3/4) entsteht erst nach dem
+    // Gating und ist rein deterministisch - sie geht nicht in die Kritik ein.
     // kritischen Pfads. Wirkt NUR als Vorsichts-Asymmetrie: schwache Kritik
     // hebt die Setup-Anforderungen an, aendert aber nie die Zaehlung.
     const critique: Critique | null = await getCritique(
@@ -155,6 +158,7 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       aLow: null, aDate: null, bHigh: null, bDate: null, cLow: null, cDate: null,
     };
 
+    let correction: CorrectionRead | null = null;
     if (w0 && w5 && wc.trend === "bullish" && currentPrice < w5.price) {
       legs = correctionLegs(pivots, candles, w5.date);
       const cands = longLevelCandidates({
@@ -164,6 +168,18 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         aLow: legs.aLow,
         bHigh: legs.bHigh,
       });
+
+      // V115 (KO-2/3/4): Korrektur-Lesart + musterabhaengiges C-Ziel
+      if (legs.aLow != null && legs.bHigh != null) {
+        correction = classifyCorrection(
+          w5.price, legs.aLow, legs.bHigh, legs.cLow, currentPrice,
+          pivots.filter((pv) => pv.date > w5.date)
+        );
+        if (correction.targetPrice != null && correction.targetLabel != null) {
+          cands.push({ price: correction.targetPrice, label: correction.targetLabel });
+          cands.sort((a, b) => a.price - b.price);
+        }
+      }
       // ATR-adaptive Toleranz (Skill-Prinzip): 3.5%..7%, je nach Volatilitaet
       const tolPct = Math.max(3.5, Math.min(7, weeklyAtrPct(candles)));
       const clusters = clusterLevels(cands, tolPct);
@@ -199,7 +215,8 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
           `🟡 **PENDING**: Kurs im Fib-Cluster ${inZone.floor.toFixed(2)}–${inZone.ceiling.toFixed(2)} ` +
           `(Score ${inZone.score}: ${inZone.labels.join(", ")}).\n` +
           `Trigger: Wochenschluss > ${overhead != null ? overhead.toFixed(2) : "n/a"} · ` +
-          `Invalidierung: Wochenschluss < ${(inZone.floor * 0.97).toFixed(2)}`;
+          `Invalidierung: Wochenschluss < ${(inZone.floor * 0.97).toFixed(2)}` +
+          (correction ? `\n${correction.text}` : "");
       } else {
         const below = clusters
           .filter((cl) => cl.score >= 2 && cl.ceiling < currentPrice)
@@ -214,7 +231,8 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
           ? `⚪ Kein aktives Setup. Nächster Long-Cluster darunter: ${below.floor.toFixed(2)}–${below.ceiling.toFixed(2)} ` +
             `(Score ${below.score}: ${below.labels.join(", ")})` +
             (overhead != null ? ` · Overhead-Trigger: ${overhead.toFixed(2)}` : "")
-          : "⚪ Kein Fib-Cluster unterhalb des Kurses ableitbar.");
+          : "⚪ Kein Fib-Cluster unterhalb des Kurses ableitbar.")
+          + (correction ? `\n${correction.text}` : "");
       }
     }
 
