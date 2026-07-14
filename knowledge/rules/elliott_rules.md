@@ -1,57 +1,240 @@
 ---
-type: knowledge_rule
 category: elliott_waves
-version: 2.0
-source: konsolidiert aus prompt.ts (V110)
+source: Elliott Wave Validator v4.0
+status: institutional
+type: knowledge_rule
+version: 4
 ---
-# Elliott-Wellen Regelwerk (OKF-Basis)
 
-## 1. Motive Wellen (Impulse)
+# Elliott-Wellen Regelwerk (Institutional OKF v4.0)
 
-Harte Regeln (nicht verhandelbar):
-- Welle 2 korrigiert Welle 1 niemals zu mehr als 100% (kein Unterschreiten des Starts von Welle 1).
-- Welle 4 dringt nie in das Preisgebiet von Welle 1 ein (Ueberschneidungsverbot; einzige Ausnahme: Diagonale).
-- Welle 3 wandert immer ueber das Ende von Welle 1 hinaus und ist nie die kuerzeste der Antriebswellen 1/3/5.
-- Unterwelle 3 ist immer selbst ein Impuls.
+## Ziel
 
-Richtlinien:
-- Extension: genau eine der Antriebswellen (meist Welle 3) ist gestreckt.
-- Trunkierung: Welle 5 verfehlt gelegentlich das Welle-3-Extrem — Signal fuer eine scharfe Umkehr.
-- Alternation: Welle 2 und Welle 4 unterscheiden sich in Form und Charakter (scharf vs. seitwaerts).
-- Gleichheit: zwei Antriebswellen streben Gleichheit oder eine 0.618-Relation an.
-- Kanalisierung: Impulse laufen in parallelen Trendkanaelen; Throw-over nur bei hohem Volumen belastbar.
-- Volumen-Gesetz: Welle 3 traegt das hoechste Volumen. Preisanstieg bei fallendem Volumen = Erschoepfung, kein robuster Impuls.
+Dieses Regelwerk definiert einen deterministischen Standard zur
+Validierung von Elliott-Wellen. Es trennt zwingende Regeln von
+probabilistischen Richtlinien und dient als Grundlage für automatisierte
+Scanner und institutionelle Analysen.
 
-Diagonale Dreiecke:
-- Ending Diagonal: Position Welle 5 oder C, Keilform, Struktur 3-3-3-3-3, W4/W1-Ueberschneidung erlaubt.
-- Leading Diagonal: Position Welle 1 oder A, Keilform, Struktur 5-3-5-3-5.
+## 1. Grundprinzipien
 
-## 2. Korrektive Wellen
+-   Arbeite ausschließlich regelbasiert.
+-   Keine Interpretation ohne Evidenz.
+-   Keine erzwungenen Zählungen.
+-   Bevorzuge niemals einen bullischen oder bärischen Bias.
+-   Verwerfe ungültige Strukturen konsequent.
+-   Liefere Alternativzählungen, sofern mehrere valide Lösungen
+    existieren.
 
-- Eine Korrektur besteht nie aus fuenf Wellen; eine 5-Wellen-Gegenbewegung ist nie das Ende der Korrektur.
-- Zigzag (5-3-5): scharfe Korrektur, A-B-C, B endet deutlich unter dem Start von A.
-- Flat (3-3-5): Regular (B ≈ Start von A, C endet knapp hinter A), Expanded (B ueberschiesst den Start von A, C laeuft substanziell ueber das Ende von A hinaus — haeufigste Form), Running (C verfehlt das Ende von A).
-- Triangle (3-3-3-3-3): a-b-c-d-e, Position Welle 4, B oder X; danach folgt der Thrust.
-- Double Three (W-X-Y): Pflicht-Zaehlung bei zaehen Seitwaertskanaelen, die sich nicht sauber als Impuls zaehlen lassen.
+## 2. Priorität der Regeln
 
-## 3. Eiserne Validierungs-Gesetze
+### MUST (harte Regeln)
 
-1. Kein Zeitsprung: Datum(i) <= Datum(i+1) fuer alle aufeinanderfolgenden Wellenpunkte.
-2. Kein Retracement-Bruch: eine Unterwelle 2 faellt nie unter den Start ihrer Unterwelle 1.
-3. Kein Anti-Gravitationstief: ein Korrektur-Tal liegt tiefer als der vorangehende Gipfel.
-4. Kein Overlap: das Welle-4-Tal liegt nie im Preisgebiet der Welle-1-Spitze (ausser Diagonale).
+Ein Verstoß macht die Zählung ungültig.
 
-## 4. Fibonacci-Beziehungen
+### SHOULD (starke Richtlinien)
 
-- Motive: W1/W3/W5 stehen relational ueber 1.000 / 1.618 / 2.618 (bzw. 0.618 / 0.382) zueinander.
-- Bei W3-Extension gilt: W5 ≈ 1.000 × W1 oder 0.618 × W1.
-- Welle 4 teilt den Gesamtimpuls haeufig im Goldenen Schnitt.
-- Zigzag: C = 1.000 × A; Alternativen 0.618 oder 1.618 × A.
-- Flat: Regular A ≈ B ≈ C; Expanded C = 1.618 × A (selten 2.618), B = 1.236–1.382 × A.
-- Triangle: alternierende Wellen ≈ 0.618 (kontrahierend) bzw. 1.618 (expandierend).
-- W4 vs. W2: haeufig prozentuale Gleichheit oder klare Fib-Relation.
-- Kein Target ohne Fibonacci-Herleitung, kein Signal ohne Invalidierungslevel.
+Beeinflussen die Wahrscheinlichkeit.
 
-## 5. Saekulare Trend-Doktrin
+### MAY (optionale Merkmale)
 
-Jahrzehntelange exponentielle Anstiege (BTC, grosse Indizes) sind zwingend als 5-teiliger Impuls zu zaehlen, nie als A-B-C-Aufwaertskorrektur. Historische Crashs (2018/2022) sind Makro-Wellen 2 oder 4 — kein Trendbruch.
+Erhöhen oder reduzieren die Konfidenz.
+
+## 3. Datenvalidierung
+
+Vor jeder Analyse prüfen:
+
+-   Chronologisch korrekte Kursdaten
+-   Split- und Dividendenanpassungen
+-   Keine offensichtlichen Datenfehler
+-   Ausreichende Historie
+-   Ausreichende Liquidität
+
+## 4. Fraktalgesetz
+
+-   Jede Impulswelle besteht aus fünf Unterwellen.
+-   Jede Korrektur besitzt ihre definierte interne Struktur.
+-   Jeder Degree wird separat validiert.
+-   Degrees dürfen nicht vermischt werden.
+
+## 5. Multi-Timeframe-Regeln
+
+Die Zählung muss zwischen Monthly, Weekly, Daily, 4H und 1H konsistent
+sein.
+
+Niedrigere Zeitebenen dürfen höheren Degrees nicht widersprechen.
+
+## 6. Motive Wellen
+
+### MUST
+
+-   W2 retraced niemals mehr als 100 % von W1.
+-   W3 überschreitet immer das Ende von W1.
+-   W3 ist niemals die kürzeste Antriebswelle.
+-   W4 überlappt W1 nicht (Ausnahme: Diagonalen).
+-   W3 besitzt selbst eine vollständige 5-Wellen-Struktur.
+
+### SHOULD
+
+-   Genau eine Extension.
+-   Alternation zwischen W2 und W4.
+-   Trendkanal bleibt weitgehend intakt.
+-   Fibonacci-Relationen vorhanden.
+
+## 7. Diagonalen
+
+### Leading Diagonal
+
+-   Position W1 oder A
+-   5-3-5-3-5 bevorzugt
+-   3-3-3-3-3 als zulässige Alternative
+
+### Ending Diagonal
+
+-   Position W5 oder C
+-   Struktur 3-3-3-3-3
+-   Überlappung W1/W4 erlaubt
+-   Konvergierender oder divergierender Keil
+
+## 8. Korrekturen
+
+Unterstützte Muster
+
+-   Zigzag
+-   Double Zigzag
+-   Triple Zigzag
+-   Regular Flat
+-   Expanded Flat
+-   Running Flat
+-   Triangle
+-   Contracting Triangle
+-   Expanding Triangle
+-   Double Three
+-   Triple Three
+
+## 9. Fibonacci-Engine
+
+### Retracements
+
+-   23.6 %
+-   38.2 %
+-   50 %
+-   61.8 %
+-   78.6 %
+
+### Projektionen
+
+-   1.000
+-   1.272
+-   1.618
+-   2.618
+-   4.236
+
+Keine Projektion ohne Referenzwelle.
+
+## 10. Zeitsymmetrie
+
+Prüfe Fibonacci-Zeitrelationen zwischen
+
+-   W1 und W2
+-   W2 und W4
+-   A und C
+
+Bevorzugte Faktoren:
+
+-   0.618
+-   1.000
+-   1.618
+
+## 11. Momentum
+
+W3 sollte besitzen:
+
+-   höchstes Momentum
+-   höchsten ADX
+-   stärksten MACD
+-   stärkste Marktbreite
+
+W5 zeigt häufig Divergenzen.
+
+## 12. Volumen
+
+Typischer Verlauf:
+
+-   W1 steigend
+-   W3 Maximum
+-   W5 nachlassend
+-   Korrekturen rückläufig
+
+## 13. Kanalregeln
+
+Akzeptierte Kanäle:
+
+-   W2/W4
+-   W1/W3
+
+Throw-over nur mit Momentum- und Volumenbestätigung.
+
+## 14. Alternativzählungen
+
+Immer erzeugen:
+
+1.  Primary Count
+2.  Alternate Count
+3.  Low Probability Count
+
+## 15. Score-Modell
+
+Bewerte getrennt:
+
+-   Regelkonformität
+-   Fraktalstruktur
+-   Fibonacci
+-   Zeit
+-   Momentum
+-   Volumen
+-   Kanal
+-   Alternation
+-   Degree-Konsistenz
+-   Multi-Timeframe
+
+Berechne daraus einen Gesamtscore von 0--100.
+
+## 16. Konfidenzklassen
+
+-   95--100: Institutionelle Qualität
+-   90--94: Sehr hoch
+-   80--89: Hoch
+-   70--79: Mittel
+-   60--69: Schwach
+-   \<60: Verwerfen
+
+## 17. Ausgabeformat
+
+Für jede Zählung:
+
+-   Primary Count
+-   Alternate Count
+-   Degree
+-   Struktur
+-   Regelverstöße
+-   Fibonacci
+-   Zeit
+-   Momentum
+-   Volumen
+-   Kanal
+-   Invalidierungslevel
+-   Kursziele
+-   Wahrscheinlichkeitsbegründung
+-   Gesamtscore
+
+## 18. Verbotene Verhaltensweisen
+
+-   Keine erfundenen Wellen.
+-   Keine nachträgliche Anpassung an Wunschziele.
+-   Keine unbegründeten Wahrscheinlichkeiten.
+-   Keine Verletzung von MUST-Regeln.
+
+Falls keine gültige Struktur existiert:
+
+> Keine valide Elliott-Wellen-Struktur vorhanden. Analyse verworfen.
+> 
