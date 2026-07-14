@@ -1,4 +1,18 @@
+import fs from "fs";
+import path from "path";
 import type { WaveCount } from "./impulseFinder";
+
+/** Regelwerk v3 als Referenz fuer den Kritiker (mit Groessen-Guard). */
+function loadRulebook(): string {
+  try {
+    const p = path.join(process.cwd(), "knowledge/rules/elliott_rules.md");
+    if (!fs.existsSync(p)) return "";
+    const txt = fs.readFileSync(p, "utf-8");
+    return txt.length > 12000 ? txt.slice(0, 12000) : txt;
+  } catch {
+    return "";
+  }
+}
 
 export interface Critique {
   confidence: number; // 0-100
@@ -33,9 +47,13 @@ export async function getCritique(
   if (!key) return null;
   const model = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
+  const rulebook = loadRulebook();
   const prompt =
     `Du bist ein kritischer Elliott-Wave-Reviewer. Die Zaehlung wurde bereits deterministisch ` +
     `validiert und mit Qualitaets-Checks versehen - du lieferst NUR eine strukturierte Zweitmeinung.\n` +
+    (rulebook
+      ? `PRUEFE GEGEN DIESES REGELWERK und zitiere in "note" die relevanten Regel-IDs (z.B. GL-6, KO-3, DK-3):\n${rulebook}\n\n`
+      : "") +
     `ANTWORTE AUSSCHLIESSLICH mit JSON, ohne Markdown, exakt in dieser Form:\n` +
     `{"confidence": <0-100>, "flags": [<0-3 Eintraege aus: ${FLAG_CATALOG.join(", ")}>], "note": "<hoechstens 40 Woerter Deutsch>"}\n\n` +
     `${symbol} @ ${currentPrice.toFixed(2)} | trend=${wc.trend}\n` +
