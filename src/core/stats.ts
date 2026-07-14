@@ -18,6 +18,21 @@ export function updateStatistics(): void {
     return `${((w / sub.length) * 100).toFixed(0)}% (${w}/${sub.length})`;
   };
 
+  const band = (lo: number, hi: number): string => {
+    const sub = trades.filter(
+      (t) => t.confidence != null && t.confidence >= lo && t.confidence < hi
+    );
+    if (sub.length === 0) return "keine Daten";
+    const w = sub.filter((t) => t.is_success === 1).length;
+    return `${((w / sub.length) * 100).toFixed(0)}% (${w}/${sub.length})`;
+  };
+  const noCritique = (): string => {
+    const sub = trades.filter((t) => t.confidence == null);
+    if (sub.length === 0) return "keine Daten";
+    const w = sub.filter((t) => t.is_success === 1).length;
+    return `${((w / sub.length) * 100).toFixed(0)}% (${w}/${sub.length})`;
+  };
+
   const report = `---
 type: performance_stats
 last_updated: ${new Date().toISOString()}
@@ -28,7 +43,13 @@ last_updated: ${new Date().toISOString()}
 - CLUSTER-Setups (Fib-Konfluenz): ${byType("CLUSTER")}
 - HOT-Setups (Alt, Kill-Zone): ${byType("HOT")}
 - BREAKOUT-Setups (Welle 3): ${byType("BREAKOUT")}
-- Status: ${Number(winRate) > 70 ? "OPTIMIERT" : "LERNPHASE"}`;
+- Status: ${Number(winRate) > 70 ? "OPTIMIERT" : "LERNPHASE"}
+
+## Kritiker-Kalibrierung (LLM-Confidence vs. Trefferquote)
+- Confidence >= 70: ${band(70, 101)}
+- Confidence 40-69: ${band(40, 70)}
+- Confidence < 40: ${band(0, 40)}
+- Ohne Kritik: ${noCritique()}`;
 
   const dir = path.join(process.cwd(), "knowledge/statistics");
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

@@ -23,11 +23,18 @@ const INVALIDATION_BUFFER = 0.97; // 3% unter Cluster-Boden
  * Ein Symbol hat maximal ein aktives Setup; abgeschlossene Setups
  * (CONFIRMED/INVALIDATED/TIMEOUT) werden bei erneutem Cluster-Kontakt ersetzt.
  */
+export interface SetupMeta {
+  llmConfidence: number | null;
+  llmFlags: string[];
+  detFlags: string[];
+}
+
 export function upsertPendingSetup(
   symbol: string,
   cluster: FibCluster,
   triggerLevel: number | null,
-  cLow: number
+  cLow: number,
+  meta: SetupMeta = { llmConfidence: null, llmFlags: [], detFlags: [] }
 ): "created" | "refreshed" {
   const invalidation = cluster.floor * INVALIDATION_BUFFER;
   const row = db.prepare("SELECT status FROM setups WHERE symbol = ?").get(symbol) as
@@ -37,7 +44,8 @@ export function upsertPendingSetup(
   if (row && row.status === "PENDING") {
     db.prepare(
       `UPDATE setups SET cluster_floor=?, cluster_ceiling=?, cluster_score=?,
-       trigger_level=?, invalidation=?, c_low=?, levels=?, updated_at=CURRENT_TIMESTAMP
+       trigger_level=?, invalidation=?, c_low=?, levels=?,
+       llm_confidence=?, llm_flags=?, det_flags=?, updated_at=CURRENT_TIMESTAMP
        WHERE symbol=?`
     ).run(
       cluster.floor,
@@ -47,6 +55,9 @@ export function upsertPendingSetup(
       invalidation,
       cLow,
       JSON.stringify(cluster.labels),
+      meta.llmConfidence,
+      JSON.stringify(meta.llmFlags),
+      JSON.stringify(meta.detFlags),
       symbol
     );
     return "refreshed";
@@ -55,8 +66,8 @@ export function upsertPendingSetup(
   db.prepare(
     `INSERT OR REPLACE INTO setups
      (symbol, status, cluster_floor, cluster_ceiling, cluster_score, trigger_level,
-      invalidation, c_low, levels, created_at, updated_at)
-     VALUES (?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+      invalidation, c_low, levels, llm_confidence, llm_flags, det_flags, created_at, updated_at)
+     VALUES (?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
   ).run(
     symbol,
     cluster.floor,
@@ -65,7 +76,10 @@ export function upsertPendingSetup(
     triggerLevel,
     invalidation,
     cLow,
-    JSON.stringify(cluster.labels)
+    JSON.stringify(cluster.labels),
+    meta.llmConfidence,
+    JSON.stringify(meta.llmFlags),
+    JSON.stringify(meta.detFlags)
   );
   return "created";
 }
@@ -92,9 +106,13 @@ export async function resolvePendingSetups(fetcher: Fetcher = fetchMarketData): 
 
       if (s.trigger_level != null && lastComplete.close > s.trigger_level) {
         const target = s.trigger_level + 1.618 * (s.trigger_level - s.c_low);
+        const allFlags = [
+          ...JSON.parse(s.det_flags ?? "[]"),
+          ...JSON.parse(s.llm_flags ?? "[]"),
+        ];
         db.prepare(
-          "INSERT INTO trade_history (symbol, signal_type, entry_price, invalidation, target) VALUES (?, 'CLUSTER', ?, ?, ?)"
-        ).run(s.symbol, lastComplete.close, s.invalidation, target);
+          "INSERT INTO trade_history (symbol, signal_type, entry_price, invalidation, target, confidence, flags) VALUES (?, 'CLUSTER', ?, ?, ?, ?, ?)"
+        ).run(s.symbol, lastComplete.close, s.invalidation, target, s.llm_confidence, JSON.stringify(allFlags));
         db.prepare(
           "UPDATE setups SET status='CONFIRMED', updated_at=CURRENT_TIMESTAMP WHERE symbol=?"
         ).run(s.symbol);
