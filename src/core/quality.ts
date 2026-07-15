@@ -1,6 +1,7 @@
 import type { Candle } from "./marketData";
 import { zigzag } from "./zigzag";
 import { findBestImpulse, WaveCount } from "./impulseFinder";
+import { detectDiagonal } from "./diagonal";
 
 export interface QualityAssessment {
   bonus: number;
@@ -73,6 +74,15 @@ export function assessQuality(
         parts.push(`${label}-Sub ✓ (${th}%)`);
         return;
       }
+    }
+    // DG-1-Aufloesung (V116): keine Impuls-Substruktur -> Keil pruefen.
+    // Ein Ending Diagonal ERKLAERT die 3-3-3-3-3-Struktur kanonisch.
+    const diag = detectDiagonal(seg, dir);
+    if (diag) {
+      bonus += 1;
+      parts.push(`${label} = Ending Diagonal (DG-1${diag.throwOver ? ", Throw-over" : ""}) ✓`);
+      flags.push(`${label}_ENDING_DIAGONAL`);
+      return;
     }
     flags.push(`${label}_SUB_UNKLAR`);
     parts.push(`${label}-Sub –`);
