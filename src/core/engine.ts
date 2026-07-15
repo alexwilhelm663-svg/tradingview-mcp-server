@@ -9,6 +9,7 @@ import { upsertPendingSetup, SetupMeta } from "./setups";
 import { findImpulseAdaptive, WaveCount, WavePoint } from "./impulseFinder";
 import { getCritique, Critique } from "./commentary";
 import { classifyCorrection, CorrectionRead } from "./correction";
+import { detectDiagonal } from "./diagonal";
 import { assessQuality } from "./quality";
 
 export interface AnalysisResult {
@@ -169,6 +170,15 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         bHigh: legs.bHigh,
       });
 
+      // V116 (DG-1): Ending Diagonal in der laufenden C-Welle?
+      // Terminales Muster -> rein informativ + Flag (DK-6: nie Trigger-lockernd).
+      let edInC = false;
+      if (legs.bDate != null) {
+        const cSegment = candles.filter((k) => k.date >= legs.bDate!);
+        const diag = detectDiagonal(cSegment, wc.trend === "bullish" ? -1 : 1);
+        if (diag) edInC = true;
+      }
+
       // V115 (KO-2/3/4): Korrektur-Lesart + musterabhaengiges C-Ziel
       if (legs.aLow != null && legs.bHigh != null) {
         correction = classifyCorrection(
@@ -178,6 +188,9 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         if (correction.targetPrice != null && correction.targetLabel != null) {
           cands.push({ price: correction.targetPrice, label: correction.targetLabel });
           cands.sort((a, b) => a.price - b.price);
+        }
+        if (edInC) {
+          correction.text += ` · ⚡ Ending Diagonal in C erkannt (DG-1) – terminales Muster, erhöhte Umkehr-Wahrscheinlichkeit`;
         }
       }
       // ATR-adaptive Toleranz (Skill-Prinzip): 3.5%..7%, je nach Volatilitaet
@@ -208,7 +221,7 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         const res = upsertPendingSetup(symbol, inZone, overhead, legs.cLow, {
           llmConfidence: critique?.confidence ?? null,
           llmFlags: critique?.flags ?? [],
-          detFlags: quality.flags,
+          detFlags: edInC ? [...quality.flags, "ED_IN_C_TERMINAL"] : quality.flags,
         });
         pendingCreated = res === "created";
         clusterInfo =

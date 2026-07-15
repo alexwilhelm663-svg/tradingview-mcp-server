@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 3.1
+version: 3.2
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -146,7 +146,9 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 | HR-1, HR-3, HR-4 | `impulseFinder.searchFromAnchor` (Konstruktionsbedingungen) |
 | HR-2 | `impulseFinder` (L3 nie kürzeste, Log-Länge) |
 | HR-5 | teilw.: Substruktur-Check `quality.assessQuality` (W3/W5-Segmente) |
-| DG-1…DG-3 | **offen** (§9) — Overlap-Verbot macht Diagonalen derzeit unauffindbar |
+| DG-1 | `diagonal.detectDiagonal` — Einsatz: W5-Substruktur (`quality`) und C-Welle (`engine`, Flag `ED_IN_C_TERMINAL`) |
+| DG-2 | Detektor geometrisch identisch vorhanden; Positions-Einsatz an W1/A **offen** (§9) |
+| DG-3 | **offen** (§9, expandierende Variante) |
 | KO-2/KO-3-Klassifikation | `correction.classifyCorrection` (B/A-Ratio) + KO-Ziel-Injektion in die Cluster-Kandidaten; A/B/C-Beine: `engine.correctionLegs` |
 | KO-4 | teilw.: Triangle-**Verdacht** in `correction.classifyCorrection` (Vollklassifikation §9) |
 | KO-6 / FB-8 | `fibCluster.longLevelCandidates` + `clusterLevels` (dual, ATR-adaptiv) |
@@ -165,10 +167,9 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 
 ## 9. Offene Prüfungen (Roadmap)
 
-1. **Diagonal-Finder** (DG-1/2): Overlap-toleranter Keil-Sucher mit
-   Konvergenz-Bedingung der 2-4-/1-3-Linien; Ending Diagonal als eigenes
-   Terminal-Signal. Bewusst eigene Design-Runde: ändert die
-   Kern-Suchsemantik (Overlap) und ist erst an einem Live-Keil verifizierbar.
+1. **Leading-Diagonal-Einsatz** (DG-2): Detektor an Position W1/A nutzen,
+   um frische Umkehrungen ab Cluster-Tiefs früh zu erkennen; **DG-3**
+   (expandierend) ergänzen.
 2. **Triangle-Vollklassifikation & Running Flat** (KO-3/KO-4): aus dem
    Verdachts-Hinweis eine belastbare a–e-Zählung mit Thrust-Projektion
    machen; Running Flat erst nach Abschluss klassifizierbar.
