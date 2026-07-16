@@ -33,10 +33,14 @@ export function upsertPendingSetup(
   symbol: string,
   cluster: FibCluster,
   triggerLevel: number | null,
-  cLow: number,
-  meta: SetupMeta = { llmConfidence: null, llmFlags: [], detFlags: [] }
+  cExtreme: number, // LONG: Korrektur-Tief | SHORT: Korrektur-Hoch (Spalte c_low, historischer Name)
+  meta: SetupMeta = { llmConfidence: null, llmFlags: [], detFlags: [] },
+  direction: "LONG" | "SHORT" = "LONG"
 ): "created" | "refreshed" {
-  const invalidation = cluster.floor * INVALIDATION_BUFFER;
+  const invalidation =
+    direction === "LONG"
+      ? cluster.floor * INVALIDATION_BUFFER
+      : cluster.ceiling * (2 - INVALIDATION_BUFFER);
   const row = db.prepare("SELECT status FROM setups WHERE symbol = ?").get(symbol) as
     | { status: string }
     | undefined;
@@ -45,7 +49,7 @@ export function upsertPendingSetup(
     db.prepare(
       `UPDATE setups SET cluster_floor=?, cluster_ceiling=?, cluster_score=?,
        trigger_level=?, invalidation=?, c_low=?, levels=?,
-       llm_confidence=?, llm_flags=?, det_flags=?, updated_at=CURRENT_TIMESTAMP
+       llm_confidence=?, llm_flags=?, det_flags=?, direction=?, updated_at=CURRENT_TIMESTAMP
        WHERE symbol=?`
     ).run(
       cluster.floor,
@@ -53,11 +57,12 @@ export function upsertPendingSetup(
       cluster.score,
       triggerLevel,
       invalidation,
-      cLow,
+      cExtreme,
       JSON.stringify(cluster.labels),
       meta.llmConfidence,
       JSON.stringify(meta.llmFlags),
       JSON.stringify(meta.detFlags),
+      direction,
       symbol
     );
     return "refreshed";
@@ -66,8 +71,8 @@ export function upsertPendingSetup(
   db.prepare(
     `INSERT OR REPLACE INTO setups
      (symbol, status, cluster_floor, cluster_ceiling, cluster_score, trigger_level,
-      invalidation, c_low, levels, llm_confidence, llm_flags, det_flags, created_at, updated_at)
-     VALUES (?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+      invalidation, c_low, levels, llm_confidence, llm_flags, det_flags, direction, created_at, updated_at)
+     VALUES (?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
   ).run(
     symbol,
     cluster.floor,
@@ -75,11 +80,12 @@ export function upsertPendingSetup(
     cluster.score,
     triggerLevel,
     invalidation,
-    cLow,
+    cExtreme,
     JSON.stringify(cluster.labels),
     meta.llmConfidence,
     JSON.stringify(meta.llmFlags),
-    JSON.stringify(meta.detFlags)
+    JSON.stringify(meta.detFlags),
+    direction
   );
   return "created";
 }
@@ -104,15 +110,23 @@ export async function resolvePendingSetups(fetcher: Fetcher = fetchMarketData): 
       const created = new Date(String(s.created_at).replace(" ", "T") + "Z").getTime();
       const ageDays = (Date.now() - created) / 86_400_000;
 
-      if (s.trigger_level != null && lastComplete.close > s.trigger_level) {
-        const target = s.trigger_level + 1.618 * (s.trigger_level - s.c_low);
+      const dir: "LONG" | "SHORT" = s.direction === "SHORT" ? "SHORT" : "LONG";
+      const s2 = dir === "LONG" ? 1 : -1;
+      const triggered =
+        s.trigger_level != null &&
+        (dir === "LONG" ? lastComplete.close > s.trigger_level : lastComplete.close < s.trigger_level);
+      const invalidatedNow =
+        dir === "LONG" ? lastComplete.close < s.invalidation : lastComplete.close > s.invalidation;
+
+      if (triggered) {
+        const target = s.trigger_level + s2 * 1.618 * Math.abs(s.trigger_level - s.c_low);
         const allFlags = [
           ...JSON.parse(s.det_flags ?? "[]"),
           ...JSON.parse(s.llm_flags ?? "[]"),
         ];
         db.prepare(
-          "INSERT INTO trade_history (symbol, signal_type, entry_price, invalidation, target, confidence, flags) VALUES (?, 'CLUSTER', ?, ?, ?, ?, ?)"
-        ).run(s.symbol, lastComplete.close, s.invalidation, target, s.llm_confidence, JSON.stringify(allFlags));
+          "INSERT INTO trade_history (symbol, signal_type, entry_price, invalidation, target, confidence, flags, direction) VALUES (?, 'CLUSTER', ?, ?, ?, ?, ?, ?)"
+        ).run(s.symbol, lastComplete.close, s.invalidation, target, s.llm_confidence, JSON.stringify(allFlags), dir);
         db.prepare(
           "UPDATE setups SET status='CONFIRMED', updated_at=CURRENT_TIMESTAMP WHERE symbol=?"
         ).run(s.symbol);
@@ -120,17 +134,17 @@ export async function resolvePendingSetups(fetcher: Fetcher = fetchMarketData): 
           symbol: s.symbol,
           type: "CONFIRMED",
           text:
-            `🚀 **${s.symbol} CONFIRMED**: Wochenschluss ${lastComplete.close.toFixed(2)} über Trigger ${Number(s.trigger_level).toFixed(2)}.\n` +
+            `${dir === "LONG" ? "🚀" : "🔻"} **${s.symbol} CONFIRMED (${dir})**: Wochenschluss ${lastComplete.close.toFixed(2)} ${dir === "LONG" ? "über" : "unter"} Trigger ${Number(s.trigger_level).toFixed(2)}.\n` +
             `Entry ~${lastComplete.close.toFixed(2)} · Invalidierung ${Number(s.invalidation).toFixed(2)} · Ziel (1.618·i) ${target.toFixed(2)}`,
         });
-      } else if (lastComplete.close < s.invalidation) {
+      } else if (invalidatedNow) {
         db.prepare(
           "UPDATE setups SET status='INVALIDATED', updated_at=CURRENT_TIMESTAMP WHERE symbol=?"
         ).run(s.symbol);
         events.push({
           symbol: s.symbol,
           type: "INVALIDATED",
-          text: `❌ **${s.symbol} INVALIDATED**: Wochenschluss ${lastComplete.close.toFixed(2)} unter Cluster-Boden (${Number(s.invalidation).toFixed(2)}).`,
+          text: `❌ **${s.symbol} INVALIDATED**: Wochenschluss ${lastComplete.close.toFixed(2)} ${dir === "SHORT" ? "über Cluster-Decke" : "unter Cluster-Boden"} (${Number(s.invalidation).toFixed(2)}).`,
         });
       } else if (ageDays >= PENDING_TIMEOUT_DAYS) {
         db.prepare(
@@ -164,7 +178,8 @@ export function listSetups(): string {
     TIMEOUT: "⌛",
   };
   const lines = rows.map((s) => {
-    const zone = `${Number(s.cluster_floor).toFixed(2)}–${Number(s.cluster_ceiling).toFixed(2)}`;
+    const dirIcon = s.direction === "SHORT" ? "⬇️" : "⬆️";
+    const zone = `${dirIcon} ${Number(s.cluster_floor).toFixed(2)}–${Number(s.cluster_ceiling).toFixed(2)}`;
     const trig = s.trigger_level != null ? Number(s.trigger_level).toFixed(2) : "n/a";
     const since = String(s.created_at).split(" ")[0];
     return `${icon[s.status] ?? "•"} **${s.symbol}** · ${s.status} · Zone ${zone} · Trigger ${trig} · seit ${since}`;

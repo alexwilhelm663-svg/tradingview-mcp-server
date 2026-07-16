@@ -30,18 +30,21 @@ export interface CorrectionRead {
  */
 export function classifyCorrection(
   w5Price: number,
-  aLow: number,
-  bHigh: number,
-  cLowSoFar: number | null,
+  aExtreme: number, // dir=1: A-Tief | dir=-1: A-Hoch
+  bExtreme: number, // dir=1: B-Hoch | dir=-1: B-Tief
+  cExtremeSoFar: number | null,
   currentPrice: number,
-  postTopPivots: Pivot[]
+  postTopPivots: Pivot[],
+  dir: 1 | -1 = 1 // 1 = Korrektur abwaerts (nach bullischem Impuls), -1 = aufwaerts
 ): CorrectionRead {
-  const A = w5Price - aLow;
-  const bRetr = A > 0 ? (bHigh - aLow) / A : 0;
-  const cOverA = A > 0 && cLowSoFar != null ? (bHigh - cLowSoFar) / A : null;
+  const A = dir * (w5Price - aExtreme);
+  const bRetr = A > 0 ? (dir * (bExtreme - aExtreme)) / A : 0;
+  const cOverA =
+    A > 0 && cExtremeSoFar != null ? (dir * (bExtreme - cExtremeSoFar)) / A : null;
 
   let pattern: CorrectionPattern;
-  if (bRetr >= 0.9) pattern = bHigh > w5Price * 1.005 ? "FLAT_EXPANDED" : "FLAT_REGULAR";
+  if (bRetr >= 0.9)
+    pattern = dir * (bExtreme - w5Price) > Math.abs(w5Price) * 0.005 ? "FLAT_EXPANDED" : "FLAT_REGULAR";
   else if (bRetr >= 0.382 && bRetr <= 0.786) pattern = "ZIGZAG";
   else pattern = "UNKLAR";
 
@@ -55,8 +58,8 @@ export function classifyCorrection(
   let targetPrice: number | null = null;
   let targetLabel: string | null = null;
   for (const k of kSet) {
-    const level = bHigh - k * A;
-    if (level > 0 && level < currentPrice) {
+    const level = bExtreme - dir * k * A;
+    if (level > 0 && dir * (currentPrice - level) > 0) {
       targetPrice = level;
       targetLabel = `KO-Ziel C=${k}·A (${pattern === "ZIGZAG" ? "KO-2" : "KO-3"})`;
       break;
