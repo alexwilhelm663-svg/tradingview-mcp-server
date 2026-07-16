@@ -22,6 +22,7 @@ export interface AnalysisResult {
   breakoutStatus: string;
   analysis: WaveCount | null;
   commentary: string | null;
+  abstention: string | null;
 }
 
 const EMPTY: AnalysisResult = {
@@ -34,6 +35,7 @@ const EMPTY: AnalysisResult = {
   breakoutStatus: "",
   analysis: null,
   commentary: null,
+  abstention: null,
 };
 
 function pt(wc: WaveCount, label: string): WavePoint | undefined {
@@ -111,13 +113,14 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
     const { weeklyAnalysisCandles: candles } = await fetchMarketData(symbol);
     const currentPrice = candles[candles.length - 1].close;
 
-    // 2. Deterministische Impulszaehlung (V113.1): adaptive Aufloesungs-Leiter
-    const adaptive = findImpulseAdaptive(candles);
-    if (!adaptive) {
-      console.warn(`[ENGINE] ${symbol}: keine regelkonforme Impulszaehlung auf keiner ZigZag-Stufe (25/18/12/8%) ableitbar.`);
-      return EMPTY;
+    // 2. Deterministische Impulszaehlung (V113.1) mit Enthaltungs-Gebot (DK-7)
+    const outcome = findImpulseAdaptive(candles);
+    if (outcome.impulse === null) {
+      console.log(`[ENGINE] ${symbol}: Enthaltung (DK-7) - ${outcome.abstention}`);
+      const buffer = await renderChart({ symbol, waves: [], candles });
+      return { ...EMPTY, buffer, abstention: outcome.abstention };
     }
-    const { result: impulse, pivots, threshold } = adaptive;
+    const { result: impulse, pivots, threshold } = outcome.impulse;
     const wc = impulse.count;
 
     // 2b. Deterministische Qualitaets-Checks (V114 Stufe 1):
@@ -304,6 +307,7 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       breakoutStatus,
       analysis: wc,
       commentary,
+      abstention: null,
     };
   } catch (err: any) {
     console.error(`[ENGINE] Analysefehler ${symbol}:`, err?.message ?? err);
