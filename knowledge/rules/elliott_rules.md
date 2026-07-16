@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 3.2
+version: 3.3
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -135,6 +135,12 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
   Fibonacci-Herleitung, kein Setup ohne Invalidierungslevel, kein Cluster
   mit Score < 2; Bestätigung ausschließlich per Wochenschluss über dem
   Trigger (State Machine PENDING → CONFIRMED/INVALIDATED/TIMEOUT).
+- **DK-7 Enthaltungs-Gebot:** Lieber keine Zählung als eine erzwungene.
+  Fallback-Anker-Zählungen unterhalb Score 8/12 werden verworfen; die
+  Engine meldet Enthaltung mit Begründung und liefert den nackten
+  Preischart. Doktrin-Anker-Zählungen bleiben stets gültig (harte Regeln
+  am Fenster-Extrem bestanden). Motivation: PYPL-Fall — der eigene
+  Kritiker urteilte „Zählung wirkt erzwungen".
 - **DK-6 Kritiker-Asymmetrie:** LLM-Review (Confidence/Flags) darf
   Anforderungen nur verschärfen, nie lockern — und nie die Zählung ändern.
   Seine Güte wird über Confidence-Bänder in der OKF-Statistik gemessen.
@@ -163,6 +169,7 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 | VG-5 | konstruktiv erfüllt (Finder erzeugt stets 0–5) |
 | DK-1…DK-4 | `impulseFinder` (Anker, Log, No-Trunc, `findImpulseAdaptive`) |
 | DK-5 | `engine` (Gating, Cluster) + `setups` (State Machine, 84d-Timeout) |
+| DK-7 | `impulseFinder.findImpulseAdaptive` (MIN_FALLBACK_SCORE) + Enthaltungs-Modus in `engine`/`commands` |
 | DK-6 | `commentary.getCritique` + `engine` (minClusterScore) + `stats` (Bänder) |
 
 ## 9. Offene Prüfungen (Roadmap)

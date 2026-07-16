@@ -26,6 +26,15 @@ export interface AdaptiveImpulse {
   threshold: number;
 }
 
+export interface AdaptiveOutcome {
+  impulse: AdaptiveImpulse | null;
+  abstention: string | null;
+}
+
+// DK-7 Enthaltungs-Gebot: Fallback-Anker-Zaehlungen unterhalb dieser
+// Schwelle werden verworfen - lieber keine Zaehlung als eine erzwungene.
+const MIN_FALLBACK_SCORE = 8;
+
 /**
  * Aufloesungs-Leiter (V113.1): Der fixe 25%-ZigZag ist an High-Beta-Titeln
  * geeicht - Low-Vol-Megacaps (AAPL: ~3-4% Wochen-ATR) liefern damit zu
@@ -33,17 +42,37 @@ export interface AdaptiveImpulse {
  * Aufloesung NUR, wenn die groebere Stufe keinen Impuls findet:
  * Alles, was bei 25% funktioniert, bleibt byte-identisch.
  */
-export function findImpulseAdaptive(candles: Candle[]): AdaptiveImpulse | null {
+export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
+  let bestFallback: AdaptiveImpulse | null = null;
+
   for (const threshold of [25, 18, 12, 8]) {
     const pivots = zigzag(candles, threshold);
     if (pivots.length < 6) continue;
     const result = findBestImpulse(pivots);
-    if (result) {
-      result.count.analysis += ` · ZigZag ${threshold}%`;
-      return { result, pivots, threshold };
-    }
+    if (!result) continue;
+
+    result.count.analysis += ` · ZigZag ${threshold}%`;
+    const hit: AdaptiveImpulse = { result, pivots, threshold };
+
+    // Doktrin-Anker: harte Regeln am Fenster-Extrem bestanden -> immer gueltig
+    if (result.doctrineAnchor) return { impulse: hit, abstention: null };
+
+    // Fallback-Anker: als Kandidat merken, aber weiter verfeinern -
+    // vielleicht existiert auf feinerer Stufe eine Doktrin-Zaehlung.
+    if (!bestFallback || result.score > bestFallback.result.score) bestFallback = hit;
   }
-  return null;
+
+  if (bestFallback && bestFallback.result.score >= MIN_FALLBACK_SCORE) {
+    return { impulse: bestFallback, abstention: null };
+  }
+
+  // DK-7: ehrliche Enthaltung mit Begruendung
+  const abstention = bestFallback
+    ? `Keine belastbare Impulszählung im Analysefenster: Doktrin-Anker liefert keine regelkonforme Sequenz, ` +
+      `beste Fallback-Kandidatin erreicht nur Score ${bestFallback.result.score}/${bestFallback.result.maxScore} ` +
+      `(Schwelle: ${MIN_FALLBACK_SCORE}, DK-7). Struktur vermutlich korrektiv oder im Übergang.`
+    : `Keine regelkonforme Impulszählung auf keiner ZigZag-Stufe (25/18/12/8 %) ableitbar (DK-7).`;
+  return { impulse: null, abstention };
 }
 
 /**

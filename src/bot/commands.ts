@@ -93,10 +93,19 @@ export function registerCommands(
       const r = await analyzeAsset(symbol);
 
       if (!r.analysis) {
-        await ctx.reply(
-          `⚠️ Für **${symbol}** war keine valide Analyse möglich (Daten- oder Validierungsfehler). Details stehen im Server-Log.`,
-          { parse_mode: "Markdown" }
-        );
+        if (r.abstention) {
+          const caption = `🔍 **${symbol}** – Enthaltung (DK-7)\n${r.abstention}`;
+          if (r.buffer) {
+            await ctx.replyWithPhoto({ source: r.buffer }, { caption, parse_mode: "Markdown" });
+          } else {
+            await ctx.reply(caption, { parse_mode: "Markdown" });
+          }
+        } else {
+          await ctx.reply(
+            `⚠️ Für **${symbol}** war keine valide Analyse möglich (Daten- oder Validierungsfehler). Details stehen im Server-Log.`,
+            { parse_mode: "Markdown" }
+          );
+        }
         return;
       }
 

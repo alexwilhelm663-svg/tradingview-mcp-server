@@ -18,7 +18,7 @@ def main():
         waves = payload.get("waves", [])
         candles = payload.get("candles", [])
 
-        if not candles or not waves:
+        if not candles:
             sys.exit(1)
 
         df = pd.DataFrame(candles)
@@ -108,7 +108,7 @@ def main():
         clusters = payload.get("clusters")
         markers = payload.get("markers", []) or []
         end_date = df.index[-1]
-        last_wave_date = pd.to_datetime(waves[-1]["date"])
+        last_wave_date = pd.to_datetime(waves[-1]["date"]) if waves else df.index[int(len(df) * 0.55)]
         xmin = last_wave_date if last_wave_date < end_date else df.index[int(len(df) * 0.6)]
 
         # Label-Kollisionsschutz: keine zwei Beschriftungen naeher als
