@@ -56,6 +56,40 @@ export function longLevelCandidates(p: {
  * Gruppiert Level, die naeher als tolPct beieinanderliegen, zu Clustern.
  * Score = Anzahl konfluenter Herleitungen. Sortierung: Score, dann Preis.
  */
+/**
+ * Spiegel von longLevelCandidates (V117): Widerstands-Level fuer die
+ * Aufwaertskorrektur nach vollendetem BEARISHEN Impuls (w0 oben, w5 unten).
+ */
+export function shortLevelCandidates(p: {
+  w0: number;
+  w5: number;
+  w4?: number | null;
+  aHigh?: number | null;
+  bLow?: number | null;
+}): LevelCandidate[] {
+  const out: LevelCandidate[] = [];
+  const imp = p.w0 - p.w5;
+  if (imp > 0 && p.w5 > 0) {
+    const logRange = Math.log(p.w0) - Math.log(p.w5);
+    for (const f of [0.5, 0.618, 0.786, 0.886]) {
+      out.push({ price: p.w5 + f * imp, label: `Retr ${f}` });
+      out.push({ price: Math.exp(Math.log(p.w5) + f * logRange), label: `logRetr ${f}` });
+    }
+  }
+  if (p.w4 != null && p.w4 > 0) out.push({ price: p.w4, label: "W4-Zone" });
+  if (p.aHigh != null && p.bLow != null && p.bLow > 0) {
+    const A = p.aHigh - p.w5;
+    const logA = Math.log(p.aHigh) - Math.log(p.w5);
+    if (A > 0) {
+      for (const k of [0.618, 1.0, 1.236, 1.618]) {
+        out.push({ price: p.bLow + k * A, label: `C=${k}·A` });
+        out.push({ price: Math.exp(Math.log(p.bLow) + k * logA), label: `logC=${k}·A` });
+      }
+    }
+  }
+  return out.filter((l) => l.price > 0).sort((a, b) => a.price - b.price);
+}
+
 export function clusterLevels(cands: LevelCandidate[], tolPct = 3.5): FibCluster[] {
   const clusters: FibCluster[] = [];
   let group: LevelCandidate[] = [];

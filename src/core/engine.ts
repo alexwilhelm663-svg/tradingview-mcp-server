@@ -4,7 +4,7 @@ import db from "./db";
 import { fetchMarketData, Candle } from "./marketData";
 import { renderChart } from "./chart";
 import type { Pivot } from "./zigzag";
-import { longLevelCandidates, clusterLevels } from "./fibCluster";
+import { longLevelCandidates, shortLevelCandidates, clusterLevels } from "./fibCluster";
 import { upsertPendingSetup, SetupMeta } from "./setups";
 import { findImpulseAdaptive, WaveCount, WavePoint } from "./impulseFinder";
 import { getCritique, Critique } from "./commentary";
@@ -105,6 +105,51 @@ function correctionLegs(pivots: Pivot[], candles: Candle[], topDate: string): Co
     bHigh: bPivot.price, bDate: bPivot.date,
     cLow, cDate,
   };
+}
+
+interface CorrectionLegsShort {
+  aHigh: number | null;
+  aDate: string | null;
+  bLow: number | null;
+  bDate: string | null;
+  cHigh: number | null;
+  cDate: string | null;
+}
+
+/** Spiegel von correctionLegs: Aufwaertskorrektur nach dem Impuls-TIEF. */
+function correctionLegsShort(
+  pivots: Pivot[],
+  candles: Candle[],
+  bottomDate: string
+): CorrectionLegsShort {
+  const empty: CorrectionLegsShort = {
+    aHigh: null, aDate: null, bLow: null, bDate: null, cHigh: null, cDate: null,
+  };
+  const post = pivots.filter((p) => p.date > bottomDate);
+  const highs = post.filter((p) => p.kind === "H");
+  if (highs.length === 0) return empty;
+
+  const lows = post.filter((p) => p.kind === "L");
+  if (lows.length === 0) {
+    const running = highs.reduce((m, p) => (p.price > m.price ? p : m));
+    return { ...empty, aHigh: running.price, aDate: running.date };
+  }
+  // B = tiefstes L nach dem Tief; A = HOECHSTES H davor
+  const bPivot = lows.reduce((m, p) => (p.price < m.price ? p : m));
+  const aCandidates = highs.filter((p) => p.date < bPivot.date);
+  if (aCandidates.length === 0) return empty;
+  const aPivot = aCandidates.reduce((m, p) => (p.price > m.price ? p : m));
+
+  const afterB = candles.filter((k) => k.date > bPivot.date);
+  let cHigh: number | null = null;
+  let cDate: string | null = null;
+  for (const k of afterB) {
+    if (cHigh === null || k.high > cHigh) {
+      cHigh = k.high;
+      cDate = k.date;
+    }
+  }
+  return { aHigh: aPivot.price, aDate: aPivot.date, bLow: bPivot.price, bDate: bPivot.date, cHigh, cDate };
 }
 
 export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
@@ -252,6 +297,95 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       }
     }
 
+    // 3a-S (V117): SPIEGEL-Block fuer vollendete BEARISHE Impulse.
+    // Bewusst dupliziert statt abstrahiert: der Long-Pfad bleibt dadurch
+    // byte-identisch (Regressionsschutz). Refactor-Kandidat.
+    let legsS: CorrectionLegsShort = {
+      aHigh: null, aDate: null, bLow: null, bDate: null, cHigh: null, cDate: null,
+    };
+    if (w0 && w5 && wc.trend === "bearish" && currentPrice > w5.price) {
+      legsS = correctionLegsShort(pivots, candles, w5.date);
+
+      let edInC = false;
+      if (legsS.bDate != null) {
+        const cSegment = candles.filter((k) => k.date >= legsS.bDate!);
+        const diag = detectDiagonal(cSegment, 1);
+        if (diag) edInC = true;
+      }
+
+      const cands = shortLevelCandidates({
+        w0: w0.price,
+        w5: w5.price,
+        w4: w4?.price ?? null,
+        aHigh: legsS.aHigh,
+        bLow: legsS.bLow,
+      });
+
+      let correctionS: CorrectionRead | null = null;
+      if (legsS.aHigh != null && legsS.bLow != null) {
+        correctionS = classifyCorrection(
+          w5.price, legsS.aHigh, legsS.bLow, legsS.cHigh, currentPrice,
+          pivots.filter((pv) => pv.date > w5.date), -1
+        );
+        if (correctionS.targetPrice != null && correctionS.targetLabel != null) {
+          cands.push({ price: correctionS.targetPrice, label: correctionS.targetLabel });
+          cands.sort((a, b) => a.price - b.price);
+        }
+        if (edInC) {
+          correctionS.text += ` · ⚡ Ending Diagonal in C erkannt (DG-1) – terminales Muster, erhöhtes Abwärts-Risiko`;
+        }
+      }
+
+      const tolPct = Math.max(3.5, Math.min(7, weeklyAtrPct(candles)));
+      const clusters = clusterLevels(cands, tolPct);
+      const underfoot = cands
+        .map((c) => c.price)
+        .filter((p) => p < currentPrice * 0.99)
+        .sort((a, b) => b - a)[0] ?? null;
+
+      chartClusters = clusters.slice(0, 8).map((cl) => ({
+        floor: cl.floor, ceiling: cl.ceiling, score: cl.score, labels: cl.labels,
+      }));
+      if (underfoot != null) chartMarkers.push({ price: underfoot, label: "Trigger" });
+
+      const inRangeS = (cl: { floor: number; ceiling: number }): boolean =>
+        currentPrice >= cl.floor * 0.97 && currentPrice <= cl.ceiling * 1.03;
+      const baselineZoneS = clusters.find((cl) => cl.score >= 2 && inRangeS(cl));
+      const inZoneS = clusters.find((cl) => cl.score >= minClusterScore && inRangeS(cl));
+
+      if (inZoneS && legsS.cHigh != null) {
+        chartMarkers.push({ price: inZoneS.ceiling * 1.03, label: "Invalidierung" });
+        const res = upsertPendingSetup(symbol, inZoneS, underfoot, legsS.cHigh, {
+          llmConfidence: critique?.confidence ?? null,
+          llmFlags: critique?.flags ?? [],
+          detFlags: edInC ? [...quality.flags, "ED_IN_C_TERMINAL"] : quality.flags,
+        }, "SHORT");
+        pendingCreated = res === "created";
+        clusterInfo =
+          `🔴 **PENDING (SHORT)**: Kurs im Widerstands-Cluster ${inZoneS.floor.toFixed(2)}–${inZoneS.ceiling.toFixed(2)} ` +
+          `(Score ${inZoneS.score}: ${inZoneS.labels.join(", ")}).\n` +
+          `Trigger: Wochenschluss < ${underfoot != null ? underfoot.toFixed(2) : "n/a"} · ` +
+          `Invalidierung: Wochenschluss > ${(inZoneS.ceiling * 1.03).toFixed(2)}` +
+          (correctionS ? `\n${correctionS.text}` : "");
+      } else {
+        const above = clusters
+          .filter((cl) => cl.score >= 2 && cl.floor > currentPrice)
+          .sort((a, b) => a.floor - b.floor)[0] ??
+          clusters.filter((cl) => cl.floor > currentPrice).sort((a, b) => a.floor - b.floor)[0];
+        const gateNoteS =
+          cautious && baselineZoneS
+            ? `🛡️ Score-2-Zone ${baselineZoneS.floor.toFixed(2)}–${baselineZoneS.ceiling.toFixed(2)} übersprungen ` +
+              `(Kritik: Confidence ${critique!.confidence}) – konservatives Gating verlangt Score ≥ 3.\n`
+            : "";
+        clusterInfo = gateNoteS + (above
+          ? `⚪ Kein aktives Setup. Nächster Short-Cluster darüber: ${above.floor.toFixed(2)}–${above.ceiling.toFixed(2)} ` +
+            `(Score ${above.score}: ${above.labels.join(", ")})` +
+            (underfoot != null ? ` · Underfoot-Trigger: ${underfoot.toFixed(2)}` : "")
+          : "⚪ Kein Widerstands-Cluster oberhalb des Kurses ableitbar.")
+          + (correctionS ? `\n${correctionS.text}` : "");
+      }
+    }
+
     // 3b. Breakout-Setup (unveraendert: echter Trigger + Fib-Target)
     let isBreakoutSetup = false;
     let breakoutStatus = "";
@@ -279,6 +413,15 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
 
     // 5. Chart: Impuls + Korrektur-Anhang + Engine-Level rendern
     const chartWaves: WavePoint[] = [...wc.points];
+    if (legsS.aHigh != null && legsS.aDate != null) {
+      chartWaves.push({ label: "A", date: legsS.aDate, price: legsS.aHigh });
+      if (legsS.bLow != null && legsS.bDate != null) {
+        chartWaves.push({ label: "B", date: legsS.bDate, price: legsS.bLow });
+        if (legsS.cHigh != null && legsS.cDate != null && legsS.cHigh > legsS.bLow) {
+          chartWaves.push({ label: "C", date: legsS.cDate, price: legsS.cHigh });
+        }
+      }
+    }
     if (legs.aLow != null && legs.aDate != null) {
       chartWaves.push({ label: "A", date: legs.aDate, price: legs.aLow });
       if (legs.bHigh != null && legs.bDate != null) {

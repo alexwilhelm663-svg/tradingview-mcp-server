@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 3.3
+version: 3.4
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -168,7 +168,7 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 | VG-4 | `zigzag` + Finder-Konstruktion |
 | VG-5 | konstruktiv erfüllt (Finder erzeugt stets 0–5) |
 | DK-1…DK-4 | `impulseFinder` (Anker, Log, No-Trunc, `findImpulseAdaptive`) |
-| DK-5 | `engine` (Gating, Cluster) + `setups` (State Machine, 84d-Timeout) |
+| DK-5 | `engine` (Long- & Short-Zweig) + `setups`/`outcome` (richtungsbewusste State Machine, 84d-Timeout) |
 | DK-7 | `impulseFinder.findImpulseAdaptive` (MIN_FALLBACK_SCORE) + Enthaltungs-Modus in `engine`/`commands` |
 | DK-6 | `commentary.getCritique` + `engine` (minClusterScore) + `stats` (Bänder) |
 
