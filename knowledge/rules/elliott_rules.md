@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 3.5
+version: 3.7
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -24,7 +24,9 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 - **HR-4** Welle 3 überschreitet stets das Ende von Welle 1.
 - **HR-5** Antriebswellen (1, 3, 5) unterteilen sich impulsiv (5er oder
   Diagonale), Korrekturwellen (2, 4) korrektiv (3er oder Kombination).
-  Insbesondere ist die Unterwelle 3 einer Antriebswelle immer ein Impuls.
+  Insbesondere ist **Welle 3 IMMER ein echter Impuls — niemals eine
+  Diagonale**; Diagonal-Positionen sind ausschließlich 1/A (DG-2)
+  und 5/C (DG-1).
 
 ## 2. Diagonalen (Kanon; von der Engine noch nicht modelliert → §9)
 
@@ -122,7 +124,10 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
   Anstiege werden als 5er-Zyklus gezählt, nie als ABC aufwärts; historische
   Crashs sind Makro-W2/W4.
 - **DK-2 Log-Messung:** Wellenlängen mehrjähriger Bewegungen werden
-  logarithmisch verglichen (HR-2, GL-1, GL-3).
+  logarithmisch verglichen (HR-2, GL-1, GL-3). Gilt auch für projizierte
+  Extension-ZIELE der Korrektur (KO-Ziele als logC=k·A, V117.2); die
+  Klassifikations-Ratios der Muster (KO-2/KO-3-Bänder) bleiben als
+  kanonische Preis-Definitionen linear.
 - **DK-3 Trunkierungsverbot (Policy):** Der Kanon erlaubt seltene
   Trunkierungen; die Engine schließt sie aus und bevorzugt stattdessen den
   früher endenden Impuls (das vermeintliche W3-Extrem *ist* dann W5).
@@ -143,6 +148,11 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
   Preischart. Doktrin-Anker-Zählungen bleiben stets gültig (harte Regeln
   am Fenster-Extrem bestanden). Motivation: PYPL-Fall — der eigene
   Kritiker urteilte „Zählung wirkt erzwungen".
+- **DK-8 Klare-Impuls-Pflicht:** Zählungen, deren W3-Segment sich nur
+  als Diagonale (statt impulsiv) auflösen lässt, sind unzulässig. Der
+  Finder prüft die W3-Substruktur vor der Auswahl (Walk-down über die
+  Top-5 jeder Auflösungsstufe) und verwirft Diagonal-W3-Kandidaten;
+  existiert keine klare Alternative, folgt Enthaltung (DK-7-Pfad).
 - **DK-6 Kritiker-Asymmetrie:** LLM-Review (Confidence/Flags) darf
   Anforderungen nur verschärfen, nie lockern — und nie die Zählung ändern.
   Seine Güte wird über Confidence-Bänder in der OKF-Statistik gemessen.
@@ -153,7 +163,7 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 |---|---|
 | HR-1, HR-3, HR-4 | `impulseFinder.searchFromAnchor` (Konstruktionsbedingungen) |
 | HR-2 | `impulseFinder` (L3 nie kürzeste, Log-Länge) |
-| HR-5 | teilw.: Substruktur-Check `quality.assessQuality` (W3/W5-Segmente) |
+| HR-5 | `impulseFinder.segmentVerdict` + DK-8-Gate in `findImpulseAdaptive`; positionsbewusst in `quality` (W3-Diagonal = Flag, nie Bonus) |
 | DG-1 | `diagonal.detectDiagonal` — Einsatz: W5-Substruktur (`quality`) und C-Welle (`engine`, Flag `ED_IN_C_TERMINAL`) |
 | DG-2 | Detektor geometrisch identisch vorhanden; Positions-Einsatz an W1/A **offen** (§9) |
 | DG-3 | **offen** (§9, expandierende Variante) |
@@ -172,6 +182,7 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 | DK-1…DK-4 | `impulseFinder` (Anker, Log, No-Trunc, `findImpulseAdaptive`) |
 | DK-5 | `engine` (Long- & Short-Zweig) + `setups`/`outcome` (richtungsbewusste State Machine, 84d-Timeout) |
 | DK-7 | `impulseFinder.findImpulseAdaptive` (MIN_FALLBACK_SCORE) + Enthaltungs-Modus in `engine`/`commands` |
+| DK-8 | `impulseFinder.findImpulseAdaptive` (Top-5-Walk-down, `segmentVerdict`) |
 | DK-6 | `commentary.getCritique` + `engine` (minClusterScore) + `stats` (Bänder) |
 
 ## 9. Offene Prüfungen (Roadmap)

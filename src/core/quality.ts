@@ -1,7 +1,6 @@
 import type { Candle } from "./marketData";
 import { zigzag } from "./zigzag";
-import { findBestImpulse, WaveCount } from "./impulseFinder";
-import { detectDiagonal } from "./diagonal";
+import { WaveCount, segmentVerdict, SubVerdict } from "./impulseFinder";
 
 export interface QualityAssessment {
   bonus: number;
@@ -65,23 +64,23 @@ export function assessQuality(
     const seg = candles.filter((c) => c.date >= from && c.date <= to);
     if (seg.length < 15) return; // zu kurz fuer belastbare Sub-Analyse (neutral)
     maxBonus += 1;
-    for (const th of subThresholds(parentThreshold)) {
-      const piv = zigzag(seg, th);
-      if (piv.length < 6) continue;
-      const sub = findBestImpulse(piv);
-      if (sub && sub.count.trend === wc.trend) {
-        bonus += 1;
-        parts.push(`${label}-Sub ✓ (${th}%)`);
-        return;
-      }
-    }
-    // DG-1-Aufloesung (V116): keine Impuls-Substruktur -> Keil pruefen.
-    // Ein Ending Diagonal ERKLAERT die 3-3-3-3-3-Struktur kanonisch.
-    const diag = detectDiagonal(seg, dir);
-    if (diag) {
+    const verdict: SubVerdict = segmentVerdict(candles, from, to, dir, parentThreshold);
+    if (verdict === "IMPULSIVE") {
       bonus += 1;
-      parts.push(`${label} = Ending Diagonal (DG-1${diag.throwOver ? ", Throw-over" : ""}) ✓`);
-      flags.push(`${label}_ENDING_DIAGONAL`);
+      parts.push(`${label}-Sub ✓`);
+      return;
+    }
+    if (verdict === "DIAGONAL") {
+      if (label === "W5") {
+        // DG-1: Ending Diagonal an Position 5 ist kanonisch (V116)
+        bonus += 1;
+        parts.push("W5 = Ending Diagonal (DG-1) ✓");
+        flags.push("W5_ENDING_DIAGONAL");
+      } else {
+        // HR-5/DK-8: Welle 3 ist NIEMALS eine Diagonale
+        flags.push("W3_DIAGONAL_STRUKTUR");
+        parts.push("W3-Sub – (Diagonal, HR-5!)");
+      }
       return;
     }
     flags.push(`${label}_SUB_UNKLAR`);
@@ -180,12 +179,4 @@ function oscillator(candles: Candle[]): (number | null)[] {
   });
 }
 
-/** Feinere ZigZag-Stufen fuer die Sub-Analyse, relativ zur Eltern-Stufe. */
-function subThresholds(parent: number): number[] {
-  const ladder = [
-    Math.round(parent * 0.6),
-    Math.round(parent * 0.4),
-    Math.round(parent * 0.25),
-  ].map((t) => Math.max(3, t));
-  return [...new Set(ladder)];
-}
+

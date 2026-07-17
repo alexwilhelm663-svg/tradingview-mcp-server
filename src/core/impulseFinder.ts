@@ -1,4 +1,5 @@
 import { zigzag, Pivot } from "./zigzag";
+import { detectDiagonal } from "./diagonal";
 import type { Candle } from "./marketData";
 
 export interface WavePoint {
@@ -35,6 +36,42 @@ export interface AdaptiveOutcome {
 // Schwelle werden verworfen - lieber keine Zaehlung als eine erzwungene.
 const MIN_FALLBACK_SCORE = 8;
 
+export type SubVerdict = "IMPULSIVE" | "DIAGONAL" | "UNKLAR";
+
+/** Feinere ZigZag-Stufen fuer Sub-Analysen, relativ zur Eltern-Stufe. */
+export function subThresholds(parent: number): number[] {
+  const ladder = [
+    Math.round(parent * 0.6),
+    Math.round(parent * 0.4),
+    Math.round(parent * 0.25),
+  ].map((x) => Math.max(3, x));
+  return [...new Set(ladder)];
+}
+
+/**
+ * Substruktur-Urteil eines Wellensegments (V117.3):
+ * IMPULSIVE = regelkonformer 5-Teiler auf einer Sub-Stufe gefunden;
+ * DIAGONAL  = kein Impuls, aber kanonischer Keil (detectDiagonal);
+ * UNKLAR    = Segment zu kurz oder weder-noch.
+ */
+export function segmentVerdict(
+  candles: Candle[],
+  fromDate: string,
+  toDate: string,
+  dir: 1 | -1,
+  parentThreshold: number
+): SubVerdict {
+  const seg = candles.filter((c) => c.date >= fromDate && c.date <= toDate);
+  if (seg.length < 15) return "UNKLAR";
+  for (const th of subThresholds(parentThreshold)) {
+    const piv = zigzag(seg, th);
+    if (piv.length < 6) continue;
+    const sub = findBestImpulse(piv);
+    if (sub && sub.count.trend === (dir === 1 ? "bullish" : "bearish")) return "IMPULSIVE";
+  }
+  return detectDiagonal(seg, dir) ? "DIAGONAL" : "UNKLAR";
+}
+
 /**
  * Aufloesungs-Leiter (V113.1): Der fixe 25%-ZigZag ist an High-Beta-Titeln
  * geeicht - Low-Vol-Megacaps (AAPL: ~3-4% Wochen-ATR) liefern damit zu
@@ -50,13 +87,36 @@ export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
   let bestDoctrine: AdaptiveImpulse | null = null;
   let bestFallback: AdaptiveImpulse | null = null;
 
+  let dk8Filtered = 0;
   for (const threshold of [25, 18, 12, 8]) {
     const pivots = zigzag(candles, threshold);
     if (pivots.length < 6) continue;
-    const result = findBestImpulse(pivots);
+
+    // DK-8 "Klare-Impuls-Pflicht": Kandidaten, deren W3-Segment diagonal
+    // statt impulsiv aufloest, sind unzulaessig (Diagonal-Positionen sind
+    // nur 1/A/5/C, HR-5). Walk-down ueber die Top-5 der Stufe.
+    let result: ImpulseResult | null = null;
+    let skipped = 0;
+    for (const cand of findRankedImpulses(pivots, 5)) {
+      const w2 = cand.count.points.find((x) => x.label === "2");
+      const w3 = cand.count.points.find((x) => x.label === "3");
+      const dir: 1 | -1 = cand.count.trend === "bullish" ? 1 : -1;
+      if (
+        w2 &&
+        w3 &&
+        segmentVerdict(candles, w2.date, w3.date, dir, threshold) === "DIAGONAL"
+      ) {
+        skipped++;
+        continue;
+      }
+      result = cand;
+      break;
+    }
+    dk8Filtered += skipped;
     if (!result) continue;
 
     result.count.analysis += ` · ZigZag ${threshold}%`;
+    if (skipped > 0) result.count.analysis += ` · DK-8: ${skipped} Diagonal-W3-Kandidat(en) verworfen`;
     const hit: AdaptiveImpulse = { result, pivots, threshold };
 
     if (result.doctrineAnchor) {
@@ -77,7 +137,9 @@ export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
     ? `Keine belastbare Impulszählung im Analysefenster: Doktrin-Anker liefert keine regelkonforme Sequenz, ` +
       `beste Fallback-Kandidatin erreicht nur Score ${bestFallback.result.score}/${bestFallback.result.maxScore} ` +
       `(Schwelle: ${MIN_FALLBACK_SCORE}, DK-7). Struktur vermutlich korrektiv oder im Übergang.`
-    : `Keine regelkonforme Impulszählung auf keiner ZigZag-Stufe (25/18/12/8 %) ableitbar (DK-7).`;
+    : dk8Filtered > 0
+      ? `Keine klare Impulszählung: ${dk8Filtered} Kandidat(en) wegen diagonaler W3-Substruktur verworfen (DK-8/HR-5) und keine regelkonforme Alternative gefunden.`
+      : `Keine regelkonforme Impulszählung auf keiner ZigZag-Stufe (25/18/12/8 %) ableitbar (DK-7).`;
   return { impulse: null, abstention };
 }
 
@@ -94,18 +156,21 @@ export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
  * Doktrin). Kein Ausweichen, kein Reward-Hacking, keine API-Quota.
  */
 export function findBestImpulse(pivots: Pivot[]): ImpulseResult | null {
-  if (pivots.length < 6) return null;
+  return findRankedImpulses(pivots, 1)[0] ?? null;
+}
+
+/** Top-N regelkonforme Zaehlungen (fuer den DK-8-Walk-down). */
+export function findRankedImpulses(pivots: Pivot[], limit = 5): ImpulseResult[] {
+  if (pivots.length < 6) return [];
 
   const minL = extremeOf(pivots, "L", Math.min);
   const maxH = extremeOf(pivots, "H", Math.max);
-  if (!minL || !maxH) return null;
+  if (!minL || !maxH) return [];
 
-  // Richtungs-Heuristik: kommt das globale Tief vor dem globalen Hoch,
-  // ist der Makro-Zyklus bullish - sonst bearish. Fallback: Gegenrichtung.
   const primary: 1 | -1 = minL.index < maxH.index ? 1 : -1;
-  return (
-    searchDirection(pivots, primary) ?? searchDirection(pivots, (primary * -1) as 1 | -1)
-  );
+  const first = searchDirection(pivots, primary, limit);
+  if (first.length > 0) return first;
+  return searchDirection(pivots, (primary * -1) as 1 | -1, limit);
 }
 
 function extremeOf(
@@ -119,13 +184,13 @@ function extremeOf(
   return pool.find((p) => p.price === target) ?? null;
 }
 
-function searchDirection(pivots: Pivot[], dir: 1 | -1): ImpulseResult | null {
+function searchDirection(pivots: Pivot[], dir: 1 | -1, limit: number): ImpulseResult[] {
   const startKind = dir === 1 ? "L" : "H";
   const doctrineAnchor =
     dir === 1
       ? extremeOf(pivots, "L", Math.min)
       : extremeOf(pivots, "H", Math.max);
-  if (!doctrineAnchor) return null;
+  if (!doctrineAnchor) return [];
 
   // Doktrin-Anker zuerst; andere Anker nur als Fallback (mit Score-Malus).
   const anchors = [
@@ -133,23 +198,24 @@ function searchDirection(pivots: Pivot[], dir: 1 | -1): ImpulseResult | null {
     ...pivots.filter((p) => p.kind === startKind && p !== doctrineAnchor),
   ];
 
-  let best: ImpulseResult | null = null;
-  for (const anchor of anchors) {
-    const isDoctrine = anchor === doctrineAnchor;
-    const res = searchFromAnchor(pivots, anchor, dir, isDoctrine);
-    if (res && (!best || res.score > best.score)) best = res;
-    // Doktrin-Anker gefunden -> Fallback-Anker nur noch pruefen, wenn nichts da
-    if (best && isDoctrine) break;
+  const doctrineRanked = searchFromAnchor(pivots, doctrineAnchor, dir, true, limit);
+  if (doctrineRanked.length > 0) return doctrineRanked;
+
+  let fallback: ImpulseResult[] = [];
+  for (const anchor of anchors.slice(1)) {
+    fallback = fallback.concat(searchFromAnchor(pivots, anchor, dir, false, limit));
   }
-  return best;
+  fallback.sort((a, b) => b.score - a.score);
+  return fallback.slice(0, limit);
 }
 
 function searchFromAnchor(
   pivots: Pivot[],
   w0: Pivot,
   dir: 1 | -1,
-  isDoctrine: boolean
-): ImpulseResult | null {
+  isDoctrine: boolean,
+  limit: number
+): ImpulseResult[] {
   const impKind = dir === 1 ? "H" : "L"; // 1/3/5
   const corKind = dir === 1 ? "L" : "H"; // 2/4
   const after = pivots.filter((p) => p.index > w0.index);
@@ -160,7 +226,8 @@ function searchFromAnchor(
   const v = (p: Pivot): number => dir * p.price;
   const ln = (p: Pivot): number => dir * Math.log(p.price);
 
-  let best: { seq: Pivot[]; score: number } | null = null;
+  const found: { seq: Pivot[]; score: number; order: number }[] = [];
+  let order = 0;
 
   for (const w1 of imp) {
     if (v(w1) <= v(w0)) continue;
@@ -181,14 +248,22 @@ function searchFromAnchor(
             if (L3 <= Math.min(L1, L5)) continue; // W3 nie die kuerzeste
 
             const score = scoreImpulse(seq, pivots, dir, isDoctrine);
-            if (!best || score > best.score) best = { seq, score };
+            found.push({ seq, score, order: order++ });
           }
         }
       }
     }
   }
 
-  if (!best) return null;
+  if (found.length === 0) return [];
+  // Stabil: Score absteigend, bei Gleichstand Entdeckungsreihenfolge
+  // (identisch zum alten "erster gewinnt"-Verhalten).
+  found.sort((a, b) => b.score - a.score || a.order - b.order);
+  return found.slice(0, limit).map(({ seq, score }) => buildResult(seq, score, dir, isDoctrine));
+}
+
+function buildResult(seqIn: Pivot[], scoreIn: number, dir: 1 | -1, isDoctrine: boolean): ImpulseResult {
+  const best = { seq: seqIn, score: scoreIn };
   const [w0p, w1p, w2p, w3p, w4p, w5p] = best.seq;
   const points: WavePoint[] = best.seq.map((p, i) => ({
     label: String(i),
