@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 3.4
+version: 3.5
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -128,8 +128,10 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
   früher endenden Impuls (das vermeintliche W3-Extrem *ist* dann W5).
   Begründung: Trunkierung ist ex ante nicht von einer laufenden B-Welle
   unterscheidbar — Verwechslungskosten > Erkennungsnutzen.
-- **DK-4 Auflösungs-Leiter:** ZigZag-Stufen 25 → 18 → 12 → 8 %; verfeinert
-  wird nur, wenn die gröbere Stufe keinen regelkonformen Impuls liefert.
+- **DK-4 Auflösungs-Leiter (Best-über-Stufen):** ZigZag-Stufen
+  25/18/12/8 % werden ALLE ausgewertet; unter den Doktrin-Treffern gewinnt
+  der höchste Score (bei Gleichstand die gröbere Stufe). Fallback-Anker
+  kommen nur ohne jeden Doktrin-Treffer zum Zug (Schwelle DK-7).
   Sub-Analysen (GL-6/§Substruktur) nutzen relativ feinere Stufen.
 - **DK-5 Konfluenz- & Nachweis-Pflicht:** Kein Signal ohne
   Fibonacci-Herleitung, kein Setup ohne Invalidierungslevel, kein Cluster

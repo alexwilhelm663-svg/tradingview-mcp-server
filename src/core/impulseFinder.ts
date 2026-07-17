@@ -43,6 +43,11 @@ const MIN_FALLBACK_SCORE = 8;
  * Alles, was bei 25% funktioniert, bleibt byte-identisch.
  */
 export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
+  // V117.1 "Best-ueber-Stufen": ALLE Aufloesungen werden ausgewertet.
+  // Unter den Doktrin-Treffern gewinnt der hoechste Score; bei Gleichstand
+  // die groebere Stufe (Makro-Praeferenz). Fallbacks nur, wenn keine
+  // Doktrin-Zaehlung existiert (DK-7-Schwelle unveraendert).
+  let bestDoctrine: AdaptiveImpulse | null = null;
   let bestFallback: AdaptiveImpulse | null = null;
 
   for (const threshold of [25, 18, 12, 8]) {
@@ -54,13 +59,14 @@ export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
     result.count.analysis += ` · ZigZag ${threshold}%`;
     const hit: AdaptiveImpulse = { result, pivots, threshold };
 
-    // Doktrin-Anker: harte Regeln am Fenster-Extrem bestanden -> immer gueltig
-    if (result.doctrineAnchor) return { impulse: hit, abstention: null };
-
-    // Fallback-Anker: als Kandidat merken, aber weiter verfeinern -
-    // vielleicht existiert auf feinerer Stufe eine Doktrin-Zaehlung.
-    if (!bestFallback || result.score > bestFallback.result.score) bestFallback = hit;
+    if (result.doctrineAnchor) {
+      if (!bestDoctrine || result.score > bestDoctrine.result.score) bestDoctrine = hit;
+    } else {
+      if (!bestFallback || result.score > bestFallback.result.score) bestFallback = hit;
+    }
   }
+
+  if (bestDoctrine) return { impulse: bestDoctrine, abstention: null };
 
   if (bestFallback && bestFallback.result.score >= MIN_FALLBACK_SCORE) {
     return { impulse: bestFallback, abstention: null };
@@ -241,9 +247,11 @@ function scoreImpulse(seq: Pivot[], pivots: Pivot[], dir: 1 | -1, isDoctrine: bo
   const retr4 = (ln(w3) - ln(w4)) / L3;
   let s = 0;
 
-  // Welle-3-Extension
-  if (L3 >= 1.618 * L1) s += 2;
-  else if (L3 > L1) s += 1;
+  // GL-1 generalisiert (V117.1): Bonus fuer DIE eine gestreckte Welle,
+  // egal ob 1, 3 oder 5 - gestreckte Erste sind an Zyklustiefs kanonisch.
+  const lens = [L1, L3, L5].sort((a, b) => b - a);
+  if (lens[0] >= 1.618 * lens[1]) s += 2;
+  else if (lens[0] >= 1.236 * lens[1]) s += 1;
   // Retrace-Guidelines
   if (retr2 >= 0.5 && retr2 <= 0.786) s += 2;
   else if (retr2 >= 0.382 && retr2 <= 0.9) s += 1;
@@ -251,8 +259,12 @@ function scoreImpulse(seq: Pivot[], pivots: Pivot[], dir: 1 | -1, isDoctrine: bo
   else if (retr4 <= 0.618) s += 1;
   // Alternation
   if (Math.abs(retr2 - retr4) >= 0.15) s += 1;
-  // Gleichheit / 0.618-Relation von W5 zu W1 (bei W3-Extension)
-  if (Math.abs(L5 - L1) / L1 < 0.15 || Math.abs(L5 - 0.618 * L1) / (0.618 * L1) < 0.15) s += 1;
+  // GL-3: Gleichheit/0.618-Relation der beiden NICHT gestreckten Wellen
+  const arr = [L1, L3, L5];
+  const maxI = arr.indexOf(Math.max(...arr));
+  const [ox, oy] = arr.filter((_, i) => i !== maxI);
+  const near = (a: number, b: number): boolean => Math.abs(a - b) / Math.max(a, b) < 0.15;
+  if (near(ox, oy) || near(ox, 0.618 * oy) || near(oy, 0.618 * ox)) s += 1;
   // Doktrin: Anker am globalen Extrem, W5 am gegenueberliegenden Extrem
   if (isDoctrine) s += 2;
   const oppExtreme =
