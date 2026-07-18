@@ -212,8 +212,9 @@ def main():
         ax.set_yscale("log")
         ax.grid(True, which="major", ls="-", alpha=0.2)
         ax.grid(True, which="minor", ls=":", alpha=0.1)
+        title_suffix = payload.get("titleSuffix", "")
         ax.set_title(
-            f"{symbol} - Self-Healing EW Master (Log-Vector Core)",
+            f"{symbol} - Self-Healing EW Master (Log-Vector Core){title_suffix}",
             loc="left", fontweight="bold", fontsize=12,
         )
         plt.subplots_adjust(right=0.92)

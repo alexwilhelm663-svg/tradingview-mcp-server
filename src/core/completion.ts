@@ -1,12 +1,16 @@
 import type { Candle } from "./marketData";
 import { zigzag } from "./zigzag";
 import { WaveCount, findPartialImpulse, subThresholds } from "./impulseFinder";
+import { detectDiagonal } from "./diagonal";
 
 export interface CompletionRead {
   status: "COMPLETE" | "IN_PROGRESS";
   subLabel: string | null; // erreichte Sub-Welle innerhalb W5, z.B. "3"
   note: string;
   projections: { label: string; price: number }[];
+  subPoints: { label: string; date: string; price: number }[]; // Binnenstruktur für Detail-Chart
+  subThreshold: number | null;
+  isDiagonal: boolean;
 }
 
 /**
@@ -44,15 +48,32 @@ export function assessCompletion(
     const piv = zigzag(seg, th);
     if (piv.length < 4) continue;
 
+    // Ending Diagonal als W5-Binnenstruktur? (kanonisch, DG-1) -> ebenfalls vollendet
+    const diag = detectDiagonal(seg, dir);
+    if (diag) {
+      return {
+        status: "COMPLETE",
+        subLabel: "5",
+        note: `Welle 5 ist ein Ending Diagonal (DG-1${diag.throwOver ? ", Throw-over" : ""}, auf ${th}%): terminales Muster, Impuls vollendet.`,
+        projections: [],
+        subPoints: diag.points,
+        subThreshold: th,
+        isDiagonal: true,
+      };
+    }
+
     // Ist die W5-Binnenstruktur ein KOMPLETTER 5-Teiler? -> Impuls vollendet.
-    const full = findPartialImpulse(piv, dir, 5);
     const fullWithFive = piv.length >= 6 ? findFive(piv, dir) : false;
     if (fullWithFive) {
+      const five = findPartialImpulse(piv, dir, 5);
       return {
         status: "COMPLETE",
         subLabel: "5",
         note: `Welle 5 ist binnenstrukturell abgeschlossen (Sub-5-Teiler auf ${th}%): Impuls vollendet, Korrektur wahrscheinlich.`,
         projections: [],
+        subPoints: fullSubPoints(piv, dir),
+        subThreshold: th,
+        isDiagonal: false,
       };
     }
 
@@ -76,6 +97,9 @@ export function assessCompletion(
           { label: "Sub-5≈0.618×Sub-1", price: logProject(s3, l1, 0.618) },
           { label: "Sub-5≈1.0×Sub-1", price: logProject(s3, l1, 1.0) },
         ],
+        subPoints: p4.points,
+        subThreshold: th,
+        isDiagonal: false,
       };
     }
 
@@ -91,11 +115,45 @@ export function assessCompletion(
           { label: "Sub-3 ≈ 1.618×Sub-1", price: logProject(s1, l1, 1.618) },
           { label: "Sub-3 ≈ 2.618×Sub-1", price: logProject(s1, l1, 2.618) },
         ],
+        subPoints: p2.points,
+        subThreshold: th,
+        isDiagonal: false,
       };
     }
   }
 
   return null; // keine belastbare Sub-Aussage -> stumm (Zaehlung bleibt wie sie ist)
+}
+
+/** Extrahiert die 0-5-Punkte des Sub-Impulses (fuer den Detail-Chart). */
+function fullSubPoints(pivots: ReturnType<typeof zigzag>, dir: 1 | -1): { label: string; date: string; price: number }[] {
+  const impKind = dir === 1 ? "H" : "L";
+  const corKind = dir === 1 ? "L" : "H";
+  const v = (p: (typeof pivots)[number]): number => dir * p.price;
+  const pool = pivots.filter((p) => p.kind === corKind);
+  if (pool.length === 0) return [];
+  const w0 = pool.reduce((m, x) => (v(x) < v(m) ? x : m));
+  const after = pivots.filter((p) => p.index > w0.index);
+  const imp = after.filter((p) => p.kind === impKind);
+  const cor = after.filter((p) => p.kind === corKind);
+  for (const w1 of imp) {
+    if (v(w1) <= v(w0)) continue;
+    for (const w2 of cor.filter((x) => x.index > w1.index)) {
+      if (v(w2) <= v(w0)) continue;
+      for (const w3 of imp.filter((x) => x.index > w2.index)) {
+        if (v(w3) <= v(w1)) continue;
+        for (const w4 of cor.filter((x) => x.index > w3.index)) {
+          if (v(w4) <= v(w1)) continue;
+          for (const w5 of imp.filter((x) => x.index > w4.index)) {
+            if (v(w5) > v(w3)) {
+              return [w0, w1, w2, w3, w4, w5].map((x, i) => ({ label: String(i), date: x.date, price: x.price }));
+            }
+          }
+        }
+      }
+    }
+  }
+  return [];
 }
 
 /** Existiert im Segment ein vollstaendiger regelkonformer 0-5-Impuls? */
