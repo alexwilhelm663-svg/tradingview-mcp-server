@@ -26,6 +26,7 @@ export interface ChartPayload {
   candles: Candle[];
   clusters?: ChartCluster[];
   markers?: ChartMarker[];
+  titleSuffix?: string;
 }
 
 /**

@@ -121,6 +121,14 @@ export function registerCommands(
         await ctx.reply(caption, { parse_mode: "Markdown" });
       }
 
+      // V118.1: Detail-Chart der Sub-Struktur als zweites Bild
+      if (r.detailBuffer) {
+        await ctx.replyWithPhoto(
+          { source: r.detailBuffer },
+          { caption: "🔬 Binnenstruktur der Welle 5 (Sub-Wellen-Detail)" }
+        );
+      }
+
       // LLM-Kommentar separat: kein Caption-Limit, kein Abschneiden
       if (r.commentary) {
         const note = r.commentary.length > 3900 ? r.commentary.slice(0, 3897) + "..." : r.commentary;

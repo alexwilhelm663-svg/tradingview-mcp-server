@@ -24,6 +24,7 @@ export interface AnalysisResult {
   analysis: WaveCount | null;
   commentary: string | null;
   abstention: string | null;
+  detailBuffer: Buffer | null; // Sub-Struktur-Chart (V118.1)
 }
 
 const EMPTY: AnalysisResult = {
@@ -37,6 +38,7 @@ const EMPTY: AnalysisResult = {
   analysis: null,
   commentary: null,
   abstention: null,
+  detailBuffer: null,
 };
 
 function pt(wc: WaveCount, label: string): WavePoint | undefined {
@@ -458,6 +460,34 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       markers: chartMarkers,
     });
 
+    // V118.1: Detail-Chart der W5-Binnenstruktur (Sub-Wellen bzw. ED-Keil).
+    // Eigene Grafik, damit der Hauptchart nicht zu kleinteilig wird.
+    let detailBuffer: Buffer | null = null;
+    if (completion && completion.subPoints.length >= 2 && w4 && w5) {
+      const subCandles = candles.filter((k) => k.date >= w4.date);
+      const subWaves = completion.subPoints.map((sp) => ({
+        label: completion.isDiagonal ? `${sp.label}` : `${sp.label}`,
+        date: sp.date,
+        price: sp.price,
+      }));
+      const subMarkers = completion.projections.map((pr) => ({
+        price: pr.price,
+        label: pr.label.split(" ")[0],
+      }));
+      const kind = completion.isDiagonal
+        ? "Ending Diagonal"
+        : completion.status === "IN_PROGRESS"
+          ? `Welle 5 läuft – Sub-${completion.subLabel}`
+          : "Welle 5 – Sub-5-Teiler";
+      detailBuffer = await renderChart({
+        symbol,
+        waves: subWaves,
+        candles: subCandles,
+        markers: subMarkers,
+        titleSuffix: ` · ${kind} (ZigZag ${completion.subThreshold}%)`,
+      });
+    }
+
     return {
       buffer,
       signal: pendingCreated || isBreakoutSetup ? "YES" : "NO",
@@ -469,6 +499,7 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       analysis: wc,
       commentary,
       abstention: null,
+      detailBuffer,
     };
   } catch (err: any) {
     console.error(`[ENGINE] Analysefehler ${symbol}:`, err?.message ?? err);
