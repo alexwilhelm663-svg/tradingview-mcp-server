@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 3.7
+version: 3.8
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -148,6 +148,13 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
   Preischart. Doktrin-Anker-Zählungen bleiben stets gültig (harte Regeln
   am Fenster-Extrem bestanden). Motivation: PYPL-Fall — der eigene
   Kritiker urteilte „Zählung wirkt erzwungen".
+- **DK-9 Vollendungs-Nachweis:** Der 0-5-Finder erklärt die letzte Spitze
+  qua VG-3 zwangsläufig zur Welle 5 - er kann strukturell nur "fertig".
+  Eine unabhängige Sub-Zählung des W4→W5-Segments prüft daher, ob Welle 5
+  binnenstrukturell abgeschlossen ist (kompletter Sub-5-Teiler → Korrektur
+  wahrscheinlich) oder noch läuft (Teilsequenz Sub-1/Sub-3/Sub-4 → nächste
+  Welle wird per Fibonacci projiziert, Log-Raum). Rein diagnostisch: ändert
+  die 0-5-Zählung nicht, ergänzt sie um Status und Kursziele.
 - **DK-8 Klare-Impuls-Pflicht:** Zählungen, deren W3-Segment sich nur
   als Diagonale (statt impulsiv) auflösen lässt, sind unzulässig. Der
   Finder prüft die W3-Substruktur vor der Auswahl (Walk-down über die
@@ -183,6 +190,7 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 | DK-5 | `engine` (Long- & Short-Zweig) + `setups`/`outcome` (richtungsbewusste State Machine, 84d-Timeout) |
 | DK-7 | `impulseFinder.findImpulseAdaptive` (MIN_FALLBACK_SCORE) + Enthaltungs-Modus in `engine`/`commands` |
 | DK-8 | `impulseFinder.findImpulseAdaptive` (Top-5-Walk-down, `segmentVerdict`) |
+| DK-9 | `completion.assessCompletion` + `impulseFinder.findPartialImpulse`; Anzeige in `engine` |
 | DK-6 | `commentary.getCritique` + `engine` (minClusterScore) + `stats` (Bänder) |
 
 ## 9. Offene Prüfungen (Roadmap)

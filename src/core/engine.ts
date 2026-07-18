@@ -10,6 +10,7 @@ import { findImpulseAdaptive, WaveCount, WavePoint } from "./impulseFinder";
 import { getCritique, Critique } from "./commentary";
 import { classifyCorrection, CorrectionRead } from "./correction";
 import { detectDiagonal } from "./diagonal";
+import { assessCompletion, CompletionRead } from "./completion";
 import { assessQuality } from "./quality";
 
 export interface AnalysisResult {
@@ -172,6 +173,17 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
     // Divergenz + Subwellen-Struktur erweitern den Score, Negativbefunde werden Flags.
     const quality = assessQuality(candles, wc, threshold);
     wc.analysis += ` · ${quality.summary}`;
+
+    // V118 (DK-9): Ist Welle 5 wirklich fertig - oder laeuft der Impuls noch?
+    const completion: CompletionRead | null = assessCompletion(candles, wc, threshold);
+    if (completion) {
+      wc.analysis += `\n${completion.status === "IN_PROGRESS" ? "⏳" : "🏁"} ${completion.note}`;
+      if (completion.projections.length > 0) {
+        wc.analysis +=
+          " Ziele: " +
+          completion.projections.map((p) => `${p.label} ${p.price.toFixed(2)}`).join(" · ");
+      }
+    }
     const totalScore = impulse.score + quality.bonus;
     const totalMax = impulse.maxScore + quality.maxBonus;
     console.log(`[ENGINE] ${symbol}: ${wc.trend}-Impuls, Score ${totalScore}/${totalMax}${impulse.doctrineAnchor ? " (Doktrin-Anker)" : " (Fallback-Anker)"} · ZigZag ${threshold}%${quality.flags.length > 0 ? " · ⚠️ " + quality.flags.join(",") : ""}`);
@@ -429,6 +441,12 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         if (legs.cLow != null && legs.cDate != null && legs.cLow < legs.bHigh) {
           chartWaves.push({ label: "C", date: legs.cDate, price: legs.cLow });
         }
+      }
+    }
+
+    if (completion && completion.projections.length > 0) {
+      for (const pr of completion.projections) {
+        chartMarkers.push({ price: pr.price, label: pr.label.split(" ")[0] });
       }
     }
 

@@ -36,6 +36,82 @@ export interface AdaptiveOutcome {
 // Schwelle werden verworfen - lieber keine Zaehlung als eine erzwungene.
 const MIN_FALLBACK_SCORE = 8;
 
+export interface PartialImpulse {
+  points: WavePoint[];
+  lastLabel: string;
+  trend: "bullish" | "bearish";
+}
+
+/**
+ * Teil-Zaehlung (V118): enumeriert regelkonforme, aber UNVOLLSTAENDIGE
+ * Sequenzen (0-1, 0..3, 0..4) - fuer laufende Impulse, deren spaetere
+ * Wellen noch nicht existieren. Auswahl bewusst schlicht (L3/L1): fuer
+ * die Sub-Positionsbestimmung genuegt die grobe Praeferenz, die volle
+ * Guideline-Bewertung bleibt dem 0-5-Finder vorbehalten.
+ */
+export function findPartialImpulse(
+  pivots: Pivot[],
+  dir: 1 | -1,
+  targetLen: 2 | 4 | 5
+): PartialImpulse | null {
+  if (pivots.length < targetLen) return null;
+  const impKind = dir === 1 ? "H" : "L";
+  const corKind = dir === 1 ? "L" : "H";
+  const v = (p: Pivot): number => dir * p.price;
+  const ln = (p: Pivot): number => dir * Math.log(p.price);
+
+  const pool = pivots.filter((p) => p.kind === corKind);
+  if (pool.length === 0) return null;
+  const w0 = pool.reduce((m, x) => (v(x) < v(m) ? x : m)); // Doktrin-Anker
+
+  const after = pivots.filter((p) => p.index > w0.index);
+  const imp = after.filter((p) => p.kind === impKind);
+  const cor = after.filter((p) => p.kind === corKind);
+
+  const mk = (seq: Pivot[]): PartialImpulse => ({
+    points: seq.map((x, i) => ({ label: String(i), date: x.date, price: x.price })),
+    lastLabel: String(seq.length - 1),
+    trend: dir === 1 ? "bullish" : "bearish",
+  });
+
+  if (targetLen === 2) {
+    if (imp.length === 0) return null;
+    const w1 = imp.reduce((m, x) => (v(x) > v(m) ? x : m));
+    return v(w1) > v(w0) ? mk([w0, w1]) : null;
+  }
+
+  let best: { seq: Pivot[]; score: number } | null = null;
+  for (const w1 of imp) {
+    if (v(w1) <= v(w0)) continue;
+    for (const w2 of cor.filter((x) => x.index > w1.index)) {
+      if (v(w2) <= v(w0)) continue; // HR-1
+      if (imp.some((x) => x.index > w0.index && x.index < w2.index && v(x) > v(w1))) continue;
+      for (const w3 of imp.filter((x) => x.index > w2.index)) {
+        if (v(w3) <= v(w1)) continue; // HR-4
+        if (cor.some((x) => x.index > w1.index && x.index < w3.index && v(x) < v(w2))) continue;
+        const L1 = ln(w1) - ln(w0);
+        const L3 = ln(w3) - ln(w2);
+        if (L1 <= 0 || L3 <= 0) continue;
+        const s = L3 / L1;
+
+        if (targetLen === 4) {
+          // W3 ist die laufende Spitze
+          if (imp.some((x) => x.index > w3.index && v(x) > v(w3))) continue;
+          if (!best || s > best.score) best = { seq: [w0, w1, w2, w3], score: s };
+        } else {
+          for (const w4 of cor.filter((x) => x.index > w3.index)) {
+            if (v(w4) <= v(w1)) continue; // HR-3
+            // Existiert danach ein hoeheres Impuls-Pivot, waere die Zaehlung vollstaendig
+            if (imp.some((x) => x.index > w4.index && v(x) > v(w3))) continue;
+            if (!best || s > best.score) best = { seq: [w0, w1, w2, w3, w4], score: s };
+          }
+        }
+      }
+    }
+  }
+  return best ? mk(best.seq) : null;
+}
+
 export type SubVerdict = "IMPULSIVE" | "DIAGONAL" | "UNKLAR";
 
 /** Feinere ZigZag-Stufen fuer Sub-Analysen, relativ zur Eltern-Stufe. */
