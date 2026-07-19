@@ -149,12 +149,43 @@ export function segmentVerdict(
 }
 
 /**
- * Aufloesungs-Leiter (V113.1): Der fixe 25%-ZigZag ist an High-Beta-Titeln
- * geeicht - Low-Vol-Megacaps (AAPL: ~3-4% Wochen-ATR) liefern damit zu
- * wenige Pivots fuer ein 6-Punkte-Skelett. Die Leiter verfeinert die
- * Aufloesung NUR, wenn die groebere Stufe keinen Impuls findet:
- * Alles, was bei 25% funktioniert, bleibt byte-identisch.
+ * Fenster-Rand-Extrem-Synthese (V117.4): Der ZigZag committet das
+ * Startextrem einer Serie konstruktionsbedingt nie als Pivot. Wandert das
+ * rollende 5-Jahres-Fenster ueber ein Zyklus-Extrem, verliert die Doktrin
+ * ihren Anker (PYPL: 310,16 -> 296,70) - und jedes Walk-Forward-Fenster
+ * wuerde denselben Drift erleiden. Fix analog zum Diagonal-Ursprung (V116):
+ * Liegt das Fenster-Maximum/-Minimum VOR dem ersten Pivot und wird von
+ * keinem Pivot erreicht, wird es als synthetisches Rand-Pivot vorangestellt
+ * (Alternation zum ersten echten Pivot bleibt gewahrt).
  */
+function augmentEdgeExtremes(pivots: Pivot[], candles: Candle[]): Pivot[] {
+  if (pivots.length === 0 || candles.length === 0) return pivots;
+  const head = candles.slice(0, pivots[0].index + 1);
+  if (head.length < 2) return pivots;
+
+  let hiIdx = 0;
+  let loIdx = 0;
+  for (let i = 1; i < head.length; i++) {
+    if (head[i].high > head[hiIdx].high) hiIdx = i;
+    if (head[i].low < head[loIdx].low) loIdx = i;
+  }
+  const winHi = head[hiIdx].high;
+  const winLo = head[loIdx].low;
+  const maxPivH = Math.max(...pivots.filter((p) => p.kind === "H").map((p) => p.price), -Infinity);
+  const minPivL = Math.min(...pivots.filter((p) => p.kind === "L").map((p) => p.price), Infinity);
+
+  const out = [...pivots];
+  const firstKind = out[0].kind;
+  // Nur EIN Rand-Extrem synthetisieren - das, das die Alternation zum
+  // ersten echten Pivot wahrt und ein echtes Fenster-Extrem ist.
+  if (firstKind === "L" && winHi > maxPivH) {
+    out.unshift({ index: hiIdx, date: head[hiIdx].date, price: winHi, kind: "H" });
+  } else if (firstKind === "H" && winLo < minPivL) {
+    out.unshift({ index: loIdx, date: head[loIdx].date, price: winLo, kind: "L" });
+  }
+  return out;
+}
+
 export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
   // V117.1 "Best-ueber-Stufen": ALLE Aufloesungen werden ausgewertet.
   // Unter den Doktrin-Treffern gewinnt der hoechste Score; bei Gleichstand
@@ -165,7 +196,7 @@ export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
 
   let dk8Filtered = 0;
   for (const threshold of [25, 18, 12, 8]) {
-    const pivots = zigzag(candles, threshold);
+    const pivots = augmentEdgeExtremes(zigzag(candles, threshold), candles);
     if (pivots.length < 6) continue;
 
     // DK-8 "Klare-Impuls-Pflicht": Kandidaten, deren W3-Segment diagonal
@@ -219,18 +250,6 @@ export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
   return { impulse: null, abstention };
 }
 
-/**
- * Deterministische Impulszaehlung (V113, ElliotEugen-Prinzip):
- * Statt ein LLM raten zu lassen, werden alle chronologisch-alternierenden
- * Pivot-Sequenzen (0,1,2,3,4,5) enumeriert, die die HARTEN Regeln erfuellen:
- *   - W2 retraced W1 nie zu 100% (W2 ueber W0)
- *   - W3 ueberschreitet das Ende von W1 und ist nie die kuerzeste Antriebswelle
- *   - W4 ueberlappt W1 nicht
- *   - keine Trunkierung (W5 ueber W3)
- *   - Segment-Extrem-Bedingung: jeder Wellenpunkt ist das Extrem seines Segments
- * Die beste Sequenz gewinnt per Fib-Guideline-Scoring (Log-Space, saekulare
- * Doktrin). Kein Ausweichen, kein Reward-Hacking, keine API-Quota.
- */
 export function findBestImpulse(pivots: Pivot[]): ImpulseResult | null {
   return findRankedImpulses(pivots, 1)[0] ?? null;
 }
@@ -302,39 +321,71 @@ function searchFromAnchor(
   const v = (p: Pivot): number => dir * p.price;
   const ln = (p: Pivot): number => dir * Math.log(p.price);
 
-  const found: { seq: Pivot[]; score: number; order: number }[] = [];
-  let order = 0;
+  const found: { seq: Pivot[]; score: number; key: number[] }[] = [];
 
-  for (const w1 of imp) {
-    if (v(w1) <= v(w0)) continue;
-    for (const w2 of cor.filter((p) => p.index > w1.index)) {
-      if (v(w2) <= v(w0)) continue; // W2 > 100%-Retrace verboten
-      for (const w3 of imp.filter((p) => p.index > w2.index)) {
-        if (v(w3) <= v(w1)) continue; // W3 muss W1-Ende ueberschreiten
-        for (const w4 of cor.filter((p) => p.index > w3.index)) {
-          if (v(w4) <= v(w1)) continue; // Overlap-Verbot
-          for (const w5 of imp.filter((p) => p.index > w4.index)) {
-            if (v(w5) <= v(w3)) continue; // Trunkierungs-Verbot
-            const seq = [w0, w1, w2, w3, w4, w5];
-            if (!segmentExtremesOk(seq, pivots, dir)) continue;
+  // O(k^2)-Suche (V119): Unter Segment-Extrem-Pflicht sind w1/w3/w5 fuer
+  // gegebene (w2, w4) DETERMINIERT (Bereichs-Maxima). Freiheitsgrade sind
+  // nur die beiden Korrektur-Pivots - beweisbar aequivalent zur alten
+  // O(k^5)-Enumeration, Reihenfolge ueber Index-Tupel repliziert.
+  const maxIn = (from: number, to: number): Pivot | null => {
+    let m: Pivot | null = null;
+    for (const x of imp) {
+      if (x.index <= from || x.index >= to) continue;
+      if (!m || v(x) > v(m)) m = x;
+    }
+    return m;
+  };
+  const maxAfter = (from: number): Pivot | null => {
+    let m: Pivot | null = null;
+    for (const x of imp) {
+      if (x.index <= from) continue;
+      if (!m || v(x) > v(m)) m = x;
+    }
+    return m;
+  };
 
-            const L1 = ln(w1) - ln(w0);
-            const L3 = ln(w3) - ln(w2);
-            const L5 = ln(w5) - ln(w4);
-            if (L3 <= Math.min(L1, L5)) continue; // W3 nie die kuerzeste
+  for (let a = 0; a < cor.length; a++) {
+    const w2 = cor[a];
+    if (v(w2) <= v(w0)) continue; // HR-1
+    const w1 = maxIn(w0.index, w2.index);
+    if (!w1 || v(w1) <= v(w0)) continue;
+    for (let b = a + 1; b < cor.length; b++) {
+      const w4 = cor[b];
+      const w3 = maxIn(w2.index, w4.index);
+      if (!w3) continue;
+      if (v(w3) <= v(w1)) continue; // HR-4
+      if (v(w4) <= v(w1)) continue; // HR-3 (Overlap-Verbot)
+      // w2 muss das Korrektur-Extrem in (w1, w3) sein
+      if (cor.some((x) => x.index > w1.index && x.index < w3.index && v(x) < v(w2))) continue;
+      const w5 = maxAfter(w4.index);
+      if (!w5) continue;
+      if (v(w5) <= v(w3)) continue; // Trunkierungs-Verbot
+      // w4 muss das Korrektur-Extrem in (w3, w5) sein
+      if (cor.some((x) => x.index > w3.index && x.index < w5.index && v(x) < v(w4))) continue;
 
-            const score = scoreImpulse(seq, pivots, dir, isDoctrine);
-            found.push({ seq, score, order: order++ });
-          }
-        }
-      }
+      const L1 = ln(w1) - ln(w0);
+      const L3 = ln(w3) - ln(w2);
+      const L5 = ln(w5) - ln(w4);
+      if (L3 <= Math.min(L1, L5)) continue; // HR-2: W3 nie die kuerzeste
+
+      const seq = [w0, w1, w2, w3, w4, w5];
+      const score = scoreImpulse(seq, pivots, dir, isDoctrine);
+      found.push({
+        seq,
+        score,
+        key: [w1.index, w2.index, w3.index, w4.index, w5.index],
+      });
     }
   }
 
   if (found.length === 0) return [];
-  // Stabil: Score absteigend, bei Gleichstand Entdeckungsreihenfolge
-  // (identisch zum alten "erster gewinnt"-Verhalten).
-  found.sort((a, b) => b.score - a.score || a.order - b.order);
+  // Stabil: Score absteigend, bei Gleichstand lexikographisch nach
+  // Index-Tupel (repliziert die alte Entdeckungsreihenfolge exakt).
+  const cmpKey = (x: number[], y: number[]): number => {
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i];
+    return 0;
+  };
+  found.sort((a, b) => b.score - a.score || cmpKey(a.key, b.key));
   return found.slice(0, limit).map(({ seq, score }) => buildResult(seq, score, dir, isDoctrine));
 }
 
@@ -363,26 +414,6 @@ function buildResult(seqIn: Pivot[], scoreIn: number, dir: 1 | -1, isDoctrine: b
     maxScore: MAX_SCORE,
     doctrineAnchor: isDoctrine,
   };
-}
-
-/** Jeder Wellenpunkt muss das Extrem seines Segments sein. */
-function segmentExtremesOk(seq: Pivot[], pivots: Pivot[], dir: 1 | -1): boolean {
-  const [w0, w1, w2, w3, w4, w5] = seq;
-  const v = (p: Pivot): number => dir * p.price;
-  const between = (a: Pivot, b: Pivot, kind: "H" | "L"): Pivot[] =>
-    pivots.filter((p) => p.index > a.index && p.index < b.index && p.kind === kind);
-
-  const impKind = dir === 1 ? "H" : "L";
-  const corKind = dir === 1 ? "L" : "H";
-
-  if (between(w0, w2, impKind).some((p) => v(p) > v(w1))) return false;
-  if (between(w1, w3, corKind).some((p) => v(p) < v(w2))) return false;
-  if (between(w2, w4, impKind).some((p) => v(p) > v(w3))) return false;
-  if (between(w3, w5, corKind).some((p) => v(p) < v(w4))) return false;
-  // W5 = Extrem des Rests: kein spaeterer Impuls-Pivot darf W5 ueberschreiten
-  if (pivots.some((p) => p.index > w4.index && p.kind === impKind && v(p) > v(w5)))
-    return false;
-  return true;
 }
 
 const MAX_SCORE = 12;
