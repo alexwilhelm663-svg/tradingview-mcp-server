@@ -120,6 +120,25 @@ export async function resolvePendingSetups(fetcher: Fetcher = fetchMarketData): 
 
       if (triggered) {
         const target = s.trigger_level + s2 * 1.618 * Math.abs(s.trigger_level - s.c_low);
+        // V121 Ziel-Guard: Restpotenzial am Entry muss >= 0.25R sein -
+        // sonst degeneriertes Setup (Backtest-Befund: Ziele koennen bei
+        // weit laufender Bestaetigungskerze bereits hinter dem Entry liegen).
+        const entryPx = lastComplete.close;
+        const riskPx = Math.abs(entryPx - Number(s.invalidation));
+        const potentialR = riskPx > 0 ? (s2 * (target - entryPx)) / riskPx : -1;
+        if (potentialR < 0.25) {
+          db.prepare(
+            "UPDATE setups SET status='CONFIRMED', updated_at=CURRENT_TIMESTAMP WHERE symbol=?"
+          ).run(s.symbol);
+          events.push({
+            symbol: s.symbol,
+            type: "CONFIRMED",
+            text:
+              `⚠️ **${s.symbol} CONFIRMED (${dir}) ohne Trade**: Wochenschluss ${entryPx.toFixed(2)} ${dir === "LONG" ? "über" : "unter"} Trigger ${Number(s.trigger_level).toFixed(2)}, ` +
+              `aber Restpotenzial zum Ziel ${target.toFixed(2)} nur ${potentialR.toFixed(2)}R (< 0.25R) – degeneriertes Setup, kein Trade-Log (Ziel-Guard, V121).`,
+          });
+          continue;
+        }
         const allFlags = [
           ...JSON.parse(s.det_flags ?? "[]"),
           ...JSON.parse(s.llm_flags ?? "[]"),
