@@ -212,6 +212,18 @@ def main():
         ax.set_yscale("log")
         ax.grid(True, which="major", ls="-", alpha=0.2)
         ax.grid(True, which="minor", ls=":", alpha=0.1)
+        for tw in payload.get("timeWindows", []) or []:
+            try:
+                import datetime as _dt
+                x0 = _dt.date.fromisoformat(tw["start"])
+                x1 = _dt.date.fromisoformat(tw["end"])
+                ax.axvspan(x0, x1, color="#0F6B7A", alpha=0.10, zorder=0)
+                ymin_, ymax_ = ax.get_ylim()
+                ax.text(x0 + (x1 - x0) / 2, ymax_, tw.get("label", ""),
+                        fontsize=7, color="#0F6B7A", ha="center", va="top")
+            except Exception:
+                pass
+
         title_suffix = payload.get("titleSuffix", "")
         ax.set_title(
             f"{symbol} - Self-Healing EW Master (Log-Vector Core){title_suffix}",

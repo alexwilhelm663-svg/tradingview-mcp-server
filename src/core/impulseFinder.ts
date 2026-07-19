@@ -145,7 +145,10 @@ export function segmentVerdict(
     const sub = findBestImpulse(piv);
     if (sub && sub.count.trend === (dir === 1 ? "bullish" : "bearish")) return "IMPULSIVE";
   }
-  return detectDiagonal(seg, dir) ? "DIAGONAL" : "UNKLAR";
+  // V120-Ablation: Nur der kanonisch starke Keil (MIT 1/4-Overlap) zaehlt
+  // als DIAGONAL-Verdikt; Overlap-lose Keile bleiben Guideline (UNKLAR).
+  const d = detectDiagonal(seg, dir);
+  return d && d.overlap ? "DIAGONAL" : "UNKLAR";
 }
 
 /**
@@ -248,6 +251,18 @@ export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
       ? `Keine klare Impulszählung: ${dk8Filtered} Kandidat(en) wegen diagonaler W3-Substruktur verworfen (DK-8/HR-5) und keine regelkonforme Alternative gefunden.`
       : `Keine regelkonforme Impulszählung auf keiner ZigZag-Stufe (25/18/12/8 %) ableitbar (DK-7).`;
   return { impulse: null, abstention };
+}
+
+/** Extensionstyp einer fertigen Zaehlung (fuer typbewusste Checks). */
+export function extensionType(points: WavePoint[], dir: 1 | -1): 1 | 3 | 5 | null {
+  const P = (l: string) => points.find((x) => x.label === l);
+  const w0 = P("0"), w1 = P("1"), w2 = P("2"), w3 = P("3"), w4 = P("4"), w5 = P("5");
+  if (!w0 || !w1 || !w2 || !w3 || !w4 || !w5) return null;
+  const ln = (p: { price: number }): number => dir * Math.log(p.price);
+  const L1 = ln(w1) - ln(w0), L3 = ln(w3) - ln(w2), L5 = ln(w5) - ln(w4);
+  const arr = [L1, L3, L5];
+  const maxI = arr.indexOf(Math.max(...arr));
+  return maxI === 0 ? 1 : maxI === 1 ? 3 : 5;
 }
 
 export function findBestImpulse(pivots: Pivot[]): ImpulseResult | null {
@@ -355,6 +370,10 @@ function searchFromAnchor(
       if (!w3) continue;
       if (v(w3) <= v(w1)) continue; // HR-4
       if (v(w4) <= v(w1)) continue; // HR-3 (Overlap-Verbot)
+      // HR-6 (V120, Koenz/EWI): W4 retraced nie mehr als 0.618 der W3
+      // (linear gemessen - Preisregel, bewusst nicht Log, vgl. DK-2)
+      const retr4lin = (dir * (w3.price - w4.price)) / (dir * (w3.price - w2.price));
+      if (retr4lin > 0.618) continue;
       // w2 muss das Korrektur-Extrem in (w1, w3) sein
       if (cor.some((x) => x.index > w1.index && x.index < w3.index && v(x) < v(w2))) continue;
       const w5 = maxAfter(w4.index);
@@ -434,7 +453,10 @@ function scoreImpulse(seq: Pivot[], pivots: Pivot[], dir: 1 | -1, isDoctrine: bo
   const lens = [L1, L3, L5].sort((a, b) => b - a);
   if (lens[0] >= 1.618 * lens[1]) s += 2;
   else if (lens[0] >= 1.236 * lens[1]) s += 1;
-  // Retrace-Guidelines
+  // Retrace-Guidelines. BEWUSST typ-UNabhaengig (Ablation V120): Die
+  // Koenz-Typ-Baender in der SELEKTION senkten die Walk-Forward-Expectancy
+  // (5.0->3.3%, Score>=3 12.6->6.1%). Sie leben als Qualitaets-Info (GL-2b),
+  // nicht als Auswahl-Kriterium.
   if (retr2 >= 0.5 && retr2 <= 0.786) s += 2;
   else if (retr2 >= 0.382 && retr2 <= 0.9) s += 1;
   if (retr4 >= 0.236 && retr4 <= 0.5) s += 2;

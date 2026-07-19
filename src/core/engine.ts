@@ -155,6 +155,14 @@ function correctionLegsShort(
   return { aHigh: aPivot.price, aDate: aPivot.date, bLow: bPivot.price, bDate: bPivot.date, cHigh, cDate };
 }
 
+const addDaysE = (iso: string, d: number): string => {
+  const x = new Date(iso + "T00:00:00Z");
+  x.setUTCDate(x.getUTCDate() + Math.round(d));
+  return x.toISOString().split("T")[0];
+};
+const daysBetweenE = (a: string, b: string): number =>
+  (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
+
 export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
   try {
     // 1. Marktdaten (Weekly, 5 Jahre) + deterministische Pivots
@@ -184,6 +192,9 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         wc.analysis +=
           " Ziele: " +
           completion.projections.map((p) => `${p.label} ${p.price.toFixed(2)}`).join(" · ");
+      }
+      for (const tw of completion.timeWindows) {
+        wc.analysis += ` · ${tw.label}: ${tw.start} – ${tw.end}`;
       }
     }
     const totalScore = impulse.score + quality.bonus;
@@ -217,6 +228,7 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
     let clusterInfo = "";
     let chartClusters: { floor: number; ceiling: number; score: number; labels: string[] }[] | undefined;
     let chartMarkers: { price: number; label: string }[] = [];
+    const chartTimeWindows: { start: string; end: string; label: string }[] = [];
     let legs: CorrectionLegs = {
       aLow: null, aDate: null, bHigh: null, bDate: null, cLow: null, cDate: null,
     };
@@ -256,6 +268,20 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         }
       }
       // ATR-adaptive Toleranz (Skill-Prinzip): 3.5%..7%, je nach Volatilitaet
+      // V120b: Zeitfenster-Projektion des C-Endes (Koenz):
+      // ueblich 0.618-1.618 Fib-Zeit der Welle A, ab B-Ende.
+      if (correction && legs.aDate != null && legs.bDate != null) {
+        const durA = daysBetweenE(w5.date, legs.aDate);
+        if (durA > 0) {
+          const fromD = addDaysE(legs.bDate, 0.618 * durA);
+          const toD = addDaysE(legs.bDate, 1.618 * durA);
+          if (toD >= candles[candles.length - 1].date) {
+            chartTimeWindows.push({ start: fromD, end: toD, label: "C-Fenster 0.618–1.618×A" });
+            correction.text += ` · C-Zeitfenster ${fromD} – ${toD}`;
+          }
+        }
+      }
+
       const tolPct = Math.max(3.5, Math.min(7, weeklyAtrPct(candles)));
       const clusters = clusterLevels(cands, tolPct);
       const overhead = cands
@@ -347,6 +373,18 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         }
         if (edInC) {
           correctionS.text += ` · ⚡ Ending Diagonal in C erkannt (DG-1) – terminales Muster, erhöhtes Abwärts-Risiko`;
+        }
+      }
+
+      if (correctionS && legsS.aDate != null && legsS.bDate != null) {
+        const durA = daysBetweenE(w5.date, legsS.aDate);
+        if (durA > 0) {
+          const fromD = addDaysE(legsS.bDate, 0.618 * durA);
+          const toD = addDaysE(legsS.bDate, 1.618 * durA);
+          if (toD >= candles[candles.length - 1].date) {
+            chartTimeWindows.push({ start: fromD, end: toD, label: "C-Fenster 0.618–1.618×A" });
+            correctionS.text += ` · C-Zeitfenster ${fromD} – ${toD}`;
+          }
         }
       }
 
@@ -458,6 +496,7 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       candles,
       clusters: chartClusters,
       markers: chartMarkers,
+      timeWindows: chartTimeWindows.concat(completion ? completion.timeWindows : []),
     });
 
     // V118.1: Detail-Chart der W5-Binnenstruktur (Sub-Wellen bzw. ED-Keil).
@@ -484,6 +523,7 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         waves: subWaves,
         candles: subCandles,
         markers: subMarkers,
+        timeWindows: completion.timeWindows,
         titleSuffix: ` · ${kind} (ZigZag ${completion.subThreshold}%)`,
       });
     }

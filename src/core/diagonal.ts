@@ -4,7 +4,8 @@ import { zigzag, Pivot } from "./zigzag";
 export interface DiagonalRead {
   points: { label: string; date: string; price: number }[];
   contraction: number; // Kanalbreite Ende / Anfang (Log-Raum), < 1 = konvergent
-  overlap: boolean;
+  overlap: boolean;     // EWI-neu: Guideline, keine Pflicht mehr (V120)
+  w3Shorter: boolean;   // EWI-neu: W3 < W1 nur noch Guideline (V120)
   throwOver: boolean;
   endDate: string;
   endPrice: number;
@@ -86,17 +87,29 @@ function searchWedge(pivots: Pivot[], dir: 1 | -1): DiagonalRead | null {
             // hinterher -> W4 liegt (in Trendrichtung gemessen) JENSEITS
             // von W2: v(w4) > v(w2). Sonst kein kontrahierender Keil.
             if (v(w4) <= v(w2)) continue;
-            // Overlap-PFLICHT: W4 dringt in das W1-Preisgebiet ein
-            // (sonst waere es Impuls-Geometrie, kein Diagonal-Kandidat)
-            if (!(v(w4) < v(w1))) continue;
+            // EWI-Update (V120): Overlap ist von Regel zu GUIDELINE
+            // herabgestuft - er bleibt das Haeufigste, invalidiert aber
+            // nicht mehr. Wir merken ihn als Merkmal.
+            const overlap = v(w4) < v(w1);
             for (const w5 of imp.filter((p) => p.index > w4.index)) {
               if (v(w5) <= v(w3)) continue; // neues Extrem
 
-              // Kontraktion der Beinlaengen (Log)
+              // Beinlaengen (Log). EWI-Update: "W3 < W1" ist gestrichen
+              // (nur noch Guideline); harte Regeln bleiben W5 < W3 und
+              // W4 < W2 (Laenge). Dazu Koenz' Kanal-Touch als Praxis-Check.
               const L1 = ln(w1) - ln(p0);
               const L3 = ln(w3) - ln(w2);
               const L5 = ln(w5) - ln(w4);
-              if (!(L3 < L1 && L5 < L3)) continue;
+              if (!(L5 < L3)) continue;              // Regel: W5 < W3
+              const L2c = ln(w1) - ln(w2);
+              const L4c = ln(w3) - ln(w4);
+              if (!(L4c < L2c)) continue;            // Regel: W4 < W2
+              const w3Shorter = L3 < L1;             // Guideline (EWI-neu)
+              // Koenz-Kanalcheck: Parallele zur 1-3-Linie durch W2;
+              // beruehrt/durchbricht W4 sie -> Diagonale invalidiert.
+              const m13 = (ln(w3) - ln(w1)) / (w3.index - w1.index);
+              const par24 = (i: number): number => ln(w2) + m13 * (i - w2.index);
+              if (ln(w4) <= par24(w4.index)) continue;
 
               // Linien-Konvergenz im Log-Index-Raum
               const line = (a: Pivot, b: Pivot) => {
@@ -122,7 +135,8 @@ function searchWedge(pivots: Pivot[], dir: 1 | -1): DiagonalRead | null {
                   price: p.price,
                 })),
                 contraction,
-                overlap: true,
+                overlap,
+                w3Shorter,
                 throwOver,
                 endDate: w5.date,
                 endPrice: w5.price,

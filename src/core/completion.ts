@@ -11,7 +11,16 @@ export interface CompletionRead {
   subPoints: { label: string; date: string; price: number }[]; // Binnenstruktur für Detail-Chart
   subThreshold: number | null;
   isDiagonal: boolean;
+  timeWindows: { start: string; end: string; label: string }[]; // V120b: Fib-Zeit-Projektion
 }
+
+const addDays = (iso: string, d: number): string => {
+  const x = new Date(iso + "T00:00:00Z");
+  x.setUTCDate(x.getUTCDate() + Math.round(d));
+  return x.toISOString().split("T")[0];
+};
+const daysBetween = (a: string, b: string): number =>
+  (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
 
 /**
  * Vollendungs-Nachweis (V118, DK-9):
@@ -40,6 +49,7 @@ export function assessCompletion(
   if (seg.length < 10) return null;
 
   const ln = (a: number, b: number): number => dir * (Math.log(b) - Math.log(a));
+  let weakDiagKept: { read: ReturnType<typeof detectDiagonal>; th: number } | null = null;
   const logProject = (base: number, len: number, k: number): number =>
     Math.exp(Math.log(base) + dir * k * len);
 
@@ -48,9 +58,12 @@ export function assessCompletion(
     const piv = zigzag(seg, th);
     if (piv.length < 4) continue;
 
-    // Ending Diagonal als W5-Binnenstruktur? (kanonisch, DG-1) -> ebenfalls vollendet
+    // Ending Diagonal als W5-Binnenstruktur? (DG-1). EWI-Update (V120):
+    // OHNE 1/4-Overlap ist der Keil nur Guideline-Fall - er darf eine
+    // laufende Teil-Zaehlung nicht ueberschreiben. Mit Overlap: kanonisch
+    // stark -> sofort COMPLETE.
     const diag = detectDiagonal(seg, dir);
-    if (diag) {
+    if (diag && diag.overlap) {
       return {
         status: "COMPLETE",
         subLabel: "5",
@@ -59,8 +72,10 @@ export function assessCompletion(
         subPoints: diag.points,
         subThreshold: th,
         isDiagonal: true,
+        timeWindows: [],
       };
     }
+    if (diag && !diag.overlap && !weakDiagKept) weakDiagKept = { read: diag, th };
 
     // Ist die W5-Binnenstruktur ein KOMPLETTER 5-Teiler? -> Impuls vollendet.
     const fullWithFive = piv.length >= 6 ? findFive(piv, dir) : false;
@@ -74,6 +89,7 @@ export function assessCompletion(
         subPoints: fullSubPoints(piv, dir),
         subThreshold: th,
         isDiagonal: false,
+        timeWindows: [],
       };
     }
 
@@ -100,6 +116,13 @@ export function assessCompletion(
         subPoints: p4.points,
         subThreshold: th,
         isDiagonal: false,
+        timeWindows: (() => {
+          const t2d = daysBetween(p4.points[1].date, p4.points[2].date);
+          const s3d = p4.points[3].date;
+          return t2d > 0
+            ? [{ start: addDays(s3d, 1.0 * t2d), end: addDays(s3d, 3.0 * t2d), label: "Sub-4-Fenster 1.0–3.0×t(Sub-2)" }]
+            : [];
+        })(),
       };
     }
 
@@ -118,10 +141,30 @@ export function assessCompletion(
         subPoints: p2.points,
         subThreshold: th,
         isDiagonal: false,
+        timeWindows: (() => {
+          const t1d = daysBetween(p2.points[0].date, p2.points[1].date);
+          const s1d = p2.points[1].date;
+          return t1d > 0
+            ? [{ start: addDays(s1d, 0.382 * t1d), end: addDays(s1d, 2.0 * t1d), label: "Sub-2-Fenster 0.382–2.0×t(Sub-1)" }]
+            : [];
+        })(),
       };
     }
   }
 
+  if (weakDiagKept && weakDiagKept.read) {
+    const d = weakDiagKept.read;
+    return {
+      status: "COMPLETE",
+      subLabel: "5",
+      note: `Welle 5 zeigt einen Ending-Diagonal-Keil OHNE 1/4-Overlap (EWI: Guideline-Fall, reduzierte Signifikanz, auf ${weakDiagKept.th}%): Impuls vermutlich vollendet.`,
+      projections: [],
+      subPoints: d.points,
+      subThreshold: weakDiagKept.th,
+      isDiagonal: true,
+      timeWindows: [],
+    };
+  }
   return null; // keine belastbare Sub-Aussage -> stumm (Zaehlung bleibt wie sie ist)
 }
 
