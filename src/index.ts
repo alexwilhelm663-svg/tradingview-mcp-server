@@ -20,7 +20,7 @@ const PORT = Number(process.env.PORT) || 10000;
 const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const COOLDOWN_MS = 7 * 24 * 3600 * 1000; // 7 Tage pro Symbol
 
-console.log("🚀 EW Quant Hunter V120: EW-Engine (Koenz: Typ-Bänder · Fib-Zeit · EWI-Diagonalen) startet...");
+console.log("🚀 EW Quant Hunter V121: EW-Engine (Gates: Score≥3 · Ziel-Guard · Zeit-Konfluenz) startet...");
 
 function getActiveChatId(): number | null {
   const row = db.prepare("SELECT value FROM config WHERE key = 'chat_id'").get() as

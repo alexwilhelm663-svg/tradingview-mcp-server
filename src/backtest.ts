@@ -22,6 +22,7 @@ interface SimTrade {
   invalidation: number;
   target: number;
   clusterScore: number;
+  timeStatus: "✓" | "~" | "n/a";
   outcome: "WIN" | "LOSS" | "TIMEOUT_WIN" | "TIMEOUT_LOSS" | "OPEN";
   pnl: number;
   r: number; // Vielfache des Risikos
@@ -30,6 +31,14 @@ interface SimTrade {
 
 const TIMEOUT_WEEKS = 26;
 let degenerateCount = 0;
+
+const addDaysB = (iso: string, d: number): string => {
+  const x = new Date(iso + "T00:00:00Z");
+  x.setUTCDate(x.getUTCDate() + Math.round(d));
+  return x.toISOString().split("T")[0];
+};
+const daysBetweenB = (a: string, b: string): number =>
+  (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
 const DEFAULT_UNIVERSE = [
   "MSTR", "BTC-USD", "ETH-USD", "TSLA", "NVDA", "AMD", "AAPL", "MSFT",
   "GOOGL", "META", "NFLX", "NET", "SAP", "PYPL", "KO", "ARM", "TEAM", "COIN",
@@ -54,6 +63,8 @@ interface CorrectionLegsLite {
   aExt: number | null;
   bExt: number | null;
   cExt: number | null;
+  aDate: string | null;
+  bDate: string | null;
 }
 
 function legsAtCutoff(
@@ -66,15 +77,15 @@ function legsAtCutoff(
   const impK = dir === 1 ? "L" : "H"; // Korrektur laeuft gegen den Impuls
   const corK = dir === 1 ? "H" : "L";
   const aPool = post.filter((p) => p.kind === impK);
-  if (aPool.length === 0) return { aExt: null, bExt: null, cExt: null };
+  if (aPool.length === 0) return { aExt: null, bExt: null, cExt: null, aDate: null, bDate: null };
   const bPool = post.filter((p) => p.kind === corK);
   if (bPool.length === 0) {
     const run = aPool.reduce((m, p) => (dir * p.price < dir * m.price ? p : m));
-    return { aExt: run.price, bExt: null, cExt: null };
+    return { aExt: run.price, bExt: null, cExt: null, aDate: run.date, bDate: null };
   }
   const b = bPool.reduce((m, p) => (dir * p.price > dir * m.price ? p : m));
   const aC = aPool.filter((p) => p.date < b.date);
-  if (aC.length === 0) return { aExt: null, bExt: null, cExt: null };
+  if (aC.length === 0) return { aExt: null, bExt: null, cExt: null, aDate: null, bDate: null };
   const a = aC.reduce((m, p) => (dir * p.price < dir * m.price ? p : m));
   const afterB = candles.filter((k) => k.date > b.date);
   let cExt: number | null = null;
@@ -82,7 +93,7 @@ function legsAtCutoff(
     const v = dir === 1 ? k.low : k.high;
     if (cExt === null || dir * v < dir * cExt) cExt = v;
   }
-  return { aExt: a.price, bExt: b.price, cExt };
+  return { aExt: a.price, bExt: b.price, cExt, aDate: a.date, bDate: b.date };
 }
 
 /** Setup-Erkennung am Stichtag - repliziert die Engine-Bedingungen ohne DB/Chart/LLM. */
@@ -91,6 +102,7 @@ function detectSetupAtCutoff(candles: Candle[]): {
   cluster: FibCluster;
   trigger: number | null;
   cExtreme: number;
+  timeStatus: "✓" | "~" | "n/a";
 } | null {
   const outcome = findImpulseAdaptive(candles);
   if (!outcome.impulse) return null;
@@ -111,11 +123,11 @@ function detectSetupAtCutoff(candles: Candle[]): {
     });
     const clusters = clusterLevels(cands, tolPct);
     const inZone = clusters.find(
-      (cl) => cl.score >= 2 && price >= cl.floor * 0.97 && price <= cl.ceiling * 1.03
+      (cl) => cl.score >= 3 && price >= cl.floor * 0.97 && price <= cl.ceiling * 1.03
     );
     if (inZone && legs.cExt != null) {
       const trigger = cands.map((c) => c.price).filter((p) => p > price * 1.01).sort((a, b) => a - b)[0] ?? null;
-      return { direction: "LONG", cluster: inZone, trigger, cExtreme: legs.cExt };
+      return { direction: "LONG", cluster: inZone, trigger, cExtreme: legs.cExt, timeStatus: cWindowStatus(candles, w5.date, legs.aDate, legs.bDate) };
     }
   } else if (wc.trend === "bearish" && price > w5.price) {
     const legs = legsAtCutoff(pivots, candles, w5.date, -1);
@@ -125,14 +137,22 @@ function detectSetupAtCutoff(candles: Candle[]): {
     });
     const clusters = clusterLevels(cands, tolPct);
     const inZone = clusters.find(
-      (cl) => cl.score >= 2 && price >= cl.floor * 0.97 && price <= cl.ceiling * 1.03
+      (cl) => cl.score >= 3 && price >= cl.floor * 0.97 && price <= cl.ceiling * 1.03
     );
     if (inZone && legs.cExt != null) {
       const trigger = cands.map((c) => c.price).filter((p) => p < price * 0.99).sort((a, b) => b - a)[0] ?? null;
-      return { direction: "SHORT", cluster: inZone, trigger, cExtreme: legs.cExt };
+      return { direction: "SHORT", cluster: inZone, trigger, cExtreme: legs.cExt, timeStatus: cWindowStatus(candles, w5.date, legs.aDate, legs.bDate) };
     }
   }
   return null;
+}
+
+function cWindowStatus(candles: Candle[], w5Date: string, aDate: string | null, bDate: string | null): "✓" | "~" | "n/a" {
+  if (aDate == null || bDate == null) return "n/a";
+  const durA = daysBetweenB(w5Date, aDate);
+  if (durA <= 0) return "n/a";
+  const last = candles[candles.length - 1].date;
+  return last >= addDaysB(bDate, 0.618 * durA) && last <= addDaysB(bDate, 1.618 * durA) ? "✓" : "~";
 }
 
 /** Vorwaerts-Simulation: erst Trigger (Wochenschluss), dann Ziel/Invalidierung. */
@@ -171,21 +191,21 @@ function simulate(
     const invalHit = s2 === 1 ? c.low <= invalidation : c.high >= invalidation;
     if (invalHit) {
       const pnl = (s2 * (invalidation - entry)) / entry;
-      return { symbol: "", direction, entryDate: future[entryIdx].date, entry, trigger, invalidation, target, clusterScore: cluster.score, outcome: "LOSS", pnl, r: (s2 * (invalidation - entry)) / risk, weeksHeld: i - entryIdx };
+      return { symbol: "", direction, entryDate: future[entryIdx].date, entry, trigger, invalidation, target, clusterScore: cluster.score, timeStatus: "n/a", outcome: "LOSS", pnl, r: (s2 * (invalidation - entry)) / risk, weeksHeld: i - entryIdx };
     }
     const targetHit = s2 === 1 ? c.high >= target : c.low <= target;
     if (targetHit) {
       const pnl = (s2 * (target - entry)) / entry;
-      return { symbol: "", direction, entryDate: future[entryIdx].date, entry, trigger, invalidation, target, clusterScore: cluster.score, outcome: "WIN", pnl, r: (s2 * (target - entry)) / risk, weeksHeld: i - entryIdx };
+      return { symbol: "", direction, entryDate: future[entryIdx].date, entry, trigger, invalidation, target, clusterScore: cluster.score, timeStatus: "n/a", outcome: "WIN", pnl, r: (s2 * (target - entry)) / risk, weeksHeld: i - entryIdx };
     }
     if (i - entryIdx >= TIMEOUT_WEEKS) {
       const pnl = (s2 * (c.close - entry)) / entry;
-      return { symbol: "", direction, entryDate: future[entryIdx].date, entry, trigger, invalidation, target, clusterScore: cluster.score, outcome: pnl > 0 ? "TIMEOUT_WIN" : "TIMEOUT_LOSS", pnl, r: (s2 * (c.close - entry)) / risk, weeksHeld: i - entryIdx };
+      return { symbol: "", direction, entryDate: future[entryIdx].date, entry, trigger, invalidation, target, clusterScore: cluster.score, timeStatus: "n/a", outcome: pnl > 0 ? "TIMEOUT_WIN" : "TIMEOUT_LOSS", pnl, r: (s2 * (c.close - entry)) / risk, weeksHeld: i - entryIdx };
     }
   }
   const last = future[future.length - 1];
   const pnl = (s2 * (last.close - entry)) / entry;
-  return { symbol: "", direction, entryDate: future[entryIdx].date, entry, trigger, invalidation, target, clusterScore: cluster.score, outcome: "OPEN", pnl, r: (s2 * (last.close - entry)) / risk, weeksHeld: future.length - 1 - entryIdx };
+  return { symbol: "", direction, entryDate: future[entryIdx].date, entry, trigger, invalidation, target, clusterScore: cluster.score, timeStatus: "n/a", outcome: "OPEN", pnl, r: (s2 * (last.close - entry)) / risk, weeksHeld: future.length - 1 - entryIdx };
 }
 
 async function backtestSymbol(symbol: string, minHistory = 156): Promise<SimTrade[]> {
@@ -205,6 +225,7 @@ async function backtestSymbol(symbol: string, minHistory = 156): Promise<SimTrad
     if (!setup || setup.trigger == null) continue;
 
     const sim = simulate(all.slice(cut + 1), setup.direction, setup.cluster, setup.trigger, setup.cExtreme);
+      if (sim) sim.timeStatus = setup.timeStatus;
     if (sim && sim.outcome !== "OPEN") {
       sim.symbol = symbol;
       trades.push(sim);
@@ -234,6 +255,7 @@ function report(trades: SimTrade[]): void {
   for (const t of trades) {
     (groups[t.direction] ??= []).push(t);
     (groups[`Score ${t.clusterScore >= 3 ? ">=3" : "=2"}`] ??= []).push(t);
+    (groups[`Zeit ${t.timeStatus}`] ??= []).push(t);
   }
   console.log("\n════ Walk-Forward-Ergebnis ════");
   for (const [name, g] of Object.entries(groups)) {
@@ -271,7 +293,7 @@ function report(trades: SimTrade[]): void {
       console.log(`  ${s.padEnd(8)} -> Fehler: ${e?.message ?? e}`);
     }
   }
-  console.log(`\nDegenerierte Setups (Ziel <0.25R hinter Entry, Live-Zielformel-Befund): ${degenerateCount}`);
+  console.log(`\nDegenerierte Setups (<0.25R): ${degenerateCount}`);
   report(all);
   process.exit(0);
 })();

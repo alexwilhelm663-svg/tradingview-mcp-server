@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 4.0
+version: 4.1
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -240,3 +240,14 @@ Abweichungen der Engine vom Kanon sind ausschließlich in §7 (DK) kodifiziert.*
   Diagonale invalidiert. SELEKTIONS-Wirkung (DK-8-Verdikt, Completion-
   COMPLETE) bleibt dem kanonisch STARKEN Keil (mit Overlap) vorbehalten;
   Overlap-lose Keile sind Guideline-Hinweise.
+
+- **DK-10 Setup-Gates (V121, messbasiert):** (a) Neue PENDINGs verlangen
+  Cluster-Score ≥ 3 (Walk-Forward: ~10,7 % vs 2,4 % Expectancy); Score-2-
+  Zonen werden als 🟡 WATCH gemeldet. (b) Zeit-KONFLUENZ (kein Gate): Das
+  C-Zeitfenster (0,618–1,618 Fib-Zeit von A ab B-Ende) wird an jedem
+  PENDING als ⏱️-Status ausgewiesen und im Walk-Forward als Subgruppe
+  gemessen. Als HARTES Gate gemessen verworfen: n=3 statt 17,
+  Expectancy 10,7 % → 0,4 % — Zeit ist Wahrscheinlichkeit, nicht
+  Erlaubnis. (c) Ziel-Guard: CONFIRMED erzeugt nur dann einen
+  Trade, wenn das Restpotenzial ≥ 0,25R beträgt — sonst ⚠️ „CONFIRMED ohne
+  Trade" (degeneriertes Setup).

@@ -215,7 +215,10 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       );
     }
     const cautious = critique != null && (critique.confidence < 40 || critique.flags.length >= 2);
-    const minClusterScore = cautious ? 3 : 2;
+    // V121: Score>=3-Gate. Walk-Forward (8 Sym., 10 J.): Score>=3 traegt
+    // ~5x die Expectancy von Score 2 (10.7% vs 2.4%). Score-2-Zonen werden
+    // nur noch als WATCH gemeldet. Kritik-Asymmetrie bleibt informativ.
+    const minClusterScore = 3;
 
     const w0 = pt(wc, "0");
     const w1 = pt(wc, "1");
@@ -268,19 +271,24 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         }
       }
       // ATR-adaptive Toleranz (Skill-Prinzip): 3.5%..7%, je nach Volatilitaet
-      // V120b: Zeitfenster-Projektion des C-Endes (Koenz):
-      // ueblich 0.618-1.618 Fib-Zeit der Welle A, ab B-Ende.
+      // V120b/V121: Zeitfenster des C-Endes (Koenz, 0.618-1.618 Fib-Zeit
+      // von A ab B-Ende) - jetzt auch als GATE fuer neue PENDINGs.
+      let cWinFrom: string | null = null;
+      let cWinTo: string | null = null;
       if (correction && legs.aDate != null && legs.bDate != null) {
         const durA = daysBetweenE(w5.date, legs.aDate);
         if (durA > 0) {
-          const fromD = addDaysE(legs.bDate, 0.618 * durA);
-          const toD = addDaysE(legs.bDate, 1.618 * durA);
-          if (toD >= candles[candles.length - 1].date) {
-            chartTimeWindows.push({ start: fromD, end: toD, label: "C-Fenster 0.618–1.618×A" });
-            correction.text += ` · C-Zeitfenster ${fromD} – ${toD}`;
+          cWinFrom = addDaysE(legs.bDate, 0.618 * durA);
+          cWinTo = addDaysE(legs.bDate, 1.618 * durA);
+          if (cWinTo >= candles[candles.length - 1].date) {
+            chartTimeWindows.push({ start: cWinFrom, end: cWinTo, label: "C-Fenster 0.618–1.618×A" });
+            correction.text += ` · C-Zeitfenster ${cWinFrom} – ${cWinTo}`;
           }
         }
       }
+      const lastDate = candles[candles.length - 1].date;
+      const inTimeWindow =
+        cWinFrom == null || cWinTo == null || (lastDate >= cWinFrom && lastDate <= cWinTo);
 
       const tolPct = Math.max(3.5, Math.min(7, weeklyAtrPct(candles)));
       const clusters = clusterLevels(cands, tolPct);
@@ -317,6 +325,9 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
           `(Score ${inZone.score}: ${inZone.labels.join(", ")}).\n` +
           `Trigger: Wochenschluss > ${overhead != null ? overhead.toFixed(2) : "n/a"} · ` +
           `Invalidierung: Wochenschluss < ${(inZone.floor * 0.97).toFixed(2)}` +
+          (cWinFrom != null
+            ? ` · ⏱️ ${inTimeWindow ? "im" : "außerhalb des"} C-Zeitfensters (${cWinFrom} – ${cWinTo})`
+            : "") +
           (correction ? `\n${correction.text}` : "");
       } else {
         const below = clusters
@@ -324,9 +335,9 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
           .sort((a, b) => b.ceiling - a.ceiling)[0] ??
           clusters.filter((cl) => cl.ceiling < currentPrice).sort((a, b) => b.ceiling - a.ceiling)[0];
         const gateNote =
-          cautious && baselineZone
-            ? `🛡️ Score-2-Zone ${baselineZone.floor.toFixed(2)}–${baselineZone.ceiling.toFixed(2)} übersprungen ` +
-              `(Kritik: Confidence ${critique!.confidence}${critique!.flags.length > 0 ? ", " + critique!.flags.join(", ") : ""}) – konservatives Gating verlangt Score ≥ 3.\n`
+          baselineZone && !inZone
+            ? `🟡 WATCH: Score-2-Zone ${baselineZone.floor.toFixed(2)}–${baselineZone.ceiling.toFixed(2)} berührt – ` +
+              `kein Setup (Gate: Score ≥ 3, V121-Messung: 10.7% vs 2.4% Expectancy).\n`
             : "";
         clusterInfo = gateNote + (below
           ? `⚪ Kein aktives Setup. Nächster Long-Cluster darunter: ${below.floor.toFixed(2)}–${below.ceiling.toFixed(2)} ` +
@@ -376,17 +387,22 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
         }
       }
 
+      let cWinFromS: string | null = null;
+      let cWinToS: string | null = null;
       if (correctionS && legsS.aDate != null && legsS.bDate != null) {
         const durA = daysBetweenE(w5.date, legsS.aDate);
         if (durA > 0) {
-          const fromD = addDaysE(legsS.bDate, 0.618 * durA);
-          const toD = addDaysE(legsS.bDate, 1.618 * durA);
-          if (toD >= candles[candles.length - 1].date) {
-            chartTimeWindows.push({ start: fromD, end: toD, label: "C-Fenster 0.618–1.618×A" });
-            correctionS.text += ` · C-Zeitfenster ${fromD} – ${toD}`;
+          cWinFromS = addDaysE(legsS.bDate, 0.618 * durA);
+          cWinToS = addDaysE(legsS.bDate, 1.618 * durA);
+          if (cWinToS >= candles[candles.length - 1].date) {
+            chartTimeWindows.push({ start: cWinFromS, end: cWinToS, label: "C-Fenster 0.618–1.618×A" });
+            correctionS.text += ` · C-Zeitfenster ${cWinFromS} – ${cWinToS}`;
           }
         }
       }
+      const lastDateS = candles[candles.length - 1].date;
+      const inTimeWindowS =
+        cWinFromS == null || cWinToS == null || (lastDateS >= cWinFromS && lastDateS <= cWinToS);
 
       const tolPct = Math.max(3.5, Math.min(7, weeklyAtrPct(candles)));
       const clusters = clusterLevels(cands, tolPct);
@@ -418,6 +434,9 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
           `(Score ${inZoneS.score}: ${inZoneS.labels.join(", ")}).\n` +
           `Trigger: Wochenschluss < ${underfoot != null ? underfoot.toFixed(2) : "n/a"} · ` +
           `Invalidierung: Wochenschluss > ${(inZoneS.ceiling * 1.03).toFixed(2)}` +
+          (cWinFromS != null
+            ? ` · ⏱️ ${inTimeWindowS ? "im" : "außerhalb des"} C-Zeitfensters (${cWinFromS} – ${cWinToS})`
+            : "") +
           (correctionS ? `\n${correctionS.text}` : "");
       } else {
         const above = clusters
@@ -425,9 +444,9 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
           .sort((a, b) => a.floor - b.floor)[0] ??
           clusters.filter((cl) => cl.floor > currentPrice).sort((a, b) => a.floor - b.floor)[0];
         const gateNoteS =
-          cautious && baselineZoneS
-            ? `🛡️ Score-2-Zone ${baselineZoneS.floor.toFixed(2)}–${baselineZoneS.ceiling.toFixed(2)} übersprungen ` +
-              `(Kritik: Confidence ${critique!.confidence}) – konservatives Gating verlangt Score ≥ 3.\n`
+          baselineZoneS && !inZoneS
+            ? `🟡 WATCH: Score-2-Zone ${baselineZoneS.floor.toFixed(2)}–${baselineZoneS.ceiling.toFixed(2)} berührt – ` +
+              `kein Setup (Gate: Score ≥ 3, V121-Messung).\n`
             : "";
         clusterInfo = gateNoteS + (above
           ? `⚪ Kein aktives Setup. Nächster Short-Cluster darüber: ${above.floor.toFixed(2)}–${above.ceiling.toFixed(2)} ` +
