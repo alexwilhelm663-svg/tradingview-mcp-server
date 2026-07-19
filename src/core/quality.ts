@@ -1,6 +1,6 @@
 import type { Candle } from "./marketData";
 import { zigzag } from "./zigzag";
-import { WaveCount, segmentVerdict, SubVerdict } from "./impulseFinder";
+import { WaveCount, segmentVerdict, SubVerdict, extensionType } from "./impulseFinder";
 
 export interface QualityAssessment {
   bonus: number;
@@ -37,6 +37,7 @@ export function assessQuality(
   let maxBonus = 0;
 
   const point = (label: string) => wc.points.find((p) => p.label === label);
+  const extType = extensionType(wc.points, dir);
   const w2 = point("2");
   const w3 = point("3");
   const w4 = point("4");
@@ -47,14 +48,20 @@ export function assessQuality(
   const i3 = w3 ? candles.findIndex((c) => c.date === w3.date) : -1;
   const i5 = w5 ? candles.findIndex((c) => c.date === w5.date) : -1;
   if (i3 >= 34 && i5 >= 34 && osc[i3] != null && osc[i5] != null) {
-    maxBonus += 1;
-    const divergent = dir * ((osc[i5] as number) - (osc[i3] as number)) < 0;
-    if (divergent) {
-      bonus += 1;
-      parts.push("W5-Divergenz ✓");
+    if (extType === 5) {
+      // GL-6 typbewusst (V120, Koenz): Bei Ext-W5 traegt die 5 die Kraft -
+      // fehlende Divergenz ist ERWARTBAR, kein Flag, keine Wertung.
+      parts.push("W5-Divergenz n/a (Ext-W5)");
     } else {
-      flags.push("KEINE_W5_DIVERGENZ");
-      parts.push("W5-Divergenz –");
+      maxBonus += 1;
+      const divergent = dir * ((osc[i5] as number) - (osc[i3] as number)) < 0;
+      if (divergent) {
+        bonus += 1;
+        parts.push("W5-Divergenz ✓");
+      } else {
+        flags.push("KEINE_W5_DIVERGENZ");
+        parts.push("W5-Divergenz –");
+      }
     }
   }
 
@@ -130,28 +137,65 @@ export function assessQuality(
   const v5 = legVol(i4, i5);
   if (v1 != null && v3 != null && v5 != null) {
     maxBonus += 1;
-    if (v3 >= v1 && v3 >= v5) {
+    // GL-5 typbewusst (V120, Koenz): Volumen-Maximum liegt in der
+    // GESTRECKTEN Welle - Ext-W5-Impulse haben steigendes Profil.
+    const volOk =
+      extType === 1 ? v1 >= v3 && v1 >= v5
+      : extType === 5 ? v5 >= v3 && v3 >= v1
+      : v3 >= v1 && v3 >= v5;
+    const lbl = extType === 1 ? "W1-Dominanz" : extType === 5 ? "steigend, Ext-W5" : "W3-Dominanz";
+    if (volOk) {
       bonus += 1;
-      parts.push("Volumen ✓ (W3-Dominanz)");
+      parts.push(`Volumen ✓ (${lbl})`);
     } else {
-      flags.push("VOLUMEN_W3_SCHWACH");
+      flags.push("VOLUMEN_PROFIL_ATYPISCH");
       parts.push("Volumen –");
     }
   }
 
-  // ── 5. Fib-Zeit (GL-7): Dauer-Relationen der Antriebswellen ──
+  // ── 4b. GL-2b (V120, Koenz): Retrace-Baender je Extensionstyp - INFO ──
+  const w0q = point("0"), w1q = point("1");
+  if (extType != null && w0q && w1q && w2 && w3 && w4) {
+    const lq = (pr: number): number => dir * Math.log(pr);
+    const L1q = lq(w1q.price) - lq(w0q.price);
+    const L3q = lq(w3.price) - lq(w2.price);
+    if (L1q > 0 && L3q > 0) {
+      const r2 = (lq(w1q.price) - lq(w2.price)) / L1q;
+      const r4 = (lq(w3.price) - lq(w4.price)) / L3q;
+      maxBonus += 1;
+      const ok =
+        extType === 1
+          ? r2 >= 0.236 && r2 <= 0.618 && r4 >= 0.236 && r4 <= 0.5
+          : r2 >= 0.382 && r2 <= 0.9 && r4 >= 0.236 && r4 <= 0.618;
+      if (ok) { bonus += 1; parts.push(`Retrace-Typ ✓ (Ext-W${extType})`); }
+      else parts.push(`Retrace-Typ ~ (Ext-W${extType})`);
+    }
+  }
+
+  // ── 5. Fib-Zeit (GL-7 NEU, V120/Koenz): Zeit-Baender je Wellenpaar ──
   if (i0 >= 0 && i1 > i0 && i2 > i1 && i3 > i2 && i4 > i3 && i5 > i4) {
-    maxBonus += 1;
-    const d1 = i1 - i0;
-    const d3 = i3 - i2;
-    const d5 = i5 - i4;
-    const fibs = [0.382, 0.618, 1.0, 1.618, 2.618];
-    const near = (r: number): boolean => fibs.some((f) => Math.abs(r - f) / f <= 0.12);
-    if (d1 > 0 && d3 > 0 && d5 > 0 && (near(d3 / d1) || near(d5 / d3) || near(d5 / d1))) {
-      bonus += 1;
-      parts.push("Fib-Zeit ✓");
-    } else {
-      parts.push("Fib-Zeit –"); // Soft-Guideline: kein Flag (GL-7)
+    const t1 = i1 - i0, t2 = i2 - i1, t4 = i4 - i3, t5 = i5 - i4;
+    if (t1 > 0) {
+      maxBonus += 1;
+      const r2 = t2 / t1;
+      if (r2 >= 0.382 && r2 < 2.0) { bonus += 1; parts.push("Zeit-W2 ✓"); }
+      else if (r2 >= 4.0) { flags.push("ZEIT_W2_ATYPISCH"); parts.push("Zeit-W2 –"); }
+      else parts.push("Zeit-W2 ~");
+    }
+    if (t2 > 0) {
+      maxBonus += 1;
+      const r4 = t4 / t2;
+      // Zeit-Alternation: W4 ist meist LAENGER als W2 (Koenz)
+      if (r4 >= 1.0 && r4 < 5.0) { bonus += 1; parts.push("Zeit-Alt ✓"); }
+      else if (r4 >= 5.0) { flags.push("ZEIT_W4_ATYPISCH"); parts.push("Zeit-Alt –"); }
+      else parts.push("Zeit-Alt ~");
+    }
+    if (extType === 3 && t1 > 0) {
+      // W5 ~ W1 in der Zeit nur bei gestreckter Dritter vergleichbar
+      maxBonus += 1;
+      const r5 = t5 / t1;
+      if (r5 >= 0.618 && r5 <= 1.618) { bonus += 1; parts.push("Zeit-W5 ✓"); }
+      else parts.push("Zeit-W5 ~");
     }
   }
 

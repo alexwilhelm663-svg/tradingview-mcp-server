@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 3.9
+version: 4.0
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -207,3 +207,36 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 ---
 *Kanon-Referenzen: Elliott (1938), Frost/Prechter „Elliott Wave Principle".
 Abweichungen der Engine vom Kanon sind ausschließlich in §7 (DK) kodifiziert.*
+
+
+---
+
+## V120-Ergänzungen (Koenz/EWI-Abgleich)
+
+- **HR-6 W4-Retracement-Grenze:** Welle 4 retraced nie mehr als 0,618 der
+  Welle 3 (LINEAR gemessen — Preisregel, bewusst nicht Log; vgl. DK-2).
+  Kandidaten darüber werden im Finder verworfen.
+- **GL-2b typabhängige Bänder (nur Qualitäts-Ebene):** Ext-W1: W2/W4
+  üblich 0,236–0,382 (flach); Ext-W3/W5: klassisch. WICHTIG: Die Bänder
+  wirken als Qualitäts-Info („Retrace-Typ ✓/~"), NICHT im Selektions-
+  Scoring — der Walk-Forward (8 Symbole, 10 J.) zeigte dort eine
+  Expectancy-Verschlechterung 5,0→3,3 % (Score≥3: 12,6→6,1 %).
+- **GL-5/GL-6 typbewusst:** Volumen-Maximum liegt in der GESTRECKTEN Welle
+  (Ext-W1: W1-Dominanz; Ext-W5: steigendes Profil, W5-Maximum). Bei Ext-W5
+  ist fehlende W5-Divergenz ERWARTBAR — kein Flag, keine Wertung.
+  Flag umbenannt: VOLUMEN_W3_SCHWACH → VOLUMEN_PROFIL_ATYPISCH.
+- **GL-7 NEU (Fib-Zeit-Bänder):** Wahrscheinlichkeits-Bänder je Wellenpaar
+  statt grobem Fib-Set: t(W2)/t(W1) üblich 0,382–2,0 (≥4,0 →
+  ZEIT_W2_ATYPISCH); Zeit-Alternation t(W4)/t(W2) ≥ 1,0 üblich (≥5,0 →
+  ZEIT_W4_ATYPISCH); t(W5)/t(W1) 0,618–1,618 NUR bei Ext-W3 vergleichbar.
+  Dazu ZEITFENSTER-PROJEKTION: C-Ende üblich 0,618–1,618 Fib-Zeit von A
+  (ab B-Ende); laufende Sub-Wellen erhalten Zeitfenster analog
+  (Sub-2: 0,382–2,0×t(Sub-1); Sub-4: 1,0–3,0×t(Sub-2)) — als vertikale
+  Bänder im Chart und in der Lesart (Zeit-Preis-Konfluenz).
+- **DG-1 auf EWI-Stand:** „W3 < W1" gestrichen (Guideline, Feld w3Shorter);
+  1/4-Overlap von Regel zu GUIDELINE herabgestuft (Feld overlap). Harte
+  Regeln bleiben: W5 < W3 und W4 < W2 (Länge). Zusätzlich Koenz'
+  Kanal-Touch: berührt W4 die Parallele zur 1-3-Linie durch W2, ist die
+  Diagonale invalidiert. SELEKTIONS-Wirkung (DK-8-Verdikt, Completion-
+  COMPLETE) bleibt dem kanonisch STARKEN Keil (mit Overlap) vorbehalten;
+  Overlap-lose Keile sind Guideline-Hinweise.
