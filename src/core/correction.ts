@@ -151,7 +151,8 @@ export function classifyCorrection(
   let text = `Korrektur-Lesart: ${name} · B = ${bRetr.toFixed(2)}×A`;
   if (cOverA != null) text += ` · C bisher ${cOverA.toFixed(2)}×A`;
   if (pattern === "KOMBINATION")
-    text += ` · W-Bein nicht impulsiv (3er) ⇒ zusammengesetzt statt Zigzag (Struktur-Beweis)`;
+    text += ` · W-Bein nicht impulsiv (3er) ⇒ zusammengesetzt statt Zigzag (Struktur-Beweis)` +
+      ` · ⚠️ WXY korrigiert tiefer als ABC (erwartbar 0,618–0,786 des Impulses statt ~0,5) – Kaufzone riskanter, tiefere X-Y-Etappe möglich`;
   else if (aVerdict === "IMPULSIVE") text += ` · A-Bein impulsiv ✓ (Zigzag bestätigt, Struktur-Beweis)`;
   else if (aVerdict === "UNKLAR" && ctx?.aDate) text += ` · A-Struktur unklar`;
   if (pattern === "FLAT_EXPANDED" && bRetr >= 1.618)
@@ -174,15 +175,18 @@ export function classifyCorrection(
     }
   }
 
-  // WXY-Ziel: Y ~ W in Länge (log), ab X projiziert (Kombinationen sind
-  // oft laengengleich; Koenz: X-Retrace 0.786-1.382). Ersetzt das ZZ-Ziel.
+  // WXY-Ziel + TIEFENDIFFERENZIERUNG (V126): Eine zusammengesetzte
+  // Korrektur (W-X-Y) laeuft bei gleicher B/X-Optik TIEFER als ein
+  // einfaches A-B-C - zwei Korrekturen in Serie. Ziel-Baender daher
+  // Y = 1.0-1.618×W (statt ZZ-typischer 0.618-1.0). Zusaetzlich das
+  // primaere Ziel gegen die Impuls-Retrace-Marken spiegeln.
   if (pattern === "KOMBINATION" && logOk) {
     const wLenLog = dir * (Math.log(w5Price) - Math.log(aExtreme));
     for (const k of [1.0, 1.236, 1.618]) {
       const level = Math.exp(Math.log(bExtreme) - dir * k * wLenLog);
       if (level > 0 && dir * (currentPrice - level) > 0) {
         targetPrice = level;
-        targetLabel = `WXY-Ziel logY=${k}·W (KO-6)`;
+        targetLabel = `WXY-Ziel logY=${k}·W (KO-6, tiefer als ABC)`;
         break;
       }
     }
