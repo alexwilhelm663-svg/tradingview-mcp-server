@@ -18,6 +18,8 @@ export interface CorrectionRead {
   targetPrice: number | null;
   targetLabel: string | null;
   cOverA: number | null;
+  // V125: A-B-C bzw. W-X-Y Strukturpunkte + Labels fuer den Chart
+  legPoints: { label: string; date: string; price: number }[];
 }
 
 export interface CorrectionContext {
@@ -72,10 +74,21 @@ export function classifyCorrection(
 
   // Zigzag mit weit ueberschossenem C -> Double-Zigzag-These (KO-2b)
   if (pattern === "ZIGZAG" && cOverA != null && cOverA > 1.75) pattern = "DOUBLE_ZIGZAG";
-  // Flat-Familie ohne impulsives A bleibt Flat; Zigzag MIT 3er-A -> Kombination (KO-6)
-  if (pattern === "ZIGZAG" && aVerdict === "UNKLAR" && ctx && ctx.aDate) {
-    const segLen = ctx.candles.filter((c) => c.date >= ctx.topDate && c.date <= ctx.aDate!).length;
-    if (segLen >= 25) pattern = "KOMBINATION"; // genug Daten, aber kein 5er-A
+  // KO-6 WXY-Vollprüfung (V125): Eine Kombination liegt vor, wenn das
+  // erste Korrektur-Bein (W) selbst NICHT impulsiv ist (also eine
+  // zusammengesetzte 3er-Struktur), verbunden durch eine X-Welle. Der
+  // Struktur-Beweis am A(=W)-Bein ist der Entscheider ABC vs. WXY:
+  //   A-Bein impulsiv (5er) -> echtes ABC (Zigzag/Flat bleibt);
+  //   A-Bein 3er/unklar bei ausreichender Datenlage -> W-X-Y.
+  if (
+    (pattern === "ZIGZAG" || pattern === "UNKLAR") &&
+    aVerdict === "UNKLAR" && ctx && ctx.aDate
+  ) {
+    const wLen = ctx.candles.filter((c) => c.date >= ctx.topDate && c.date <= ctx.aDate!).length;
+    // W muss substanziell sein (>= 6 Kerzen echtes Bein, nicht nur Rauschen)
+    // UND nicht-impulsiv (3er) - dann ist es ein zusammengesetztes W statt
+    // eines einfachen Zigzag-A. Kurze/impulsive A-Beine bleiben Zigzag.
+    if (wLen >= 6) pattern = "KOMBINATION";
   }
   // Running-Flat-Verdacht (KO-4): B ueberschiesst, C haelt DEUTLICH ueber A
   if (
@@ -132,12 +145,14 @@ export function classifyCorrection(
     : pattern === "FLAT_EXPANDED" ? "Expanded Flat (KO-3)"
     : pattern === "FLAT_RUNNING_VERDACHT" ? "Running-Flat-Verdacht (KO-4)"
     : pattern === "TRIANGLE" ? `Triangle (KO-5, ${"" + (tri?.legs ?? 0)} Beine, kontrahierend)`
-    : pattern === "KOMBINATION" ? "Kombination W-X-Y (KO-6)"
+    : pattern === "KOMBINATION" ? "Kombination W-X-Y (KO-6, A-Bein nicht impulsiv)"
     : bRetr > 0.786 && bRetr < 0.9 ? "unklar (Grauzone 0,786–0,9)"
     : "unklar";
   let text = `Korrektur-Lesart: ${name} · B = ${bRetr.toFixed(2)}×A`;
   if (cOverA != null) text += ` · C bisher ${cOverA.toFixed(2)}×A`;
-  if (aVerdict === "IMPULSIVE") text += ` · A-Bein impulsiv ✓ (Struktur-Beweis)`;
+  if (pattern === "KOMBINATION")
+    text += ` · W-Bein nicht impulsiv (3er) ⇒ zusammengesetzt statt Zigzag (Struktur-Beweis)`;
+  else if (aVerdict === "IMPULSIVE") text += ` · A-Bein impulsiv ✓ (Zigzag bestätigt, Struktur-Beweis)`;
   else if (aVerdict === "UNKLAR" && ctx?.aDate) text += ` · A-Struktur unklar`;
   if (pattern === "FLAT_EXPANDED" && bRetr >= 1.618)
     text += ` · ⚠️ B ≥ 1.618×A (senkt Wahrscheinlichkeit deutlich)`;
@@ -147,7 +162,46 @@ export function classifyCorrection(
   if (cOverA != null && pattern === "ZIGZAG" && cOverA > 1.618)
     text += ` · kanonische C-Ziele durchschritten`;
 
-  return { pattern, text, targetPrice, targetLabel, cOverA };
+  // ── Strukturpunkte fuer den Chart (A-B-C oder W-X-Y) ──
+  const legPoints: { label: string; date: string; price: number }[] = [];
+  if (ctx && ctx.aDate && ctx.bDate) {
+    const isWXY = pattern === "KOMBINATION";
+    const cDate = findExtremeDate(ctx.candles, ctx.bDate, dir);
+    legPoints.push({ label: isWXY ? "W" : "A", date: ctx.aDate, price: aExtreme });
+    legPoints.push({ label: isWXY ? "X" : "B", date: ctx.bDate, price: bExtreme });
+    if (cExtremeSoFar != null && cDate) {
+      legPoints.push({ label: isWXY ? "Y" : "C", date: cDate, price: cExtremeSoFar });
+    }
+  }
+
+  // WXY-Ziel: Y ~ W in Länge (log), ab X projiziert (Kombinationen sind
+  // oft laengengleich; Koenz: X-Retrace 0.786-1.382). Ersetzt das ZZ-Ziel.
+  if (pattern === "KOMBINATION" && logOk) {
+    const wLenLog = dir * (Math.log(w5Price) - Math.log(aExtreme));
+    for (const k of [1.0, 1.236, 1.618]) {
+      const level = Math.exp(Math.log(bExtreme) - dir * k * wLenLog);
+      if (level > 0 && dir * (currentPrice - level) > 0) {
+        targetPrice = level;
+        targetLabel = `WXY-Ziel logY=${k}·W (KO-6)`;
+        break;
+      }
+    }
+  }
+
+  return { pattern, text, targetPrice, targetLabel, cOverA, legPoints };
+}
+
+/** Extrem-Datum (Tief bei dir=1, Hoch bei dir=-1) ab startDate. */
+function findExtremeDate(candles: Candle[], startDate: string, dir: 1 | -1): string | null {
+  const seg = candles.filter((c) => c.date > startDate);
+  if (seg.length === 0) return null;
+  let best = seg[0];
+  for (const k of seg) {
+    const v = dir === 1 ? k.low : k.high;
+    const bv = dir === 1 ? best.low : best.high;
+    if (dir === 1 ? v < bv : v > bv) best = k;
+  }
+  return best.date;
 }
 
 interface TriangleRead {
