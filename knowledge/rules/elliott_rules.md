@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 4.3
+version: 4.4
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -290,9 +290,16 @@ Implementiert in `core/correction.ts` (`classifyCorrection`), gerendert in
 - **KO-5 Triangle (3-3-3-3-3):** Ab B ≥ 4 alternierende, monoton (log)
   kontrahierende Beine. Kein C-Ziel, sondern **Thrust-Ziel** = Höhe des
   a-Beins (log) ab e-Ende in Ausbruchsrichtung.
-- **KO-6 Kombination (W-X-Y):** Zigzag-Ratios, aber A-Bein nicht impulsiv
-  (3er) bei ausreichender Datenlage ⇒ zusammengesetzte Korrektur. Ziele
-  logC = 1,0 / 1,382 / 1,618 · A.
+- **KO-6 Kombination W-X-Y (Vollmuster, v4.4):** Der Struktur-Beweis am
+  ersten Korrektur-Bein entscheidet ABC vs. WXY. Ist das erste Bein (W)
+  selbst NICHT impulsiv (3er statt 5er) und substanziell (≥ 6 Kerzen),
+  liegt eine zusammengesetzte Korrektur vor: W (Zigzag/Flat) – X
+  (Verbindung, Retrace 0,786–1,382 üblich) – Y (Zigzag/Flat). Die
+  Strukturpunkte werden als **W-X-Y** im Chart gelabelt (statt A-B-C),
+  Ziel logY = 1,0 / 1,236 / 1,618 × W (ab X), typischerweise
+  längengleich (Y ≈ W). Impulsives erstes Bein ⇒ echtes ABC (Zigzag),
+  bleibt bei KO-2. **Damit ist WXY eine vollwertige, unterscheidbare
+  Lesart, nicht nur ein Etikett.**
 
 **Bewusst nicht als eigenes Muster geführt:** Triple Zigzag / Triple Three
 (seltener Grenzfall — würde als DOUBLE_ZIGZAG bzw. KOMBINATION erfasst und

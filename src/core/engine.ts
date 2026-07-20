@@ -238,11 +238,12 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
     let scenPrimary = "";
     let scenAlt = "";
     let keyLine = "";
+    let correction: CorrectionRead | null = null;
+    let correctionS: CorrectionRead | null = null;
     let legs: CorrectionLegs = {
       aLow: null, aDate: null, bHigh: null, bDate: null, cLow: null, cDate: null,
     };
 
-    let correction: CorrectionRead | null = null;
     if (w0 && w5 && wc.trend === "bullish" && currentPrice < w5.price) {
       legs = correctionLegs(pivots, candles, w5.date);
       const cands = longLevelCandidates({
@@ -380,7 +381,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
         bLow: legsS.bLow,
       });
 
-      let correctionS: CorrectionRead | null = null;
+      // correctionS auf Funktionsebene deklariert
       if (legsS.aHigh != null && legsS.bLow != null) {
         correctionS = classifyCorrection(
           w5.price, legsS.aHigh, legsS.bLow, legsS.cHigh, currentPrice,
@@ -508,22 +509,20 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
 
     // 5. Chart: Impuls + Korrektur-Anhang + Engine-Level rendern
     const chartWaves: WavePoint[] = [...wc.points];
-    if (legsS.aHigh != null && legsS.aDate != null) {
+    if (correctionS && correctionS.legPoints.length > 0) {
+      for (const lp of correctionS.legPoints) chartWaves.push(lp);
+    } else if (legsS.aHigh != null && legsS.aDate != null) {
       chartWaves.push({ label: "A", date: legsS.aDate, price: legsS.aHigh });
       if (legsS.bLow != null && legsS.bDate != null) {
         chartWaves.push({ label: "B", date: legsS.bDate, price: legsS.bLow });
-        if (legsS.cHigh != null && legsS.cDate != null && legsS.cHigh > legsS.bLow) {
-          chartWaves.push({ label: "C", date: legsS.cDate, price: legsS.cHigh });
-        }
       }
     }
-    if (legs.aLow != null && legs.aDate != null) {
+    if (correction && correction.legPoints.length > 0) {
+      for (const lp of correction.legPoints) chartWaves.push(lp);
+    } else if (legs.aLow != null && legs.aDate != null) {
       chartWaves.push({ label: "A", date: legs.aDate, price: legs.aLow });
       if (legs.bHigh != null && legs.bDate != null) {
         chartWaves.push({ label: "B", date: legs.bDate, price: legs.bHigh });
-        if (legs.cLow != null && legs.cDate != null && legs.cLow < legs.bHigh) {
-          chartWaves.push({ label: "C", date: legs.cDate, price: legs.cLow });
-        }
       }
     }
 
@@ -568,7 +567,10 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
               : ` – Welle 5 läuft noch (Sub-${completion.subLabel}).`
             : ".")
         : "";
+    const koRead = wc.trend === "bullish" ? correction : correctionS;
     let bigPicture = `🧭 **Big Picture:** ${cyc}`;
+    if (koRead && koRead.pattern === "KOMBINATION")
+      bigPicture += ` Korrektur läuft als **W-X-Y** (zusammengesetzt), nicht als einfache A-B-C.`;
     if (scenPrimary) bigPicture += `\n1️⃣ **Primär:** ${scenPrimary}`;
     if (scenAlt) bigPicture += `\n2️⃣ **Alternativ:** ${scenAlt}`;
     if (keyLine) bigPicture += `\n📌 ${keyLine}`;
