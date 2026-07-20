@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 4.2
+version: 4.3
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -24,9 +24,9 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 - **HR-4** Welle 3 überschreitet stets das Ende von Welle 1.
 - **HR-5** Antriebswellen (1, 3, 5) unterteilen sich impulsiv (5er oder
   Diagonale), Korrekturwellen (2, 4) korrektiv (3er oder Kombination).
-  Insbesondere ist **Welle 3 IMMER ein echter Impuls — niemals eine
-  Diagonale**; Diagonal-Positionen sind ausschließlich 1/A (DG-2)
-  und 5/C (DG-1).
+  Insbesondere ist **Welle 3 IMMER ein echter Impuls**. (Die früheren
+  Diagonal-Regeln DG-1/DG-2/DG-3 sind ab v4.3 per Erlass VERWORFEN — das
+  Modell zählt keine Diagonalen mehr; siehe §Diagonalen-Erlass.)
 
 ## 2. Diagonalen (Kanon; von der Engine noch nicht modelliert → §9)
 
@@ -155,11 +155,11 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
   wahrscheinlich) oder noch läuft (Teilsequenz Sub-1/Sub-3/Sub-4 → nächste
   Welle wird per Fibonacci projiziert, Log-Raum). Rein diagnostisch: ändert
   die 0-5-Zählung nicht, ergänzt sie um Status und Kursziele.
-- **DK-8 Klare-Impuls-Pflicht:** Zählungen, deren W3-Segment sich nur
-  als Diagonale (statt impulsiv) auflösen lässt, sind unzulässig. Der
-  Finder prüft die W3-Substruktur vor der Auswahl (Walk-down über die
-  Top-5 jeder Auflösungsstufe) und verwirft Diagonal-W3-Kandidaten;
-  existiert keine klare Alternative, folgt Enthaltung (DK-7-Pfad).
+- **DK-8 (zurückgezogen v4.3):** Das Diagonal-W3-Gate entfällt mit dem
+  Diagonalen-Erlass. `segmentVerdict` kennt nur noch IMPULSIVE/UNKLAR;
+  Welle-3-Impulsivität wird weiter geprüft, aber nicht mehr über einen
+  Keil-Ausschluss.
+
 - **DK-6 Kritiker-Asymmetrie:** LLM-Review (Confidence/Flags) darf
   Anforderungen nur verschärfen, nie lockern — und nie die Zählung ändern.
   Seine Güte wird über Confidence-Bänder in der OKF-Statistik gemessen.
@@ -170,7 +170,7 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 |---|---|
 | HR-1, HR-3, HR-4 | `impulseFinder.searchFromAnchor` (Konstruktionsbedingungen) |
 | HR-2 | `impulseFinder` (L3 nie kürzeste, Log-Länge) |
-| HR-5 | `impulseFinder.segmentVerdict` + DK-8-Gate in `findImpulseAdaptive`; positionsbewusst in `quality` (W3-Diagonal = Flag, nie Bonus) |
+| HR-5 | `impulseFinder.segmentVerdict` (IMPULSIVE/UNKLAR); positionsbewusst in `quality` |
 | DG-1 | `diagonal.detectDiagonal` — Einsatz: W5-Substruktur (`quality`) und C-Welle (`engine`, Flag `ED_IN_C_TERMINAL`) |
 | DG-2 | Detektor geometrisch identisch vorhanden; Positions-Einsatz an W1/A **offen** (§9) |
 | DG-3 | **offen** (§9, expandierende Variante) |
@@ -189,7 +189,7 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
 | DK-1…DK-4 | `impulseFinder` (Anker, Log, No-Trunc, `findImpulseAdaptive`) |
 | DK-5 | `engine` (Long- & Short-Zweig) + `setups`/`outcome` (richtungsbewusste State Machine, 84d-Timeout) |
 | DK-7 | `impulseFinder.findImpulseAdaptive` (MIN_FALLBACK_SCORE) + Enthaltungs-Modus in `engine`/`commands` |
-| DK-8 | `impulseFinder.findImpulseAdaptive` (Top-5-Walk-down, `segmentVerdict`) |
+| KO-1…6 | `correction.classifyCorrection` (Struktur-Beweis + Ratio-Bänder + Log-Ziele) |
 | DK-9 | `completion.assessCompletion` + `impulseFinder.findPartialImpulse`; Anzeige in `engine` |
 | DK-6 | `commentary.getCritique` + `engine` (minClusterScore) + `stats` (Bänder) |
 
@@ -261,3 +261,53 @@ Abweichungen der Engine vom Kanon sind ausschließlich in §7 (DK) kodifiziert.*
   um > 4,236×, liegt Grad-Vermischung vor (Befund BTC `max`: 0–4 als
   Randstaub, „W5" = ganze Dekade). Eine echte Extension streckt den Preis,
   nicht den Wellengrad.
+
+
+---
+
+## Korrektur-Vollkatalog (KO, v4.3)
+
+Alle theoretischen Korrekturmuster, ihre Erkennung und Ziele. Klassifikation
+über Ratio-Bänder (linear, kanonische Preis-Definitionen) PLUS
+**Struktur-Beweis** (KO-1). Extension-Ziele logarithmisch projiziert (DK-2).
+Implementiert in `core/correction.ts` (`classifyCorrection`), gerendert in
+`engine`/`drawer`.
+
+- **KO-1 Struktur-Beweis (Basis):** Das A-Bein wird per `segmentVerdict`
+  geprüft. Impulsiver 5er ⇒ **Zigzag-Familie**; 3er/unklar ⇒ **Flat-Familie**.
+  In der Grauzone (B-Retrace 0,786–0,9) entscheidet allein die A-Struktur
+  (Koenz: 0,886-Touch spricht für korrektiv/Flat).
+- **KO-2 Zigzag (5-3-5):** B retraced A 0,382–0,786. C-Ziele
+  logC = 1,0 / 1,236 / 1,618 · A (ab B).
+- **KO-2b Double Zigzag (W-X-Y):** Zigzag-Basis, aber C überschießt > 1,75×A
+  (X-Welle dazwischen). Ziele logC = 2,0 / 2,618 · A.
+- **KO-3 Flat (3-3-5):** B retraced A ≥ 0,9. **Regular** (B ≈ A, 0,9–1,05;
+  Ziele 1,0/1,236) vs. **Expanded** (B > 1,05; Ziele 1,618/2,0/2,618).
+  Warnung ab B ≥ 1,618×A (Wahrscheinlichkeit sinkt deutlich).
+- **KO-4 Running Flat:** B überschießt (Flat-Kriterium), C hält aber DEUTLICH
+  über dem A-Extrem (cOverA 0,1–0,85, Kurs trendseitig) — trendstärkstes
+  Korrekturmuster, kein klassisches Abwärtsziel (Fortsetzung erwartet).
+- **KO-5 Triangle (3-3-3-3-3):** Ab B ≥ 4 alternierende, monoton (log)
+  kontrahierende Beine. Kein C-Ziel, sondern **Thrust-Ziel** = Höhe des
+  a-Beins (log) ab e-Ende in Ausbruchsrichtung.
+- **KO-6 Kombination (W-X-Y):** Zigzag-Ratios, aber A-Bein nicht impulsiv
+  (3er) bei ausreichender Datenlage ⇒ zusammengesetzte Korrektur. Ziele
+  logC = 1,0 / 1,382 / 1,618 · A.
+
+**Bewusst nicht als eigenes Muster geführt:** Triple Zigzag / Triple Three
+(seltener Grenzfall — würde als DOUBLE_ZIGZAG bzw. KOMBINATION erfasst und
+über den laufenden C-Wert weiterprojiziert); exakte Triangle-Untertypen
+(ascending/descending/expanding — als kontrahierend generalisiert, Thrust
+identisch).
+
+---
+
+## Diagonalen-Erlass (v4.3)
+
+Diagonalmuster (Leading/Ending Diagonal, expandierende Diagonalen) werden
+**nicht mehr gezählt**. Motivation: wiederkehrende Fehlklassifikation an
+Zyklusenden und Grad-Grenzen; die Diagonal-Geometrie ist im deterministischen
+Rahmen zu fragil. `core/diagonal.ts` ist ein leerer Stub; `segmentVerdict`
+liefert nur IMPULSIVE/UNKLAR; DG-1/2/3 und DK-8 sind zurückgezogen; die
+Completion-Analyse kennt keinen ED-Zweig mehr (nur Sub-5-Teiler oder
+laufende Teilsequenz).

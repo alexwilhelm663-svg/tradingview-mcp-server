@@ -9,7 +9,6 @@ import { upsertPendingSetup, SetupMeta } from "./setups";
 import { findImpulseAdaptive, WaveCount, WavePoint } from "./impulseFinder";
 import { getCritique, Critique } from "./commentary";
 import { classifyCorrection, CorrectionRead } from "./correction";
-import { detectDiagonal } from "./diagonal";
 import { assessCompletion, CompletionRead } from "./completion";
 import { findBestImpulse, subThresholds } from "./impulseFinder";
 import { zigzag } from "./zigzag";
@@ -254,27 +253,18 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
         bHigh: legs.bHigh,
       });
 
-      // V116 (DG-1): Ending Diagonal in der laufenden C-Welle?
       // Terminales Muster -> rein informativ + Flag (DK-6: nie Trigger-lockernd).
-      let edInC = false;
-      if (legs.bDate != null) {
-        const cSegment = candles.filter((k) => k.date >= legs.bDate!);
-        const diag = detectDiagonal(cSegment, wc.trend === "bullish" ? -1 : 1);
-        if (diag) edInC = true;
-      }
-
       // V115 (KO-2/3/4): Korrektur-Lesart + musterabhaengiges C-Ziel
       if (legs.aLow != null && legs.bHigh != null) {
         correction = classifyCorrection(
           w5.price, legs.aLow, legs.bHigh, legs.cLow, currentPrice,
           pivots.filter((pv) => pv.date > w5.date)
+        , 1,
+          { candles, parentThreshold: threshold, topDate: w5.date, aDate: legs.aDate, bDate: legs.bDate }
         );
         if (correction.targetPrice != null && correction.targetLabel != null) {
           cands.push({ price: correction.targetPrice, label: correction.targetLabel });
           cands.sort((a, b) => a.price - b.price);
-        }
-        if (edInC) {
-          correction.text += ` · ⚡ Ending Diagonal in C erkannt (DG-1) – terminales Muster, erhöhte Umkehr-Wahrscheinlichkeit`;
         }
       }
       // ATR-adaptive Toleranz (Skill-Prinzip): 3.5%..7%, je nach Volatilitaet
@@ -324,7 +314,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
         const res = upsertPendingSetup(symbol, inZone, overhead, legs.cLow, {
           llmConfidence: critique?.confidence ?? null,
           llmFlags: critique?.flags ?? [],
-          detFlags: edInC ? [...quality.flags, "ED_IN_C_TERMINAL"] : quality.flags,
+          detFlags: quality.flags,
         });
         pendingCreated = res === "created";
         clusterInfo =
@@ -382,13 +372,6 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
     if (w0 && w5 && wc.trend === "bearish" && currentPrice > w5.price) {
       legsS = correctionLegsShort(pivots, candles, w5.date);
 
-      let edInC = false;
-      if (legsS.bDate != null) {
-        const cSegment = candles.filter((k) => k.date >= legsS.bDate!);
-        const diag = detectDiagonal(cSegment, 1);
-        if (diag) edInC = true;
-      }
-
       const cands = shortLevelCandidates({
         w0: w0.price,
         w5: w5.price,
@@ -401,14 +384,12 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
       if (legsS.aHigh != null && legsS.bLow != null) {
         correctionS = classifyCorrection(
           w5.price, legsS.aHigh, legsS.bLow, legsS.cHigh, currentPrice,
-          pivots.filter((pv) => pv.date > w5.date), -1
+          pivots.filter((pv) => pv.date > w5.date), -1,
+          { candles, parentThreshold: threshold, topDate: w5.date, aDate: legsS.aDate, bDate: legsS.bDate }
         );
         if (correctionS.targetPrice != null && correctionS.targetLabel != null) {
           cands.push({ price: correctionS.targetPrice, label: correctionS.targetLabel });
           cands.sort((a, b) => a.price - b.price);
-        }
-        if (edInC) {
-          correctionS.text += ` · ⚡ Ending Diagonal in C erkannt (DG-1) – terminales Muster, erhöhtes Abwärts-Risiko`;
         }
       }
 
@@ -451,7 +432,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
         const res = upsertPendingSetup(symbol, inZoneS, underfoot, legsS.cHigh, {
           llmConfidence: critique?.confidence ?? null,
           llmFlags: critique?.flags ?? [],
-          detFlags: edInC ? [...quality.flags, "ED_IN_C_TERMINAL"] : quality.flags,
+          detFlags: quality.flags,
         }, "SHORT");
         pendingCreated = res === "created";
         clusterInfo =
@@ -610,7 +591,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
     if (completion && completion.subPoints.length >= 2 && w4 && w5) {
       const subCandles = candles.filter((k) => k.date >= w4.date);
       const subWaves = completion.subPoints.map((sp) => ({
-        label: completion.isDiagonal ? `${sp.label}` : `${sp.label}`,
+        label: `${sp.label}`,
         date: sp.date,
         price: sp.price,
       }));
@@ -618,9 +599,8 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
         price: pr.price,
         label: pr.label.split(" ")[0],
       }));
-      const kind = completion.isDiagonal
-        ? "Ending Diagonal"
-        : completion.status === "IN_PROGRESS"
+      const kind =
+        completion.status === "IN_PROGRESS"
           ? `Welle 5 läuft – Sub-${completion.subLabel}`
           : "Welle 5 – Sub-5-Teiler";
       detailBuffer = await renderChart({
