@@ -17,6 +17,7 @@ export interface AnalysisResult {
   buffer: Buffer | null;
   signal: "YES" | "NO";
   finalTrend: string;
+  bigPicture: string;
   pendingCreated: boolean;
   clusterInfo: string;
   isBreakoutSetup: boolean;
@@ -31,6 +32,7 @@ const EMPTY: AnalysisResult = {
   buffer: null,
   signal: "NO",
   finalTrend: "NONE",
+  bigPicture: "",
   pendingCreated: false,
   clusterInfo: "",
   isBreakoutSetup: false,
@@ -163,10 +165,10 @@ const addDaysE = (iso: string, d: number): string => {
 const daysBetweenE = (a: string, b: string): number =>
   (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
 
-export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
+export async function analyzeAsset(symbol: string, range: string = "5y"): Promise<AnalysisResult> {
   try {
     // 1. Marktdaten (Weekly, 5 Jahre) + deterministische Pivots
-    const { weeklyAnalysisCandles: candles } = await fetchMarketData(symbol);
+    const { weeklyAnalysisCandles: candles } = await fetchMarketData(symbol, "1wk", range);
     const currentPrice = candles[candles.length - 1].close;
 
     // 2. Deterministische Impulszaehlung (V113.1) mit Enthaltungs-Gebot (DK-7)
@@ -232,6 +234,9 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
     let chartClusters: { floor: number; ceiling: number; score: number; labels: string[] }[] | undefined;
     let chartMarkers: { price: number; label: string }[] = [];
     const chartTimeWindows: { start: string; end: string; label: string }[] = [];
+    let scenPrimary = "";
+    let scenAlt = "";
+    let keyLine = "";
     let legs: CorrectionLegs = {
       aLow: null, aDate: null, bHigh: null, bDate: null, cLow: null, cDate: null,
     };
@@ -329,6 +334,16 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
             ? ` · ⏱️ ${inTimeWindow ? "im" : "außerhalb des"} C-Zeitfensters (${cWinFrom} – ${cWinTo})`
             : "") +
           (correction ? `\n${correction.text}` : "");
+        {
+          const tPrev = overhead != null ? overhead + 1.618 * (overhead - legs.cLow) : null;
+          scenPrimary =
+            `Boden-These: Wochenschluss > ${overhead != null ? overhead.toFixed(2) : "Trigger"} bestätigt das Long-Setup` +
+            (tPrev != null ? ` – Ziel ~${tPrev.toFixed(2)} (1.618·i)` : "") + ".";
+          scenAlt =
+            `Wochenschluss < ${(inZone.floor * 0.97).toFixed(2)} invalidiert – Korrektur läuft tiefer` +
+            (correction && correction.targetPrice != null ? ` Richtung ${correction.targetPrice.toFixed(2)}` : "") + ".";
+          keyLine = `Zone ${inZone.floor.toFixed(2)}–${inZone.ceiling.toFixed(2)} · Trigger ${overhead != null ? overhead.toFixed(2) : "–"} · Invalidierung ${(inZone.floor * 0.97).toFixed(2)}`;
+        }
       } else {
         const below = clusters
           .filter((cl) => cl.score >= 2 && cl.ceiling < currentPrice)
@@ -345,6 +360,14 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
             (overhead != null ? ` · Overhead-Trigger: ${overhead.toFixed(2)}` : "")
           : "⚪ Kein Fib-Cluster unterhalb des Kurses ableitbar.")
           + (correction ? `\n${correction.text}` : "");
+        scenPrimary = below
+          ? `Korrektur aktiv – nächste Kaufzone ${below.floor.toFixed(2)}–${below.ceiling.toFixed(2)}` +
+            (correction && correction.targetPrice != null ? `, präferiertes C-Ziel ${correction.targetPrice.toFixed(2)}` : "") + "."
+          : "Korrektur aktiv – keine belastbare Kaufzone darunter ableitbar.";
+        scenAlt = overhead != null
+          ? `Rückeroberung > ${overhead.toFixed(2)} deutet auf Trend-Fortsetzung nach oben.`
+          : "Rückeroberung des W4-Niveaus deutet auf Trend-Fortsetzung.";
+        keyLine = below ? `Watch-Zone ${below.floor.toFixed(2)}–${below.ceiling.toFixed(2)}` : "";
       }
     }
 
@@ -438,6 +461,16 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
             ? ` · ⏱️ ${inTimeWindowS ? "im" : "außerhalb des"} C-Zeitfensters (${cWinFromS} – ${cWinToS})`
             : "") +
           (correctionS ? `\n${correctionS.text}` : "");
+        {
+          const tPrev = underfoot != null ? underfoot - 1.618 * (legsS.cHigh - underfoot) : null;
+          scenPrimary =
+            `Abwärts-Fortsetzung: Wochenschluss < ${underfoot != null ? underfoot.toFixed(2) : "Trigger"} bestätigt das Short-Setup` +
+            (tPrev != null ? ` – Ziel ~${tPrev.toFixed(2)} (1.618·i)` : "") + ".";
+          scenAlt =
+            `Wochenschluss > ${(inZoneS.ceiling * 1.03).toFixed(2)} invalidiert – Boden ${w5.price.toFixed(2)} hält, Erholung` +
+            (correctionS && correctionS.targetPrice != null ? ` Richtung ${correctionS.targetPrice.toFixed(2)}` : "") + " läuft weiter.";
+          keyLine = `Zone ${inZoneS.floor.toFixed(2)}–${inZoneS.ceiling.toFixed(2)} · Trigger ${underfoot != null ? underfoot.toFixed(2) : "–"} · Invalidierung ${(inZoneS.ceiling * 1.03).toFixed(2)}`;
+        }
       } else {
         const above = clusters
           .filter((cl) => cl.score >= 2 && cl.floor > currentPrice)
@@ -454,6 +487,14 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
             (underfoot != null ? ` · Underfoot-Trigger: ${underfoot.toFixed(2)}` : "")
           : "⚪ Kein Widerstands-Cluster oberhalb des Kurses ableitbar.")
           + (correctionS ? `\n${correctionS.text}` : "");
+        scenPrimary = above
+          ? `Erholung läuft – nächste Widerstandszone ${above.floor.toFixed(2)}–${above.ceiling.toFixed(2)}` +
+            (correctionS && correctionS.targetPrice != null ? `, präferiertes C-Ziel ${correctionS.targetPrice.toFixed(2)}` : "") + "."
+          : "Erholung läuft – keine belastbare Widerstandszone darüber ableitbar.";
+        scenAlt = underfoot != null
+          ? `Wochenschluss < ${underfoot.toFixed(2)} deutet auf Abwärts-Fortsetzung.`
+          : "Bruch der Erholungstiefs deutet auf Abwärts-Fortsetzung.";
+        keyLine = above ? `Watch-Zone ${above.floor.toFixed(2)}–${above.ceiling.toFixed(2)}` : "";
       }
     }
 
@@ -509,6 +550,24 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       }
     }
 
+    // V122 (MCO-Stil): Big Picture - Kontext, zwei Szenarien, Schluessel-Level
+    const yr = (d: string): string => d.slice(0, 4);
+    const cyc =
+      w0 && w5
+        ? `${wc.trend === "bullish" ? "Aufwärts" : "Abwärts"}impuls ${w0.price.toFixed(0)} → ${w5.price.toFixed(0)} (${yr(w0.date)}–${yr(w5.date)})` +
+          (completion
+            ? completion.status === "COMPLETE"
+              ? " – vollendet, Korrekturphase."
+              : ` – Welle 5 läuft noch (Sub-${completion.subLabel}).`
+            : ".")
+        : "";
+    let bigPicture = `🧭 **Big Picture:** ${cyc}`;
+    if (scenPrimary) bigPicture += `\n1️⃣ **Primär:** ${scenPrimary}`;
+    if (scenAlt) bigPicture += `\n2️⃣ **Alternativ:** ${scenAlt}`;
+    if (keyLine) bigPicture += `\n📌 ${keyLine}`;
+    const tw0 = chartTimeWindows[0];
+    if (tw0) bigPicture += `\n⏱️ ${tw0.label}: ${tw0.start} – ${tw0.end}`;
+
     const buffer = await renderChart({
       symbol,
       waves: chartWaves,
@@ -551,6 +610,7 @@ export async function analyzeAsset(symbol: string): Promise<AnalysisResult> {
       buffer,
       signal: pendingCreated || isBreakoutSetup ? "YES" : "NO",
       finalTrend: wc.trend,
+      bigPicture,
       pendingCreated,
       clusterInfo,
       isBreakoutSetup,

@@ -27,7 +27,7 @@ export function registerCommands(
         "• `/radar` – aktuelle Watchlist\n" +
         "• `/add <SYMBOL>` – Asset hinzufügen\n" +
         "• `/remove <SYMBOL>` – Asset entfernen\n" +
-        "• `/analyse <SYMBOL>` – sofortige EW-Analyse mit Chart\n" +
+        "• `/analyse <SYMBOL> [5y|10y|max]` – EW-Analyse; Fensterbreite optional\n" +
         "• `/setups` – Setup-Status (PENDING/CONFIRMED)\n" +
         "• `/scan` – manueller Radar-Durchlauf\n\n" +
         "✅ Chat-ID für automatische Alerts gespeichert.",
@@ -70,11 +70,14 @@ export function registerCommands(
   });
 
   bot.command("analyse", async (ctx) => {
-    const arg = ctx.message.text.split(" ")[1];
+    const parts = ctx.message.text.split(" ");
+    const arg = parts[1];
     if (!arg) {
-      return ctx.reply("⚠️ Bitte Symbol angeben: `/analyse NVDA`", { parse_mode: "Markdown" });
+      return ctx.reply("⚠️ Bitte Symbol angeben: `/analyse NVDA [5y|10y|max]`", { parse_mode: "Markdown" });
     }
     const symbol = arg.trim().toUpperCase();
+    const rangeArg = (parts[2] || "").toLowerCase();
+    const range = ["5y", "10y", "max"].includes(rangeArg) ? rangeArg : "5y";
 
     const key = `${ctx.chat.id}:${symbol}`;
     if (analysesInFlight.has(key)) {
@@ -90,7 +93,7 @@ export function registerCommands(
     });
 
     try {
-      const r = await analyzeAsset(symbol);
+      const r = await analyzeAsset(symbol, range);
 
       if (!r.analysis) {
         if (r.abstention) {
@@ -109,11 +112,10 @@ export function registerCommands(
         return;
       }
 
-      let caption = `📊 **EW Master Analyse: ${symbol}**\nMakro-Trend: \`${r.finalTrend}\`\n\n`;
-      if (r.clusterInfo) caption += `${r.clusterInfo}\n`;
-      if (r.isBreakoutSetup) caption += `${r.breakoutStatus}\n`;
-      if (!r.clusterInfo && !r.isBreakoutSetup) caption += "⚪ Aktuell in keiner Trigger-Zone.";
-      if (r.analysis.analysis) caption += `\n\n${r.analysis.analysis}`;
+      // V122 (MCO-Struktur): 1) Big Picture am Chart, 2) Details separat.
+      let caption = `📊 **${symbol}** · Weekly (${range}) · Makro-Trend \`${r.finalTrend}\``;
+      if (r.bigPicture) caption += `\n\n${r.bigPicture}`;
+      if (caption.length > 1000) caption = caption.slice(0, 990) + "…";
 
       if (r.buffer) {
         await ctx.replyWithPhoto({ source: r.buffer }, { caption, parse_mode: "Markdown" });
@@ -121,13 +123,13 @@ export function registerCommands(
         await ctx.reply(caption, { parse_mode: "Markdown" });
       }
 
-      // V118.1: Detail-Chart der Sub-Struktur als zweites Bild
-      if (r.detailBuffer) {
-        await ctx.replyWithPhoto(
-          { source: r.detailBuffer },
-          { caption: "🔬 Binnenstruktur der Welle 5 (Sub-Wellen-Detail)" }
-        );
-      }
+      let details = "🔬 **Details**\n";
+      if (r.clusterInfo) details += `${r.clusterInfo}\n`;
+      if (r.isBreakoutSetup) details += `${r.breakoutStatus}\n`;
+      if (!r.clusterInfo && !r.isBreakoutSetup) details += "⚪ Aktuell in keiner Trigger-Zone.\n";
+      if (r.analysis.analysis) details += `\n${r.analysis.analysis}`;
+      await ctx.reply(details, { parse_mode: "Markdown" });
+      // V122: Detail-Chart standardmäßig entfernt (auf Wunsch reaktivierbar).
 
       // LLM-Kommentar separat: kein Caption-Limit, kein Abschneiden
       if (r.commentary) {
