@@ -570,7 +570,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
     const koRead = wc.trend === "bullish" ? correction : correctionS;
     let bigPicture = `🧭 **Big Picture:** ${cyc}`;
     if (koRead && koRead.pattern === "KOMBINATION")
-      bigPicture += ` Korrektur läuft als **W-X-Y** (zusammengesetzt), nicht als einfache A-B-C.`;
+      bigPicture += ` Korrektur läuft als **W-X-Y** (zusammengesetzt), nicht als einfache A-B-C – erfahrungsgemäß **tiefer** (0,618–0,786 statt ~0,5), Kaufzone entsprechend riskanter.`;
     if (scenPrimary) bigPicture += `\n1️⃣ **Primär:** ${scenPrimary}`;
     if (scenAlt) bigPicture += `\n2️⃣ **Alternativ:** ${scenAlt}`;
     if (keyLine) bigPicture += `\n📌 ${keyLine}`;

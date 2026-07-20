@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 4.4
+version: 4.5
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
