@@ -28,6 +28,7 @@ export interface ChartPayload {
   markers?: ChartMarker[];
   titleSuffix?: string;
   timeWindows?: { start: string; end: string; label: string }[];
+  subwaves?: ChartWave[];
 }
 
 /**

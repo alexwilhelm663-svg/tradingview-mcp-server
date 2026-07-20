@@ -11,6 +11,8 @@ import { getCritique, Critique } from "./commentary";
 import { classifyCorrection, CorrectionRead } from "./correction";
 import { detectDiagonal } from "./diagonal";
 import { assessCompletion, CompletionRead } from "./completion";
+import { findBestImpulse, subThresholds } from "./impulseFinder";
+import { zigzag } from "./zigzag";
 import { assessQuality } from "./quality";
 
 export interface AnalysisResult {
@@ -550,6 +552,30 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
       }
     }
 
+    // V123: Sub-Zählungen (eine Stufe tiefer) fuer die Antriebswellen 1/3/5
+    // direkt im Hauptchart - kleine roemische Labels (i-v) in Teal.
+    const subwaves: WavePoint[] = [];
+    const roman = ["", "i", "ii", "iii", "iv", "v"];
+    const dirMain: 1 | -1 = wc.trend === "bullish" ? 1 : -1;
+    for (const [fromL, toL] of [["0", "1"], ["2", "3"], ["4", "5"]] as const) {
+      const a = wc.points.find((x) => x.label === fromL);
+      const b = wc.points.find((x) => x.label === toL);
+      if (!a || !b) continue;
+      const seg = candles.filter((k) => k.date >= a.date && k.date <= b.date);
+      if (seg.length < 15) continue;
+      for (const th of subThresholds(threshold)) {
+        const piv = zigzag(seg, th);
+        if (piv.length < 6) continue;
+        const sub = findBestImpulse(piv);
+        if (!sub || sub.count.trend !== wc.trend) continue;
+        for (const sp of sub.count.points) {
+          const n = Number(sp.label);
+          if (n >= 1 && n <= 5) subwaves.push({ label: roman[n], date: sp.date, price: sp.price });
+        }
+        break;
+      }
+    }
+
     // V122 (MCO-Stil): Big Picture - Kontext, zwei Szenarien, Schluessel-Level
     const yr = (d: string): string => d.slice(0, 4);
     const cyc =
@@ -575,6 +601,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
       clusters: chartClusters,
       markers: chartMarkers,
       timeWindows: chartTimeWindows.concat(completion ? completion.timeWindows : []),
+      subwaves,
     });
 
     // V118.1: Detail-Chart der W5-Binnenstruktur (Sub-Wellen bzw. ED-Keil).

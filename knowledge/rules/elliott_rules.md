@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 4.1
+version: 4.2
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -251,3 +251,13 @@ Abweichungen der Engine vom Kanon sind ausschließlich in §7 (DK) kodifiziert.*
   Erlaubnis. (c) Ziel-Guard: CONFIRMED erzeugt nur dann einen
   Trade, wenn das Restpotenzial ≥ 0,25R beträgt — sonst ⚠️ „CONFIRMED ohne
   Trade" (degeneriertes Setup).
+
+- **HR-6 (V123 präzisiert):** Die 0,618-W4-Grenze wird im Doktrin-Messraum
+  geprüft (LOG, DK-2). Die lineare Lesart verwarf kanonische
+  Makro-Zählungen (BTC-Superzyklus: W4 2022 linear 0,81, log 0,48).
+- **HR-7 Grad-Konsistenz (V123):** Preis-Obergrenze 4,236× (log) für die
+  längste vs. zweitlängste Antriebswelle. Zusätzlich Preis×Zeit: Übertrifft
+  die längste Welle die zweitlängste im Preis um > 2,0× UND in der Dauer
+  um > 4,236×, liegt Grad-Vermischung vor (Befund BTC `max`: 0–4 als
+  Randstaub, „W5" = ganze Dekade). Eine echte Extension streckt den Preis,
+  nicht den Wellengrad.
