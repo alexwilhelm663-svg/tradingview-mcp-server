@@ -1,5 +1,4 @@
 import { zigzag, Pivot } from "./zigzag";
-import { detectDiagonal } from "./diagonal";
 import type { Candle } from "./marketData";
 
 export interface WavePoint {
@@ -112,7 +111,7 @@ export function findPartialImpulse(
   return best ? mk(best.seq) : null;
 }
 
-export type SubVerdict = "IMPULSIVE" | "DIAGONAL" | "UNKLAR";
+export type SubVerdict = "IMPULSIVE" | "UNKLAR";
 
 /** Feinere ZigZag-Stufen fuer Sub-Analysen, relativ zur Eltern-Stufe. */
 export function subThresholds(parent: number): number[] {
@@ -127,8 +126,8 @@ export function subThresholds(parent: number): number[] {
 /**
  * Substruktur-Urteil eines Wellensegments (V117.3):
  * IMPULSIVE = regelkonformer 5-Teiler auf einer Sub-Stufe gefunden;
- * DIAGONAL  = kein Impuls, aber kanonischer Keil (detectDiagonal);
- * UNKLAR    = Segment zu kurz oder weder-noch.
+ * UNKLAR    = Segment zu kurz oder kein sauberer 5er (V124: Diagonalen
+ *             werden nicht mehr geführt).
  */
 export function segmentVerdict(
   candles: Candle[],
@@ -145,10 +144,9 @@ export function segmentVerdict(
     const sub = findBestImpulse(piv);
     if (sub && sub.count.trend === (dir === 1 ? "bullish" : "bearish")) return "IMPULSIVE";
   }
-  // V120-Ablation: Nur der kanonisch starke Keil (MIT 1/4-Overlap) zaehlt
-  // als DIAGONAL-Verdikt; Overlap-lose Keile bleiben Guideline (UNKLAR).
-  const d = detectDiagonal(seg, dir);
-  return d && d.overlap ? "DIAGONAL" : "UNKLAR";
+  // V124: Diagonal-Klasse per Nutzer-Erlass verworfen - das Urteil kennt
+  // nur noch IMPULSIVE oder UNKLAR.
+  return "UNKLAR";
 }
 
 /**
@@ -197,36 +195,15 @@ export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
   let bestDoctrine: AdaptiveImpulse | null = null;
   let bestFallback: AdaptiveImpulse | null = null;
 
-  let dk8Filtered = 0;
   for (const threshold of [25, 18, 12, 8]) {
     const pivots = augmentEdgeExtremes(zigzag(candles, threshold), candles);
     if (pivots.length < 6) continue;
 
-    // DK-8 "Klare-Impuls-Pflicht": Kandidaten, deren W3-Segment diagonal
-    // statt impulsiv aufloest, sind unzulaessig (Diagonal-Positionen sind
-    // nur 1/A/5/C, HR-5). Walk-down ueber die Top-5 der Stufe.
-    let result: ImpulseResult | null = null;
-    let skipped = 0;
-    for (const cand of findRankedImpulses(pivots, 5)) {
-      const w2 = cand.count.points.find((x) => x.label === "2");
-      const w3 = cand.count.points.find((x) => x.label === "3");
-      const dir: 1 | -1 = cand.count.trend === "bullish" ? 1 : -1;
-      if (
-        w2 &&
-        w3 &&
-        segmentVerdict(candles, w2.date, w3.date, dir, threshold) === "DIAGONAL"
-      ) {
-        skipped++;
-        continue;
-      }
-      result = cand;
-      break;
-    }
-    dk8Filtered += skipped;
+    const result = findBestImpulse(pivots);
+
     if (!result) continue;
 
     result.count.analysis += ` · ZigZag ${threshold}%`;
-    if (skipped > 0) result.count.analysis += ` · DK-8: ${skipped} Diagonal-W3-Kandidat(en) verworfen`;
     const hit: AdaptiveImpulse = { result, pivots, threshold };
 
     if (result.doctrineAnchor) {
@@ -247,9 +224,7 @@ export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
     ? `Keine belastbare Impulszählung im Analysefenster: Doktrin-Anker liefert keine regelkonforme Sequenz, ` +
       `beste Fallback-Kandidatin erreicht nur Score ${bestFallback.result.score}/${bestFallback.result.maxScore} ` +
       `(Schwelle: ${MIN_FALLBACK_SCORE}, DK-7). Struktur vermutlich korrektiv oder im Übergang.`
-    : dk8Filtered > 0
-      ? `Keine klare Impulszählung: ${dk8Filtered} Kandidat(en) wegen diagonaler W3-Substruktur verworfen (DK-8/HR-5) und keine regelkonforme Alternative gefunden.`
-      : `Keine regelkonforme Impulszählung auf keiner ZigZag-Stufe (25/18/12/8 %) ableitbar (DK-7).`;
+    : `Keine regelkonforme Impulszählung auf keiner ZigZag-Stufe (25/18/12/8 %) ableitbar (DK-7).`;
   return { impulse: null, abstention };
 }
 

@@ -1,7 +1,6 @@
 import type { Candle } from "./marketData";
 import { zigzag } from "./zigzag";
 import { WaveCount, findPartialImpulse, subThresholds } from "./impulseFinder";
-import { detectDiagonal } from "./diagonal";
 
 export interface CompletionRead {
   status: "COMPLETE" | "IN_PROGRESS";
@@ -10,7 +9,6 @@ export interface CompletionRead {
   projections: { label: string; price: number }[];
   subPoints: { label: string; date: string; price: number }[]; // Binnenstruktur für Detail-Chart
   subThreshold: number | null;
-  isDiagonal: boolean;
   timeWindows: { start: string; end: string; label: string }[]; // V120b: Fib-Zeit-Projektion
 }
 
@@ -49,7 +47,6 @@ export function assessCompletion(
   if (seg.length < 10) return null;
 
   const ln = (a: number, b: number): number => dir * (Math.log(b) - Math.log(a));
-  let weakDiagKept: { read: ReturnType<typeof detectDiagonal>; th: number } | null = null;
   const logProject = (base: number, len: number, k: number): number =>
     Math.exp(Math.log(base) + dir * k * len);
 
@@ -57,25 +54,6 @@ export function assessCompletion(
   for (const th of subThresholds(parentThreshold)) {
     const piv = zigzag(seg, th);
     if (piv.length < 4) continue;
-
-    // Ending Diagonal als W5-Binnenstruktur? (DG-1). EWI-Update (V120):
-    // OHNE 1/4-Overlap ist der Keil nur Guideline-Fall - er darf eine
-    // laufende Teil-Zaehlung nicht ueberschreiben. Mit Overlap: kanonisch
-    // stark -> sofort COMPLETE.
-    const diag = detectDiagonal(seg, dir);
-    if (diag && diag.overlap) {
-      return {
-        status: "COMPLETE",
-        subLabel: "5",
-        note: `Welle 5 ist ein Ending Diagonal (DG-1${diag.throwOver ? ", Throw-over" : ""}, auf ${th}%): terminales Muster, Impuls vollendet.`,
-        projections: [],
-        subPoints: diag.points,
-        subThreshold: th,
-        isDiagonal: true,
-        timeWindows: [],
-      };
-    }
-    if (diag && !diag.overlap && !weakDiagKept) weakDiagKept = { read: diag, th };
 
     // Ist die W5-Binnenstruktur ein KOMPLETTER 5-Teiler? -> Impuls vollendet.
     const fullWithFive = piv.length >= 6 ? findFive(piv, dir) : false;
@@ -88,7 +66,6 @@ export function assessCompletion(
         projections: [],
         subPoints: fullSubPoints(piv, dir),
         subThreshold: th,
-        isDiagonal: false,
         timeWindows: [],
       };
     }
@@ -115,7 +92,6 @@ export function assessCompletion(
         ],
         subPoints: p4.points,
         subThreshold: th,
-        isDiagonal: false,
         timeWindows: (() => {
           const t2d = daysBetween(p4.points[1].date, p4.points[2].date);
           const s3d = p4.points[3].date;
@@ -140,7 +116,6 @@ export function assessCompletion(
         ],
         subPoints: p2.points,
         subThreshold: th,
-        isDiagonal: false,
         timeWindows: (() => {
           const t1d = daysBetween(p2.points[0].date, p2.points[1].date);
           const s1d = p2.points[1].date;
@@ -152,19 +127,6 @@ export function assessCompletion(
     }
   }
 
-  if (weakDiagKept && weakDiagKept.read) {
-    const d = weakDiagKept.read;
-    return {
-      status: "COMPLETE",
-      subLabel: "5",
-      note: `Welle 5 zeigt einen Ending-Diagonal-Keil OHNE 1/4-Overlap (EWI: Guideline-Fall, reduzierte Signifikanz, auf ${weakDiagKept.th}%): Impuls vermutlich vollendet.`,
-      projections: [],
-      subPoints: d.points,
-      subThreshold: weakDiagKept.th,
-      isDiagonal: true,
-      timeWindows: [],
-    };
-  }
   return null; // keine belastbare Sub-Aussage -> stumm (Zaehlung bleibt wie sie ist)
 }
 

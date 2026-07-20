@@ -77,19 +77,6 @@ export function assessQuality(
       parts.push(`${label}-Sub ✓`);
       return;
     }
-    if (verdict === "DIAGONAL") {
-      if (label === "W5") {
-        // DG-1: Ending Diagonal an Position 5 ist kanonisch (V116)
-        bonus += 1;
-        parts.push("W5 = Ending Diagonal (DG-1) ✓");
-        flags.push("W5_ENDING_DIAGONAL");
-      } else {
-        // HR-5/DK-8: Welle 3 ist NIEMALS eine Diagonale
-        flags.push("W3_DIAGONAL_STRUKTUR");
-        parts.push("W3-Sub – (Diagonal, HR-5!)");
-      }
-      return;
-    }
     flags.push(`${label}_SUB_UNKLAR`);
     parts.push(`${label}-Sub –`);
   };
