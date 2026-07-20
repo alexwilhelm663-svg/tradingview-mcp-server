@@ -212,6 +212,17 @@ def main():
         ax.set_yscale("log")
         ax.grid(True, which="major", ls="-", alpha=0.2)
         ax.grid(True, which="minor", ls=":", alpha=0.1)
+        # V123: Sub-Zaehlungen (i-v) - duenn, klein, Teal, eine Ebene tiefer
+        subs = payload.get("subwaves", []) or []
+        if subs:
+            sx = [pd.to_datetime(s["date"]) for s in subs]
+            sy = [float(s["price"]) for s in subs]
+            for j in range(len(subs)):
+                ax.plot(sx[j], sy[j], "o", color="#0F6B7A", markersize=3.5, zorder=4)
+                ax.annotate(subs[j]["label"], (sx[j], sy[j]),
+                            textcoords="offset points", xytext=(0, -11),
+                            fontsize=8, color="#0F6B7A", ha="center", zorder=4)
+
         for tw in payload.get("timeWindows", []) or []:
             try:
                 import datetime as _dt

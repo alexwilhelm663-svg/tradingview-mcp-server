@@ -370,10 +370,12 @@ function searchFromAnchor(
       if (!w3) continue;
       if (v(w3) <= v(w1)) continue; // HR-4
       if (v(w4) <= v(w1)) continue; // HR-3 (Overlap-Verbot)
-      // HR-6 (V120, Koenz/EWI): W4 retraced nie mehr als 0.618 der W3
-      // (linear gemessen - Preisregel, bewusst nicht Log, vgl. DK-2)
-      const retr4lin = (dir * (w3.price - w4.price)) / (dir * (w3.price - w2.price));
-      if (retr4lin > 0.618) continue;
+      // HR-6 (V120, Koenz/EWI; V123 auf LOG umgestellt): W4 retraced nie
+      // mehr als 0.618 der W3 - gemessen im Doktrin-Raum (DK-2). Die
+      // lineare Lesart verwarf kanonische Makro-Zaehlungen (BTC 2022:
+      // linear 0.81, log 0.48).
+      const retr4log = (ln(w3) - ln(w4)) / (ln(w3) - ln(w2));
+      if (retr4log > 0.618) continue;
       // w2 muss das Korrektur-Extrem in (w1, w3) sein
       if (cor.some((x) => x.index > w1.index && x.index < w3.index && v(x) < v(w2))) continue;
       const w5 = maxAfter(w4.index);
@@ -386,6 +388,19 @@ function searchFromAnchor(
       const L3 = ln(w3) - ln(w2);
       const L5 = ln(w5) - ln(w4);
       if (L3 <= Math.min(L1, L5)) continue; // HR-2: W3 nie die kuerzeste
+      // HR-7 (V123) Grad-Konsistenz, Preis UND Zeit: Eine echte Extension
+      // streckt den Preis, nicht den Wellengrad. Grad-Vermischung liegt
+      // vor, wenn die laengste Antriebswelle die zweitlaengste im PREIS
+      // um > 2.0x UND in der ZEIT um > 4.236x uebertrifft (BTC-max-Befund:
+      // 0-4 als Randstaub, "W5" = ganzer Zyklus). Harte Obergrenze im
+      // Preis bleibt 4.236x (jenseits jeder kanonischen Extension).
+      const srt = [L1, L3, L5].sort((a, b) => b - a);
+      if (srt[0] > 4.236 * srt[1]) continue;
+      const d1 = w1.index - w0.index;
+      const d3 = w3.index - w2.index;
+      const d5 = w5.index - w4.index;
+      const ds = [d1, d3, d5].sort((a, b) => b - a);
+      if (srt[0] > 2.0 * srt[1] && ds[0] > 4.236 * Math.max(1, ds[1])) continue;
 
       const seq = [w0, w1, w2, w3, w4, w5];
       const score = scoreImpulse(seq, pivots, dir, isDoctrine);
