@@ -27,7 +27,7 @@ export function registerCommands(
         "• `/radar` – aktuelle Watchlist\n" +
         "• `/add <SYMBOL>` – Asset hinzufügen\n" +
         "• `/remove <SYMBOL>` – Asset entfernen\n" +
-        "• `/analyse <SYMBOL> [5y|10y|max]` – EW-Analyse; Fensterbreite optional\n" +
+        "• `/analyse <SYMBOL> [1d|1w] [1y|5y|10y|max]` – EW-Analyse; Intervall & Fenster optional\n" +
         "• `/setups` – Setup-Status (PENDING/CONFIRMED)\n" +
         "• `/scan` – manueller Radar-Durchlauf\n\n" +
         "✅ Chat-ID für automatische Alerts gespeichert.",
@@ -76,8 +76,15 @@ export function registerCommands(
       return ctx.reply("⚠️ Bitte Symbol angeben: `/analyse NVDA [5y|10y|max]`", { parse_mode: "Markdown" });
     }
     const symbol = arg.trim().toUpperCase();
-    const rangeArg = (parts[2] || "").toLowerCase();
-    const range = ["5y", "10y", "max"].includes(rangeArg) ? rangeArg : "5y";
+    // V129: zweites Argument kann Intervall (1d/1w) ODER Range (5y/10y/max) sein.
+    const arg2 = (parts[2] || "").toLowerCase();
+    const arg3 = (parts[3] || "").toLowerCase();
+    const tokens = [arg2, arg3];
+    const isDaily = tokens.some((x) => ["1d", "d", "day", "daily", "tag"].includes(x));
+    const rangeTok = tokens.find((x) => ["1y", "2y", "5y", "10y", "max"].includes(x));
+    const interval = isDaily ? "1d" : "1wk";
+    // Tageskerzen: kürzere Default-Range (sonst unlesbar viele Kerzen)
+    const range = rangeTok || (isDaily ? "1y" : "5y");
 
     const key = `${ctx.chat.id}:${symbol}`;
     if (analysesInFlight.has(key)) {
@@ -93,7 +100,7 @@ export function registerCommands(
     });
 
     try {
-      const r = await analyzeAsset(symbol, range);
+      const r = await analyzeAsset(symbol, range, interval);
 
       if (!r.analysis) {
         if (r.abstention) {
@@ -113,7 +120,7 @@ export function registerCommands(
       }
 
       // V122 (MCO-Struktur): 1) Big Picture am Chart, 2) Details separat.
-      let caption = `📊 **${symbol}** · Weekly (${range}) · Makro-Trend \`${r.finalTrend}\``;
+      let caption = `📊 **${symbol}** · ${isDaily ? "Daily" : "Weekly"} (${range}) · Makro-Trend \`${r.finalTrend}\``;
       if (r.bigPicture) caption += `\n\n${r.bigPicture}`;
       if (caption.length > 1000) caption = caption.slice(0, 990) + "…";
 

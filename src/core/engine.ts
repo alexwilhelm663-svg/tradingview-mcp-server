@@ -157,7 +157,6 @@ function correctionLegsShort(
     return { ...empty, aHigh: aPivot.price, aDate: aPivot.date };
   }
   const bPivot = bCandidates[0]; // erstes Tief nach A = B
-  // C = erstes Hoch nach B (nächstes markantes Pivot), sonst laufendes Hoch
   const cCandidatesPiv = highs.filter((p) => p.date > bPivot.date);
   let cHigh: number | null = null;
   let cDate: string | null = null;
@@ -181,17 +180,17 @@ const addDaysE = (iso: string, d: number): string => {
 const daysBetweenE = (a: string, b: string): number =>
   (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
 
-export async function analyzeAsset(symbol: string, range: string = "5y"): Promise<AnalysisResult> {
+export async function analyzeAsset(symbol: string, range: string = "5y", interval: string = "1wk"): Promise<AnalysisResult> {
   try {
     // 1. Marktdaten (Weekly, 5 Jahre) + deterministische Pivots
-    const { weeklyAnalysisCandles: candles } = await fetchMarketData(symbol, "1wk", range);
+    const { weeklyAnalysisCandles: candles } = await fetchMarketData(symbol, interval, range);
     const currentPrice = candles[candles.length - 1].close;
 
     // 2. Deterministische Impulszaehlung (V113.1) mit Enthaltungs-Gebot (DK-7)
     const outcome = findImpulseAdaptive(candles);
     if (outcome.impulse === null) {
       console.log(`[ENGINE] ${symbol}: Enthaltung (DK-7) - ${outcome.abstention}`);
-      const buffer = await renderChart({ symbol, waves: [], candles });
+      const buffer = await renderChart({ symbol, waves: [], candles, candlestick: interval === "1d" });
       return { ...EMPTY, buffer, abstention: outcome.abstention };
     }
     const { result: impulse, pivots, threshold } = outcome.impulse;
@@ -615,6 +614,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
       markers: chartMarkers,
       timeWindows: chartTimeWindows.concat(completion ? completion.timeWindows : []),
       subwaves,
+      candlestick: interval === "1d",
     });
 
     // V118.1: Detail-Chart der W5-Binnenstruktur (Sub-Wellen bzw. ED-Keil).
