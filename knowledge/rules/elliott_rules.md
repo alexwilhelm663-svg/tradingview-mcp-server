@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 4.8
+version: 4.9
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -347,3 +347,17 @@ laufende Teilsequenz).
   überschossenem B. Ein erster Fix-Versuch (V129) erzeugte negative
   Ratios und wurde zurückgerollt; erfordert saubere a-b-c-Binnenstruktur-
   Herleitung des Flats, nicht bloßes Pivot-Umlabeling.
+- **KO-7 Umschlag ABC → 1-2 (v4.9):** Entscheidet, ob eine Gegenbewegung
+  noch Korrektur (A-B-C, alter Trend setzt sich fort) oder Beginn eines
+  neuen Impulses (Welle 1-2, Trendwechsel) ist. Gemessen am Log-Retrace der
+  Gegenbewegung relativ zum vorangegangenen Impuls, in Gegenrichtung:
+  - **NONE** (< 61,8 %): normale Korrektur, A-B-C bleibt.
+  - **WATCH** (≥ 61,8 %): 👁️ Beobachtung — Trigger ist das Überschreiten des
+    Impuls-Ursprungs; kippt dann zu 1-2.
+  - **LIKELY** (≥ 78,6 % UND Gegenbewegung strukturell impulsiv/5er): 🔄
+    Umschlag wahrscheinlich — Gegenbewegung ist vermutlich Welle 1, nicht A.
+  - **CONFIRMED** (Retrace > 100 %, Impuls-Ursprung überschritten): 🔄
+    Trendwechsel — A-B-C ausgeschlossen (eine Korrektur überschreitet den
+    Ursprung nie), die Bewegung ab dem Extrem ist Welle 1, die Reaktion
+    Welle 2. Rein diagnostisch (kein Eingriff in Zählung/Selektion); erscheint
+    in Korrektur-Lesart und Big Picture.

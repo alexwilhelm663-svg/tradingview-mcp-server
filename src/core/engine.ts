@@ -281,7 +281,8 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
           w5.price, legs.aLow, legs.bHigh, legs.cLow, currentPrice,
           pivots.filter((pv) => pv.date > w5.date)
         , 1,
-          { candles, parentThreshold: threshold, topDate: w5.date, aDate: legs.aDate, bDate: legs.bDate }
+          { candles, parentThreshold: threshold, topDate: w5.date, aDate: legs.aDate, bDate: legs.bDate,
+            impulseOrigin: w0?.price ?? null, impulseEnd: w5.price }
         );
         if (correction.targetPrice != null && correction.targetLabel != null) {
           cands.push({ price: correction.targetPrice, label: correction.targetLabel });
@@ -406,7 +407,8 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
         correctionS = classifyCorrection(
           w5.price, legsS.aHigh, legsS.bLow, legsS.cHigh, currentPrice,
           pivots.filter((pv) => pv.date > w5.date), -1,
-          { candles, parentThreshold: threshold, topDate: w5.date, aDate: legsS.aDate, bDate: legsS.bDate }
+          { candles, parentThreshold: threshold, topDate: w5.date, aDate: legsS.aDate, bDate: legsS.bDate,
+            impulseOrigin: w0?.price ?? null, impulseEnd: w5.price }
         );
         if (correctionS.targetPrice != null && correctionS.targetLabel != null) {
           cands.push({ price: correctionS.targetPrice, label: correctionS.targetLabel });
@@ -600,6 +602,12 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     let bigPicture = `🧭 **Big Picture:** ${cyc}`;
     if (koRead && koRead.pattern === "KOMBINATION")
       bigPicture += ` Korrektur läuft als **W-X-Y** (zusammengesetzt), nicht als einfache A-B-C – erfahrungsgemäß **tiefer** (0,618–0,786 statt ~0,5), Kaufzone entsprechend riskanter.`;
+    if (koRead && koRead.reversalRisk === "CONFIRMED")
+      bigPicture += `\n🔄 **Trendwechsel:** ${koRead.reversalNote}`;
+    else if (koRead && koRead.reversalRisk === "LIKELY")
+      bigPicture += `\n🔄 **Umschlag wahrscheinlich (A-B-C → 1-2):** ${koRead.reversalNote}`;
+    else if (koRead && koRead.reversalRisk === "WATCH")
+      bigPicture += `\n👁️ **Umschlag-Beobachtung:** ${koRead.reversalNote}`;
     if (scenPrimary) bigPicture += `\n1️⃣ **Primär:** ${scenPrimary}`;
     if (scenAlt) bigPicture += `\n2️⃣ **Alternativ:** ${scenAlt}`;
     if (keyLine) bigPicture += `\n📌 ${keyLine}`;
