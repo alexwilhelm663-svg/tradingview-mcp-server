@@ -29,6 +29,7 @@ export interface ChartPayload {
   titleSuffix?: string;
   timeWindows?: { start: string; end: string; label: string }[];
   subwaves?: ChartWave[];
+  candlestick?: boolean; // V129: echte Tageskerzen statt Linie
 }
 
 /**

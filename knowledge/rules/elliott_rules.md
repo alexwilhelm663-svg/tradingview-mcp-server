@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 4.7
+version: 4.8
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -335,3 +335,15 @@ Rahmen zu fragil. `core/diagonal.ts` ist ein leerer Stub; `segmentVerdict`
 liefert nur IMPULSIVE/UNKLAR; DG-1/2/3 und DK-8 sind zurückgezogen; die
 Completion-Analyse kennt keinen ED-Zweig mehr (nur Sub-5-Teiler oder
 laufende Teilsequenz).
+
+- **Tageskerzen-Modus (v4.8):** `/analyse SYMBOL 1d [range]` rendert echte
+  OHLC-Candlesticks (grün/rot) statt der Wochen-Schluss-Linie; Default-Range
+  bei 1d ist 1y. Der Chart wird per candlestick-Flag durch die Kette
+  commands → engine → chart → drawer gesteuert.
+- **OFFEN (Expanded-Flat-Segmentierung):** Schiesst innerhalb der Korrektur
+  ein zweites Hoch über das erste (überschießendes B eines Expanded Flat,
+  z.B. CRCL 136 → Zwischentief → 140 → 5-teiliger Abstieg), segmentiert die
+  Leg-Bestimmung dies noch als separate A-B-C statt als ein Flat mit
+  überschossenem B. Ein erster Fix-Versuch (V129) erzeugte negative
+  Ratios und wurde zurückgerollt; erfordert saubere a-b-c-Binnenstruktur-
+  Herleitung des Flats, nicht bloßes Pivot-Umlabeling.

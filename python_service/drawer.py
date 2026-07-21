@@ -32,7 +32,27 @@ def main():
 
         current_price = df["close"].iloc[-1]
 
-        ax.plot(df.index, df["close"], color="#1f2937", linewidth=1, zorder=2)
+        # V129: echte Candlesticks bei Tagesdaten, sonst Schluss-Linie.
+        candlestick = bool(payload.get("candlestick", False))
+        if candlestick and len(df) > 1:
+            import matplotlib.dates as mdates
+            import numpy as _np
+            xs = mdates.date2num(df.index.to_pydatetime())
+            dx = _np.median(_np.diff(xs)) if len(xs) > 1 else 1.0
+            bw = dx * 0.6
+            for xi, (_, row) in zip(xs, df.iterrows()):
+                o, h, l, c = row["open"], row["high"], row["low"], row["close"]
+                col = "#16a34a" if c >= o else "#dc2626"
+                ax.plot([xi, xi], [l, h], color=col, linewidth=0.6, zorder=2)
+                body_lo, body_hi = min(o, c), max(o, c)
+                height = max(body_hi - body_lo, body_hi * 1e-3)
+                ax.add_patch(plt.Rectangle(
+                    (xi - bw / 2, body_lo), bw, height,
+                    facecolor=col, edgecolor=col, linewidth=0.4, zorder=2, alpha=0.9,
+                ))
+            ax.xaxis_date()
+        else:
+            ax.plot(df.index, df["close"], color="#1f2937", linewidth=1, zorder=2)
 
         is_correction_macro = any(
             w["label"] in ["A", "B", "C", "W", "X", "Y"] for w in waves
