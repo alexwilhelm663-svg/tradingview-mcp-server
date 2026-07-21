@@ -26,6 +26,9 @@ export interface CorrectionRead {
   // V133: Impuls-These der Gegenbewegung + Invalidierungsbedingung
   impulseCandidate: boolean;       // ist die Gegenbewegung Welle-1-fähig (5er)?
   impulseInvalidation: number | null; // Kurs, unter/über dem die 1-2-These fällt
+  // V134 (Koenz): 0.618-Bestätigungs-Trick + Zeit-Diskriminante ABC vs 1-2-3
+  koenz618Level: number | null;    // Rücklauf-Marke: darunter war es wahrsch. ABC
+  koenzTimeHint: string | null;    // Zeit-basierte ABC-vs-1-2-3-Tendenz
 }
 
 export interface CorrectionContext {
@@ -44,6 +47,9 @@ export interface CorrectionContext {
  * Struktur-Beweis (segmentVerdict auf dem A-Bein: 5er -> Zigzag-Familie,
  * 3er/unklar -> Flat-Familie). Extension-ZIELE logarithmisch (DK-2).
  */
+const daysBetweenC = (a: string, b: string): number =>
+  (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
+
 export function classifyCorrection(
   w5Price: number,
   aExtreme: number,
@@ -180,6 +186,8 @@ export function classifyCorrection(
   let reversalNote: string | null = null;
   let impulseCandidate = false;
   let impulseInvalidation: number | null = null;
+  let koenz618Level: number | null = null;
+  let koenzTimeHint: string | null = null;
   if (ctx && ctx.impulseOrigin != null && ctx.impulseEnd != null) {
     const impLog = Math.abs(Math.log(ctx.impulseOrigin) - Math.log(ctx.impulseEnd));
     // dirCounter = Richtung der Gegenbewegung (gegen den Impuls):
@@ -225,6 +233,39 @@ export function classifyCorrection(
       // wie weit sie schon retraced hat. Die harte Elliott-Invalidierung: Eine
       // Welle 2 darf den Ursprung der Welle 1 (= das Impuls-Extrem ctx.impulseEnd)
       // NIE unterschreiten (HR-1). Fällt der Kurs dort durch, ist die 1 keine 1.
+      // V134 Koenz 0.618-Bestätigungs-Trick: Die Aufwärts-/Gegenstrecke ist
+      // W5-Extrem -> A (erstes Gegen-Extrem). Retraced der Kurs 0.618 DIESER
+      // Strecke, war sie wahrscheinlich eine Welle C (Korrektur fertig, ABC),
+      // KEIN Impuls - denn eine Welle 4 dürfte das 0.618 der Welle 3 nie
+      // erreichen. Das ist eine FRÜHE probabilistische Marke, deutlich vor
+      // der harten HR-1-Invalidierung am Ursprung.
+      if (ctx.aDate != null) {
+        const strecke = counterVal(aExtreme) - counterVal(ctx.impulseEnd);
+        if (strecke > 0) {
+          // 0.618-Retrace der Strecke, ausgehend vom A-Extrem zurück:
+          koenz618Level = Math.exp(dirCounter * (counterVal(aExtreme) - 0.618 * strecke));
+        }
+      }
+      // V134 Koenz Zeit-Diskriminante: Je länger die Gegenbewegung rangiert
+      // (Fib-Time der B-Welle relativ zur A-Welle Richtung 3-5), desto eher
+      // ABC statt 1-2-3 - eine echte Welle 2 ist meist kurz & tief.
+      if (ctx.aDate != null && ctx.bDate != null) {
+        const tA = daysBetweenC(ctx.topDate, ctx.aDate);
+        const tB = daysBetweenC(ctx.aDate, ctx.bDate);
+        if (tA > 0 && tB > 0) {
+          const fibTime = tB / tA;
+          if (fibTime >= 3.0) {
+            koenzTimeHint =
+              `Zeit-Diskriminante (Koenz): Gegenbewegung rangiert bereits ${fibTime.toFixed(1)}× Fib-Time der A-Welle ` +
+              `(≥ 3.0) – spricht für ABC (Korrektur), da eine echte Welle 2 meist kurz & tief ist.`;
+          } else if (fibTime <= 1.0) {
+            koenzTimeHint =
+              `Zeit-Diskriminante (Koenz): Pullback ist zeitlich kurz (${fibTime.toFixed(1)}× Fib-Time der A-Welle) ` +
+              `– konsistent mit einer Welle 2 (kurz & tief), stützt die Impuls-These.`;
+          }
+        }
+      }
+
       impulseCandidate = counterImpulsive;
       if (counterImpulsive) {
         impulseInvalidation = ctx.impulseEnd; // W5-Extrem = Welle-1-Ursprung
@@ -242,7 +283,13 @@ export function classifyCorrection(
           `(B) Trendwechsel — die Erholung ist Welle 1 (strukturell impulsiver 5er, daher handelbar). ` +
           `Lesart B BESTÄTIGT sich bei ${bestätigungsTrigger} (Ursprung überschritten). ` +
           `Lesart B INVALIDIERT bei ${invLabel} (HR-1: Welle 2 darf den Welle-1-Ursprung nie ` +
-          `${dirCounter === 1 ? "unterschreiten" : "überschreiten"}). Zwischen beiden Marken bleibt es offen.`;
+          `${dirCounter === 1 ? "unterschreiten" : "überschreiten"}). Zwischen beiden Marken bleibt es offen.` +
+          (koenz618Level != null
+            ? ` 🎯 Koenz-Frühmarke: ${dirCounter === 1 ? "Rücklauf unter" : "Anstieg über"} ${koenz618Level.toFixed(2)} ` +
+              `(0.618 der Erholung) schwächt Lesart B – eine Welle 4 dürfte das 0.618 der Welle 3 nie treffen, ` +
+              `also spräche das für ABC statt Impuls.`
+            : "") +
+          (koenzTimeHint != null ? ` ${koenzTimeHint}` : "");
       }
     }
   }
@@ -281,6 +328,7 @@ export function classifyCorrection(
   return {
     pattern, text, targetPrice, targetLabel, cOverA, legPoints,
     reversalRisk, reversalNote, impulseCandidate, impulseInvalidation,
+    koenz618Level, koenzTimeHint,
   };
 }
 
