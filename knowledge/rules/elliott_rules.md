@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 5.2
+version: 5.3
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -404,3 +404,25 @@ laufende Teilsequenz).
   Ursprung der Welle 1 nie durchbrechen). Zwischen beiden Marken bleibt die
   Zuordnung offen. Rein diagnostisch. Erscheint nur bei impulsivem A-Bein
   (bei nicht-impulsiver Erholung — reine Korrektur — schweigt die These).
+- **KO-7c Koenz 0.618-Bestätigungs-Trick (v5.3):** Frühe probabilistische
+  Diskriminante ABC vs. Impuls, DEUTLICH vor der harten HR-1-Invalidierung.
+  Die Gegenbewegung nach einem Impuls (W5-Extrem → erstes Gegen-Extrem A) ist
+  entweder eine Welle C (Korrektur fertig) oder eine Welle 1/3 (Trendwechsel).
+  Retraced der Kurs 0,618 DIESER Strecke zurück, war sie WAHRSCHEINLICH ein
+  ABC — denn eine Welle 4 dürfte das 0,618 der Welle 3 nie treffen (Koenz).
+  Der Report weist die konkrete 0,618-Marke aus (🎯 Koenz-Frühmarke): ihr
+  Erreichen schwächt die Impuls-These, lange bevor der Ursprung (HR-1)
+  berührt wird. Beispiel CRCL: Frühmarke 73,32 vs. harte Invalidierung 49,90.
+- **KO-7d Koenz Zeit-Diskriminante (v5.3):** Nicht nur WIE WEIT, auch WIE
+  LANGE die Gegenbewegung rangiert, unterscheidet ABC von 1-2-3. Fib-Time der
+  B-Welle relativ zur A-Welle: ≥ 3,0 spricht für ABC (eine echte Welle 2 ist
+  meist kurz & tief); ≤ 1,0 stützt die Impuls-/Welle-2-These. Erscheint als
+  Zusatzhinweis in der Umschlag-Lesart.
+
+**Koenz-Abgleich (Quelle: koenz_elliott):** Der 0,618-Trick und die
+Zeit-Diskriminante sind direkt aus Koenz' ABC-vs-1-2-3-Unterscheidung
+übernommen. Ebenfalls bestätigt (bereits im Regelwerk): HR-1-Invalidierung
+(Welle 2 nie unter Welle-1-Start), W4-0,618-Grenze (HR-6), typabhängige
+Retrace-Bänder (GL-2b), Volumen-Profil je Extensionstyp (GL-5/6), Fib-Zeit-
+Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist notiert, aber
+noch nicht implementiert (erfordert Multi-Grad-Zählung).
