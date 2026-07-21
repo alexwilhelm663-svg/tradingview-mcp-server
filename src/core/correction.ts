@@ -1,6 +1,7 @@
 import type { Candle } from "./marketData";
 import { Pivot } from "./zigzag";
 import { segmentVerdict, SubVerdict } from "./impulseFinder";
+import { assessMultiWave } from "./multiWave";
 
 export type CorrectionPattern =
   | "ZIGZAG"
@@ -29,6 +30,9 @@ export interface CorrectionRead {
   // V134 (Koenz): 0.618-Bestätigungs-Trick + Zeit-Diskriminante ABC vs 1-2-3
   koenz618Level: number | null;    // Rücklauf-Marke: darunter war es wahrsch. ABC
   koenzTimeHint: string | null;    // Zeit-basierte ABC-vs-1-2-3-Tendenz
+  // V135 (Koenz): staffelnde Multi-1-2-Invalidierung
+  multiWaveInvalidation: number | null; // wandernde Invalidierungsmarke
+  multiWaveNote: string | null;
 }
 
 export interface CorrectionContext {
@@ -188,6 +192,8 @@ export function classifyCorrection(
   let impulseInvalidation: number | null = null;
   let koenz618Level: number | null = null;
   let koenzTimeHint: string | null = null;
+  let multiWaveInvalidation: number | null = null;
+  let multiWaveNote: string | null = null;
   if (ctx && ctx.impulseOrigin != null && ctx.impulseEnd != null) {
     const impLog = Math.abs(Math.log(ctx.impulseOrigin) - Math.log(ctx.impulseEnd));
     // dirCounter = Richtung der Gegenbewegung (gegen den Impuls):
@@ -267,6 +273,22 @@ export function classifyCorrection(
       }
 
       impulseCandidate = counterImpulsive;
+      // V135 Koenz Multi-1-2: Nur sinnvoll, wenn die Gegenbewegung als
+      // Trendbeginn plausibel ist (impulsives erstes Bein). Die wandernde
+      // Invalidierung ersetzt die statische Ursprungs-Marke, solange intakt.
+      // Multi-1-2 nur, wenn ein echter Umschlag-Verdacht besteht (Retrace
+      // >= 61.8%, reversalRisk != NONE) - sonst ist die Abwärts-/Aufwärts-
+      // korrektur der ERWARTETE Trend, kein neuer. Verhindert Fehlalarme bei
+      // normalen Korrekturen (tiefere Hochs in erwarteter Abwärtskorrektur).
+      if (counterImpulsive && ctx && reversalRisk !== "NONE") {
+        const mw = assessMultiWave(
+          ctx.candles, ctx.topDate, ctx.impulseEnd, dirCounter, ctx.parentThreshold
+        );
+        if (mw.legs >= 2) {
+          multiWaveInvalidation = mw.currentInvalidation;
+          multiWaveNote = mw.note;
+        }
+      }
       if (counterImpulsive) {
         impulseInvalidation = ctx.impulseEnd; // W5-Extrem = Welle-1-Ursprung
         const invLabel =
@@ -289,7 +311,8 @@ export function classifyCorrection(
               `(0.618 der Erholung) schwächt Lesart B – eine Welle 4 dürfte das 0.618 der Welle 3 nie treffen, ` +
               `also spräche das für ABC statt Impuls.`
             : "") +
-          (koenzTimeHint != null ? ` ${koenzTimeHint}` : "");
+          (koenzTimeHint != null ? ` ${koenzTimeHint}` : "") +
+          (multiWaveNote != null ? ` 📈 ${multiWaveNote}` : "");
       }
     }
   }
@@ -328,7 +351,7 @@ export function classifyCorrection(
   return {
     pattern, text, targetPrice, targetLabel, cOverA, legPoints,
     reversalRisk, reversalNote, impulseCandidate, impulseInvalidation,
-    koenz618Level, koenzTimeHint,
+    koenz618Level, koenzTimeHint, multiWaveInvalidation, multiWaveNote,
   };
 }
 

@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 5.3
+version: 5.4
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -424,5 +424,18 @@ Zeit-Diskriminante sind direkt aus Koenz' ABC-vs-1-2-3-Unterscheidung
 übernommen. Ebenfalls bestätigt (bereits im Regelwerk): HR-1-Invalidierung
 (Welle 2 nie unter Welle-1-Start), W4-0,618-Grenze (HR-6), typabhängige
 Retrace-Bänder (GL-2b), Volumen-Profil je Extensionstyp (GL-5/6), Fib-Zeit-
-Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist notiert, aber
-noch nicht implementiert (erfordert Multi-Grad-Zählung).
+Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implementiert
+(KO-7e).
+- **KO-7e Koenz staffelnde Multi-1-2-Invalidierung (v5.4):** Ein Multi-1-2
+  ist eine Serie verschachtelter 1-2-Setups am Trendbeginn (jedes 1 impulsiv,
+  jedes 2 korrektiv), die als gestaffelte höhere Tiefs (Aufwärts-Trendbeginn)
+  bzw. tiefere Hochs erscheinen. Die Invalidierung WANDERT: Start am
+  Struktur-Extrem (W5), nach jeder fertigen Welle 2 auf das jeweils letzte
+  höhere Tief; nach Ausbruch in Welle 3 kein Rücklauf zum Ursprung mehr
+  erwartet (Koenz). Der Report ersetzt die statische Ursprungs-Invalidierung
+  durch die wandernde Marke (📈) und meldet, ob die Staffel INTAKT ist oder
+  bereits durchbrochen wurde (Wochenschluss unter/über der wandernden Marke
+  = Trendbeginn-These hinfällig). Streng gekoppelt: nur bei aktivem
+  Umschlag-Verdacht (reversalRisk ≠ NONE, Retrace ≥ 61,8 %) UND impulsiver
+  Gegenbewegung — verhindert Fehlalarme bei normalen, erwarteten Korrekturen.
+  Mindestens 2 gestaffelte Extrema nötig; feine Sub-Auflösung (5–10 %).
