@@ -188,7 +188,13 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
     wc.analysis += ` · ${quality.summary}`;
 
     // V118 (DK-9): Ist Welle 5 wirklich fertig - oder laeuft der Impuls noch?
-    const completion: CompletionRead | null = assessCompletion(candles, wc, threshold);
+    // V127: DK-9 (Vollendungs-Nachweis) darf nur greifen, solange KEINE
+    // Korrektur ab W5 ausgebildet ist. Bewegt sich der Kurs bereits von W5
+    // weg und es existiert eine A-B-C/W-X-Y-Struktur, IST Welle 5 fertig -
+    // sonst widerspricht sich die Analyse (Chart zeigt fertige 5 + laufende
+    // Korrektur, Text behauptet "5 läuft noch"). Wird nach der Korrektur-
+    // Bestimmung final entschieden.
+    let completion: CompletionRead | null = assessCompletion(candles, wc, threshold);
     if (completion) {
       wc.analysis += `\n${completion.status === "IN_PROGRESS" ? "⏳" : "🏁"} ${completion.note}`;
       if (completion.projections.length > 0) {
@@ -530,6 +536,15 @@ export async function analyzeAsset(symbol: string, range: string = "5y"): Promis
       for (const pr of completion.projections) {
         chartMarkers.push({ price: pr.price, label: pr.label.split(" ")[0] });
       }
+    }
+
+    // V127: Widerspruch aufloesen - eine ausgebildete Korrektur ab W5
+    // (>= A und B vorhanden) beweist, dass Welle 5 abgeschlossen ist.
+    const koActive =
+      (correction && correction.legPoints.length >= 2) ||
+      (correctionS && correctionS.legPoints.length >= 2);
+    if (koActive && completion && completion.status === "IN_PROGRESS") {
+      completion = null; // DK-9 schweigt; die Korrektur-Lesart hat Vorrang
     }
 
     // V123: Sub-Zählungen (eine Stufe tiefer) fuer die Antriebswellen 1/3/5

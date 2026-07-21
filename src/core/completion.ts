@@ -46,6 +46,15 @@ export function assessCompletion(
   const seg = candles.filter((c) => c.date >= w4.date);
   if (seg.length < 10) return null;
 
+  // V127 Prämissen-Check: "Welle 5 läuft noch" ist nur haltbar, solange der
+  // aktuelle Kurs noch in der Nähe des W5-Extrems steht. Hat er sich bereits
+  // deutlich (> 15% log) davon entfernt, ist W5 abgeschlossen und eine
+  // Korrektur/Gegenbewegung im Gang - dann trifft assessCompletion keine
+  // "IN_PROGRESS"-Aussage mehr (verhindert Selbst-Widerspruch zum ABC).
+  const lastPx = candles[candles.length - 1].close;
+  const awayLog = Math.abs(Math.log(lastPx) - Math.log(w5.price));
+  const farFromW5 = awayLog > 0.15;
+
   const ln = (a: number, b: number): number => dir * (Math.log(b) - Math.log(a));
   const logProject = (base: number, len: number, k: number): number =>
     Math.exp(Math.log(base) + dir * k * len);
@@ -74,7 +83,7 @@ export function assessCompletion(
     const p4 = findPartialImpulse(piv, dir, 4); // Sub bei 3 -> W4_sub, W5_sub folgen
     const p2 = findPartialImpulse(piv, dir, 2); // Sub bei 1 -> W2_sub, dann 3 folgt
 
-    if (p4) {
+    if (p4 && !farFromW5) {
       const s0 = p4.points[0].price;
       const s1 = p4.points[1].price;
       const s3 = p4.points[3].price; // aktuelle Sub-3-Spitze
@@ -102,7 +111,7 @@ export function assessCompletion(
       };
     }
 
-    if (p2) {
+    if (p2 && !farFromW5) {
       const s0 = p2.points[0].price;
       const s1 = p2.points[1].price;
       const l1 = ln(s0, s1);
