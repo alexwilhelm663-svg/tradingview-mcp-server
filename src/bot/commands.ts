@@ -135,6 +135,7 @@ export function registerCommands(
       if (r.isBreakoutSetup) details += `${r.breakoutStatus}\n`;
       if (!r.clusterInfo && !r.isBreakoutSetup) details += "⚪ Aktuell in keiner Trigger-Zone.\n";
       if (r.analysis.analysis) details += `\n${r.analysis.analysis}`;
+      if (r.confluenceNote) details += `\n\n${r.confluenceNote}`;
       await ctx.reply(details, { parse_mode: "Markdown" });
       // V122: Detail-Chart standardmäßig entfernt (auf Wunsch reaktivierbar).
 
