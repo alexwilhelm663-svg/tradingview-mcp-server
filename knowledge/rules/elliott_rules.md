@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 4.6
+version: 4.7
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -279,10 +279,21 @@ Alle theoretischen Korrekturmuster, ihre Erkennung und Ziele. Klassifikation
 Implementiert in `core/correction.ts` (`classifyCorrection`), gerendert in
 `engine`/`drawer`.
 
-- **KO-1 Struktur-Beweis (Basis):** Das A-Bein wird per `segmentVerdict`
-  geprüft. Impulsiver 5er ⇒ **Zigzag-Familie**; 3er/unklar ⇒ **Flat-Familie**.
-  In der Grauzone (B-Retrace 0,786–0,9) entscheidet allein die A-Struktur
-  (Koenz: 0,886-Touch spricht für korrektiv/Flat).
+- **KO-1 Struktur-Beweis (Basis, v4.7 verschärft):** Das A-Bein wird per
+  `segmentVerdict` geprüft. Impulsiver 5er ⇒ **Zigzag-Familie**; 3er/unklar
+  ⇒ **Flat-Familie**. In der Grauzone (B-Retrace 0,786–0,9) entscheidet
+  allein die A-Struktur (Koenz: 0,886-Touch spricht für korrektiv/Flat).
+  **Auflösungs-Fix (v4.7):** `segmentVerdict` nutzt absolute feine Sub-Stufen
+  (12/8/5 %), nicht nur parent-relative — ein kurzes, steiles Bein wurde
+  sonst mangels Pivots fälschlich "unklar". **Geradlinigkeits-Fallback:**
+  ist ein Segment zu kurz für eine 5er-Zählung, aber geradlinig in
+  Trendrichtung (Effizienz Netto/Brutto-Log ≥ 0,7, gleichgerichtete Kerzen
+  ≥ 70 %), gilt es als impulsiv (ein Korrektiv wäre verwinkelt).
+- **KO-1b A-B-C-Segmentierung (v4.7):** Die Korrektur-Beine sind die ERSTE
+  vollständige A-B-C-Sequenz (A = erstes markantes Pivot nach dem Impuls,
+  B = erstes Gegen-Pivot, C = nächstes Pivot), NICHT globale Extrema. Das
+  alte "B = global tiefstes/höchstes Extrem" presste ganze Auf-Ab-Zyklen in
+  ein A-B (CRCL: A=136 → B=58 statt korrekt A=136 → B=84 → C läuft).
 - **KO-2 Zigzag (5-3-5):** B retraced A 0,382–0,786. C-Ziele
   logC = 1,0 / 1,236 / 1,618 · A (ab B).
 - **KO-2b Double Zigzag (W-X-Y):** Zigzag-Basis, aber C überschießt > 1,75×A

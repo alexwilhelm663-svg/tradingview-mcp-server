@@ -89,21 +89,27 @@ function correctionLegs(pivots: Pivot[], candles: Candle[], topDate: string): Co
     const running = lows.reduce((m, p) => (p.price < m.price ? p : m));
     return { ...empty, aLow: running.price, aDate: running.date };
   }
-  // B = hoechstes H nach dem Top; A = TIEFSTES L zwischen Top und B
-  // (nicht das erste L - das war der V112-Bug, der die C-Projektionen
-  // an einem Ein-Wochen-Dip verankerte).
-  const bPivot = highs.reduce((m, p) => (p.price > m.price ? p : m));
-  const aCandidates = lows.filter((p) => p.date < bPivot.date);
-  if (aCandidates.length === 0) return empty;
-  const aPivot = aCandidates.reduce((m, p) => (p.price < m.price ? p : m));
-
-  const afterB = candles.filter((k) => k.date > bPivot.date);
+  // V128: ERSTE A-B-C-Sequenz. A = erstes markantes Tief nach dem Top
+  // (die Pivots sind bereits ZigZag-gefiltert, also KEINE Ein-Wochen-Dips
+  // mehr - das entschaerft den alten V112-Bug ohne globale Extrema zu
+  // erzwingen, die ganze Auf-Ab-Zyklen zusammenpressen). B = erstes Hoch
+  // nach A; C = erstes Tief nach B (Ende der ersten Dreier-Struktur).
+  const aPivot = lows[0]; // erstes markantes Tief = A
+  const bCandidates = highs.filter((p) => p.date > aPivot.date);
+  if (bCandidates.length === 0) {
+    return { ...empty, aLow: aPivot.price, aDate: aPivot.date };
+  }
+  const bPivot = bCandidates[0]; // erstes Hoch nach A = B
+  const cCandidatesPiv = lows.filter((p) => p.date > bPivot.date);
   let cLow: number | null = null;
   let cDate: string | null = null;
-  for (const k of afterB) {
-    if (cLow === null || k.low < cLow) {
-      cLow = k.low;
-      cDate = k.date;
+  if (cCandidatesPiv.length > 0) {
+    cLow = cCandidatesPiv[0].price;
+    cDate = cCandidatesPiv[0].date;
+  } else {
+    const afterB = candles.filter((k) => k.date > bPivot.date);
+    for (const k of afterB) {
+      if (cLow === null || k.low < cLow) { cLow = k.low; cDate = k.date; }
     }
   }
   return {
@@ -140,19 +146,28 @@ function correctionLegsShort(
     const running = highs.reduce((m, p) => (p.price > m.price ? p : m));
     return { ...empty, aHigh: running.price, aDate: running.date };
   }
-  // B = tiefstes L nach dem Tief; A = HOECHSTES H davor
-  const bPivot = lows.reduce((m, p) => (p.price < m.price ? p : m));
-  const aCandidates = highs.filter((p) => p.date < bPivot.date);
-  if (aCandidates.length === 0) return empty;
-  const aPivot = aCandidates.reduce((m, p) => (p.price > m.price ? p : m));
-
-  const afterB = candles.filter((k) => k.date > bPivot.date);
+  // V128: ERSTE A-B-C-Sequenz statt globaler Extrema. A = erstes markantes
+  // Hoch nach W5; B = erstes Tief danach; C = nächstes Hoch (Ende der ersten
+  // Dreier-Struktur). Das alte "B = global tiefstes Tief" presste ganze
+  // Auf-Ab-Zyklen in ein A-B und segmentierte die Struktur falsch (CRCL:
+  // A=136 → B=58 statt A=136 → B=84 → C=140).
+  const aPivot = highs[0]; // erstes Hoch = A
+  const bCandidates = lows.filter((p) => p.date > aPivot.date);
+  if (bCandidates.length === 0) {
+    return { ...empty, aHigh: aPivot.price, aDate: aPivot.date };
+  }
+  const bPivot = bCandidates[0]; // erstes Tief nach A = B
+  // C = erstes Hoch nach B (nächstes markantes Pivot), sonst laufendes Hoch
+  const cCandidatesPiv = highs.filter((p) => p.date > bPivot.date);
   let cHigh: number | null = null;
   let cDate: string | null = null;
-  for (const k of afterB) {
-    if (cHigh === null || k.high > cHigh) {
-      cHigh = k.high;
-      cDate = k.date;
+  if (cCandidatesPiv.length > 0) {
+    cHigh = cCandidatesPiv[0].price;
+    cDate = cCandidatesPiv[0].date;
+  } else {
+    const afterB = candles.filter((k) => k.date > bPivot.date);
+    for (const k of afterB) {
+      if (cHigh === null || k.high > cHigh) { cHigh = k.high; cDate = k.date; }
     }
   }
   return { aHigh: aPivot.price, aDate: aPivot.date, bLow: bPivot.price, bDate: bPivot.date, cHigh, cDate };

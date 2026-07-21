@@ -137,15 +137,40 @@ export function segmentVerdict(
   parentThreshold: number
 ): SubVerdict {
   const seg = candles.filter((c) => c.date >= fromDate && c.date <= toDate);
-  if (seg.length < 15) return "UNKLAR";
-  for (const th of subThresholds(parentThreshold)) {
+  if (seg.length < 5) return "UNKLAR"; // wirklich zu wenig fuer jede Aussage
+
+  // Primär: 5er-Zählung auf Sub-Stufen. V128 - zusätzlich ABSOLUTE feine
+  // Stufen (12/8/5%), nicht nur parent-relative; ein kurzes, steiles Bein
+  // braucht absolut feine Auflösung, sonst emittiert der ZigZag zu wenige
+  // Pivots und ein echter Impuls wird faelschlich "UNKLAR".
+  const ladders = [...new Set([...subThresholds(parentThreshold), 12, 8, 5])];
+  for (const th of ladders) {
     const piv = zigzag(seg, th);
     if (piv.length < 6) continue;
     const sub = findBestImpulse(piv);
     if (sub && sub.count.trend === (dir === 1 ? "bullish" : "bearish")) return "IMPULSIVE";
   }
-  // V124: Diagonal-Klasse per Nutzer-Erlass verworfen - das Urteil kennt
-  // nur noch IMPULSIVE oder UNKLAR.
+
+  // Fallback (V128): Ist das Segment zu kurz fuer eine 5er-Zaehlung, aber
+  // GERADLINIG und in Trendrichtung (hohe Effizienz Netto/Brutto im Log,
+  // hoher Anteil gleichgerichteter Kerzen), ist es impulsiv - ein
+  // Korrektiv waere verwinkelt. Loest den CRCL-Fall: +121% in 7 Wochen,
+  // 100% Aufwaerts-Wochen, Effizienz 1.0 -> klar impulsiv.
+  if (seg.length >= 4) {
+    let same = 0;
+    let grossLog = 0;
+    for (let i = 1; i < seg.length; i++) {
+      const step = Math.log(seg[i].close) - Math.log(seg[i - 1].close);
+      if (dir * step > 0) same++;
+      grossLog += Math.abs(step);
+    }
+    const netLog = dir * (Math.log(seg[seg.length - 1].close) - Math.log(seg[0].close));
+    const efficiency = grossLog > 0 ? netLog / grossLog : 0;
+    const sameFrac = same / (seg.length - 1);
+    // Schwellen konservativ: nur klar gerichtete, effiziente Beine
+    if (efficiency >= 0.7 && sameFrac >= 0.7 && netLog > 0.05) return "IMPULSIVE";
+  }
+
   return "UNKLAR";
 }
 
