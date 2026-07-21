@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 5.1
+version: 5.2
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -391,3 +391,16 @@ laufende Teilsequenz).
   HAUPTZÄHLUNG bestehen; die Tagesebene dient nur als Frühwarnung (im Big
   Picture und Detail-Block). Nur Woche→Tag (robusteste Daten); der
   Tages-Modus selbst löst keine Konfluenz aus (keine Rekursion).
+- **KO-7b Impuls-These & Invalidierung (v5.2):** Ist die Gegenbewegung nach
+  einem Impuls strukturell selbst impulsiv (5er, via segmentVerdict), ist ihr
+  erstes Bein Welle-1-FÄHIG — sie kann der Beginn eines neuen Trends sein, nicht
+  nur die A einer Korrektur. In diesem (häufigen) Zwischenzustand stellt der
+  Report BEIDE Lesarten explizit gegenüber:
+  - **(A) Korrektur:** Erholung = A-Welle, alter Trend setzt fort.
+  - **(B) Trendwechsel:** Erholung = Welle 1, handelbar.
+  Mit konkreten Preis-Triggern: **Lesart B bestätigt** bei Überschreiten des
+  Impuls-Ursprungs (Welle 0); **Lesart B invalidiert** bei Unterschreiten des
+  Impuls-Extrems (Welle 5 = Welle-1-Ursprung, HR-1: eine Welle 2 darf den
+  Ursprung der Welle 1 nie durchbrechen). Zwischen beiden Marken bleibt die
+  Zuordnung offen. Rein diagnostisch. Erscheint nur bei impulsivem A-Bein
+  (bei nicht-impulsiver Erholung — reine Korrektur — schweigt die These).
