@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 4.9
+version: 5.1
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -361,3 +361,33 @@ laufende Teilsequenz).
     Ursprung nie), die Bewegung ab dem Extrem ist Welle 1, die Reaktion
     Welle 2. Rein diagnostisch (kein Eingriff in Zählung/Selektion); erscheint
     in Korrektur-Lesart und Big Picture.
+- **Rahmen-Transparenz (v5.0):** Die Korrektur-Bewertung (Muster UND Ziele)
+  hängt vom Analyserahmen ab — Fenster (5y/10y/max) und Auflösung (1d/1w)
+  bestimmen den Wellengrad, an dem gemessen wird. Elliott ist fraktal:
+  dieselben Kerzen ergeben bei anderem Ursprung eine andere B/A-Ratio, einen
+  anderen Struktur-Beweis am A-Bein und damit eine andere Lesart (z.B. BTC:
+  5y → Zigzag/unklar mit Impuls 15.599→126k; 10y → W-X-Y mit Impuls
+  531→126k). Das ist KEINE Inkonsistenz, sondern echte Grad-Information. Die
+  Ziele sind INNERHALB eines Rahmens konsistent zur Lesart (Zigzag → KO-2-
+  Bänder; W-X-Y → tiefere KO-6b-Bänder). Der Report weist den geltenden
+  Rahmen jetzt explizit aus (ℹ️-Hinweis), damit verschiedene Bewertungen
+  nicht als Widerspruch missverstanden werden. Auf feinerer Auflösung
+  erscheint dasselbe Bein oft verwinkelter (niedrigere Effizienz im
+  Struktur-Beweis) — ebenfalls echte fraktale Information.
+- **KF-1 Multi-Timeframe-Konfluenz (v5.1, still):** Jede Wochen-Analyse
+  validiert sich zusätzlich still auf der Tagesebene (Woche → Tag). Die
+  tiefere Zählung wird NICHT ausgegeben — nur ein Konfluenz-Verdikt.
+  Definition von "gleiches Ergebnis": die aktuell laufende Welle der
+  Hauptebene muss sich auf der Tagesebene in ihre erwartete Substruktur
+  zerlegen lassen (verschachtelt):
+  - Hauptebene "Welle 5 läuft" (IMPULS) → Tagesebene sollte gleichgerichteten
+    Impuls zeigen.
+  - Hauptebene "Korrektur läuft" → Tagesebene sollte GEGENläufigen Impuls
+    zeigen (Korrektur oben = Impuls unten).
+  Verdikte: **✅ BESTÄTIGT** (Substruktur passt), **◽ NEUTRAL** (Tagesebene
+  ohne klare Zählung/zu wenig Daten), **⚡ FRÜHWARNUNG** (Tagesebene läuft
+  strukturell voraus — z.B. dreht gegen die noch laufende Welle 5, oder
+  Korrektur unten ist bereits abgeschlossen). Bei Widerspruch bleibt die
+  HAUPTZÄHLUNG bestehen; die Tagesebene dient nur als Frühwarnung (im Big
+  Picture und Detail-Block). Nur Woche→Tag (robusteste Daten); der
+  Tages-Modus selbst löst keine Konfluenz aus (keine Rekursion).

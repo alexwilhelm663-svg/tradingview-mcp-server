@@ -10,6 +10,7 @@ import { findImpulseAdaptive, WaveCount, WavePoint } from "./impulseFinder";
 import { getCritique, Critique } from "./commentary";
 import { classifyCorrection, CorrectionRead } from "./correction";
 import { assessCompletion, CompletionRead } from "./completion";
+import { assessConfluence } from "./confluence";
 import { findBestImpulse, subThresholds } from "./impulseFinder";
 import { zigzag } from "./zigzag";
 import { assessQuality } from "./quality";
@@ -27,6 +28,7 @@ export interface AnalysisResult {
   commentary: string | null;
   abstention: string | null;
   detailBuffer: Buffer | null; // Sub-Struktur-Chart (V118.1)
+  confluenceNote: string | null; // V132: stille Woche->Tag-Validierung
 }
 
 const EMPTY: AnalysisResult = {
@@ -42,6 +44,7 @@ const EMPTY: AnalysisResult = {
   commentary: null,
   abstention: null,
   detailBuffer: null,
+  confluenceNote: null,
 };
 
 function pt(wc: WaveCount, label: string): WavePoint | undefined {
@@ -608,6 +611,11 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       bigPicture += `\n🔄 **Umschlag wahrscheinlich (A-B-C → 1-2):** ${koRead.reversalNote}`;
     else if (koRead && koRead.reversalRisk === "WATCH")
       bigPicture += `\n👁️ **Umschlag-Beobachtung:** ${koRead.reversalNote}`;
+    // V131: Transparenz - die Korrektur-Lesart hängt vom Analyserahmen ab
+    // (Fenster/Auflösung bestimmen den Wellengrad; Elliott ist fraktal).
+    if (koRead && koRead.legPoints.length >= 2) {
+      bigPicture += `\nℹ️ Korrektur-Lesart gilt für diesen Rahmen (${range}, ${interval === "1d" ? "Tages" : "Wochen"}kerzen); anderer Grad → andere Zählung.`;
+    }
     if (scenPrimary) bigPicture += `\n1️⃣ **Primär:** ${scenPrimary}`;
     if (scenAlt) bigPicture += `\n2️⃣ **Alternativ:** ${scenAlt}`;
     if (keyLine) bigPicture += `\n📌 ${keyLine}`;
@@ -653,6 +661,29 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       });
     }
 
+    // V132: Stille Multi-Timeframe-Konfluenz (Woche -> Tag). Läuft NUR im
+    // Wochen-Modus (sonst würde die Tagesebene sich selbst prüfen). Ergebnis
+    // ist nur ein Verdikt + Notiz; die tiefere Analyse wird NICHT ausgegeben.
+    let confluenceNote: string | null = null;
+    if (interval === "1wk") {
+      const mainPhase: "IMPULS" | "KORREKTUR" =
+        completion && completion.status === "IN_PROGRESS" ? "IMPULS" : "KORREKTUR";
+      try {
+        const conf = await assessConfluence(
+          wc.trend as "bullish" | "bearish",
+          mainPhase,
+          symbol
+        );
+        confluenceNote = `${conf.verdict === "BESTÄTIGT" ? "✅" : conf.verdict === "FRÜHWARNUNG" ? "⚡" : "◽"} Konfluenz ${conf.verdict}: ${conf.note}`;
+        // Frühwarnung erscheint zusätzlich leise im Big Picture.
+        if (conf.verdict === "FRÜHWARNUNG") {
+          bigPicture += `\n⚡ **Sub-Ebene-Frühwarnung:** ${conf.note}`;
+        }
+      } catch {
+        confluenceNote = null;
+      }
+    }
+
     return {
       buffer,
       signal: pendingCreated || isBreakoutSetup ? "YES" : "NO",
@@ -666,6 +697,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       commentary,
       abstention: null,
       detailBuffer,
+      confluenceNote,
     };
   } catch (err: any) {
     console.error(`[ENGINE] Analysefehler ${symbol}:`, err?.message ?? err);
