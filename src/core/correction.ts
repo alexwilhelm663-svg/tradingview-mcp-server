@@ -20,6 +20,9 @@ export interface CorrectionRead {
   cOverA: number | null;
   // V125: A-B-C bzw. W-X-Y Strukturpunkte + Labels fuer den Chart
   legPoints: { label: string; date: string; price: number }[];
+  // V130: Umschlag-These A-B-C -> 1-2 (neuer Impuls statt Korrektur)
+  reversalRisk: "NONE" | "WATCH" | "LIKELY" | "CONFIRMED";
+  reversalNote: string | null;
 }
 
 export interface CorrectionContext {
@@ -28,6 +31,8 @@ export interface CorrectionContext {
   topDate: string; // Impuls-Ende (Korrektur-Beginn)
   aDate: string | null;
   bDate: string | null;
+  impulseOrigin?: number | null; // Welle 0 (Ursprung) - für Umschlag-Check
+  impulseEnd?: number | null;    // Welle 5 (Extrem) - für Retrace-Messung
 }
 
 /**
@@ -163,6 +168,55 @@ export function classifyCorrection(
   if (cOverA != null && pattern === "ZIGZAG" && cOverA > 1.618)
     text += ` · kanonische C-Ziele durchschritten`;
 
+  // ── V130: Umschlag-Bewertung - wird aus A-B-C eine 1-2? ──
+  // Elliott: Eine Korrektur (A-B-C) retraced den Impuls typisch < 0.618.
+  // Läuft die Gegenbewegung weiter, wird sie verdächtig, Welle 1 eines
+  // neuen Trends zu sein; überschreitet sie das Impuls-Extrem (Ursprung),
+  // ist A-B-C UNMÖGLICH (Korrekturen überschreiten den Ursprung nie).
+  let reversalRisk: "NONE" | "WATCH" | "LIKELY" | "CONFIRMED" = "NONE";
+  let reversalNote: string | null = null;
+  if (ctx && ctx.impulseOrigin != null && ctx.impulseEnd != null) {
+    const impLog = Math.abs(Math.log(ctx.impulseOrigin) - Math.log(ctx.impulseEnd));
+    // dirCounter = Richtung der Gegenbewegung (gegen den Impuls):
+    // bearish Impuls (dir=-1) -> Erholung AUFWÄRTS (+1); umgekehrt.
+    const dirCounter = (dir * -1) as 1 | -1;
+    if (impLog > 0) {
+      // Extrem GEGEN den Impuls = höchster Punkt der Gegenbewegung in
+      // Gegenrichtung. Das ist bei Erholung (dirCounter=+1) das höchste
+      // Hoch (A oder aktueller Kurs), bei Abwärtskorrektur das tiefste Tief.
+      const counterVal = (px: number) => dirCounter * Math.log(px);
+      const peakCounter = Math.max(counterVal(aExtreme), counterVal(bExtreme), counterVal(currentPrice));
+      // Retrace = Weg der Gegenbewegung vom Impuls-Extrem, relativ zum Impuls.
+      const retr = (peakCounter - counterVal(ctx.impulseEnd)) / impLog;
+      // Ursprung überschritten? Nur in GEGENRICHTUNG des Impulses zählen:
+      // Die Gegenbewegung müsste über den Ursprung hinaus (retr > 1.0).
+      const overOrigin = retr > 1.0;
+      // Ist die Gegenbewegung strukturell impulsiv (5er)? -> Welle 1
+      const counterImpulsive =
+        ctx.aDate != null &&
+        segmentVerdict(ctx.candles, ctx.topDate, ctx.aDate, dirCounter, ctx.parentThreshold) ===
+          "IMPULSIVE";
+
+      if (overOrigin) {
+        reversalRisk = "CONFIRMED";
+        reversalNote =
+          `Gegenbewegung hat den Impuls-Ursprung (${ctx.impulseOrigin.toFixed(2)}) überschritten – ` +
+          `A-B-C ausgeschlossen. Neue Zählung: die Bewegung ab dem Extrem ist Welle 1, die Reaktion Welle 2. Trendwechsel bestätigt.`;
+      } else if (retr >= 0.786 && counterImpulsive) {
+        reversalRisk = "LIKELY";
+        reversalNote =
+          `Gegenbewegung retraced ${(retr * 100).toFixed(0)}% (> 78,6%) UND ist impulsiv strukturiert – ` +
+          `wahrscheinlich Welle 1 eines neuen Trends statt A einer Korrektur. Umschlag ABC→1-2 wird wahrscheinlich.`;
+      } else if (retr >= 0.618) {
+        reversalRisk = "WATCH";
+        reversalNote =
+          `Gegenbewegung retraced bereits ${(retr * 100).toFixed(0)}% (> 61,8%) des Impulses – ` +
+          `wird die 78,6%-Marke impulsiv überschritten, kippt die Lesart von A-B-C (Korrektur) zu 1-2 (neuer Trend). ` +
+          `Umschlag-Trigger: Überschreiten von ${ctx.impulseOrigin.toFixed(2)} (Impuls-Ursprung).`;
+      }
+    }
+  }
+
   // ── Strukturpunkte fuer den Chart (A-B-C oder W-X-Y) ──
   const legPoints: { label: string; date: string; price: number }[] = [];
   if (ctx && ctx.aDate && ctx.bDate) {
@@ -192,7 +246,9 @@ export function classifyCorrection(
     }
   }
 
-  return { pattern, text, targetPrice, targetLabel, cOverA, legPoints };
+  if (reversalNote) text += ` · ⚠️ ${reversalNote}`;
+
+  return { pattern, text, targetPrice, targetLabel, cOverA, legPoints, reversalRisk, reversalNote };
 }
 
 /** Extrem-Datum (Tief bei dir=1, Hoch bei dir=-1) ab startDate. */
