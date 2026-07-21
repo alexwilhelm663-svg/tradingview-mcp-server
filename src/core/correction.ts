@@ -23,6 +23,9 @@ export interface CorrectionRead {
   // V130: Umschlag-These A-B-C -> 1-2 (neuer Impuls statt Korrektur)
   reversalRisk: "NONE" | "WATCH" | "LIKELY" | "CONFIRMED";
   reversalNote: string | null;
+  // V133: Impuls-These der Gegenbewegung + Invalidierungsbedingung
+  impulseCandidate: boolean;       // ist die Gegenbewegung Welle-1-fähig (5er)?
+  impulseInvalidation: number | null; // Kurs, unter/über dem die 1-2-These fällt
 }
 
 export interface CorrectionContext {
@@ -175,6 +178,8 @@ export function classifyCorrection(
   // ist A-B-C UNMÖGLICH (Korrekturen überschreiten den Ursprung nie).
   let reversalRisk: "NONE" | "WATCH" | "LIKELY" | "CONFIRMED" = "NONE";
   let reversalNote: string | null = null;
+  let impulseCandidate = false;
+  let impulseInvalidation: number | null = null;
   if (ctx && ctx.impulseOrigin != null && ctx.impulseEnd != null) {
     const impLog = Math.abs(Math.log(ctx.impulseOrigin) - Math.log(ctx.impulseEnd));
     // dirCounter = Richtung der Gegenbewegung (gegen den Impuls):
@@ -214,6 +219,31 @@ export function classifyCorrection(
           `wird die 78,6%-Marke impulsiv überschritten, kippt die Lesart von A-B-C (Korrektur) zu 1-2 (neuer Trend). ` +
           `Umschlag-Trigger: Überschreiten von ${ctx.impulseOrigin.toFixed(2)} (Impuls-Ursprung).`;
       }
+
+      // V133: Impuls-These + Invalidierung. Ist die Gegenbewegung strukturell
+      // impulsiv (5er), ist ihr erstes Bein Welle-1-FÄHIG - unabhängig davon,
+      // wie weit sie schon retraced hat. Die harte Elliott-Invalidierung: Eine
+      // Welle 2 darf den Ursprung der Welle 1 (= das Impuls-Extrem ctx.impulseEnd)
+      // NIE unterschreiten (HR-1). Fällt der Kurs dort durch, ist die 1 keine 1.
+      impulseCandidate = counterImpulsive;
+      if (counterImpulsive) {
+        impulseInvalidation = ctx.impulseEnd; // W5-Extrem = Welle-1-Ursprung
+        const invLabel =
+          dirCounter === 1
+            ? `Wochenschluss unter ${ctx.impulseEnd.toFixed(2)} (Welle-1-Tief)`
+            : `Wochenschluss über ${ctx.impulseEnd.toFixed(2)} (Welle-1-Hoch)`;
+        const bestätigungsTrigger =
+          dirCounter === 1
+            ? `Wochenschluss über ${ctx.impulseOrigin.toFixed(2)}`
+            : `Wochenschluss unter ${ctx.impulseOrigin.toFixed(2)}`;
+        reversalNote =
+          (reversalNote ? reversalNote + " " : "") +
+          `⚖️ ZWEI Lesarten offen: (A) Korrektur — die Erholung ist die A-Welle, danach setzt der Abwärtstrend fort; ` +
+          `(B) Trendwechsel — die Erholung ist Welle 1 (strukturell impulsiver 5er, daher handelbar). ` +
+          `Lesart B BESTÄTIGT sich bei ${bestätigungsTrigger} (Ursprung überschritten). ` +
+          `Lesart B INVALIDIERT bei ${invLabel} (HR-1: Welle 2 darf den Welle-1-Ursprung nie ` +
+          `${dirCounter === 1 ? "unterschreiten" : "überschreiten"}). Zwischen beiden Marken bleibt es offen.`;
+      }
     }
   }
 
@@ -248,7 +278,10 @@ export function classifyCorrection(
 
   if (reversalNote) text += ` · ⚠️ ${reversalNote}`;
 
-  return { pattern, text, targetPrice, targetLabel, cOverA, legPoints, reversalRisk, reversalNote };
+  return {
+    pattern, text, targetPrice, targetLabel, cOverA, legPoints,
+    reversalRisk, reversalNote, impulseCandidate, impulseInvalidation,
+  };
 }
 
 /** Extrem-Datum (Tief bei dir=1, Hoch bei dir=-1) ab startDate. */
