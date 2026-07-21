@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 4.5
+version: 4.6
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -155,6 +155,12 @@ Der Kritiker zitiert IDs, die Trace-Matrix (§8) verortet jede Regel im Code.
   wahrscheinlich) oder noch läuft (Teilsequenz Sub-1/Sub-3/Sub-4 → nächste
   Welle wird per Fibonacci projiziert, Log-Raum). Rein diagnostisch: ändert
   die 0-5-Zählung nicht, ergänzt sie um Status und Kursziele.
+  **Prämisse (v4.6):** "Welle 5 läuft noch" ist nur haltbar, solange der
+  Kurs noch am W5-Extrem steht UND keine Korrektur ab W5 ausgebildet ist.
+  Sobald eine A-B-C/W-X-Y-Struktur ab W5 vorliegt oder der Kurs sich > 0,15
+  (log) von W5 entfernt hat, IST Welle 5 abgeschlossen — DK-9 schweigt, die
+  Korrektur-Lesart hat Vorrang. Verhindert den Selbst-Widerspruch "Chart
+  zeigt fertige 5 + laufende Korrektur, Text sagt 5 läuft noch".
 - **DK-8 (zurückgezogen v4.3):** Das Diagonal-W3-Gate entfällt mit dem
   Diagonalen-Erlass. `segmentVerdict` kennt nur noch IMPULSIVE/UNKLAR;
   Welle-3-Impulsivität wird weiter geprüft, aber nicht mehr über einen
