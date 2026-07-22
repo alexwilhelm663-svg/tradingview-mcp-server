@@ -12,6 +12,7 @@ import { classifyCorrection, CorrectionRead } from "./correction";
 import { assessCompletion, CompletionRead } from "./completion";
 import { assessConfluence } from "./confluence";
 import { assessMultiWave, MultiWaveRead } from "./multiWave";
+import { assessHigherFrame } from "./higherFrame";
 import { findBestImpulse, subThresholds } from "./impulseFinder";
 import { zigzag } from "./zigzag";
 import { assessQuality } from "./quality";
@@ -195,7 +196,18 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     if (outcome.impulse === null) {
       console.log(`[ENGINE] ${symbol}: Enthaltung (DK-7) - ${outcome.abstention}`);
       const buffer = await renderChart({ symbol, waves: [], candles, candlestick: interval === "1d" });
-      return { ...EMPTY, buffer, abstention: outcome.abstention };
+      // V137: Enthaltung auf der Zoom-Stufe -> automatisch das übergeordnete
+      // Big Picture (5y/max) hinzuziehen. Der gezoomte Ausschnitt allein kann
+      // einen übergeordneten Wendepunkt verschweigen (z.B. großes Tief +
+      // beginnende Gegenbewegung). Genau der Fall, den der Nutzer adressiert.
+      let abst = outcome.abstention ?? "Keine regelkonforme Zählung.";
+      try {
+        const hf = await assessHigherFrame(symbol, range);
+        abst += `\n\n${hf.note}`;
+      } catch {
+        /* übergeordnete Einordnung best-effort */
+      }
+      return { ...EMPTY, buffer, abstention: abst };
     }
     const { result: impulse, pivots, threshold } = outcome.impulse;
     const wc = impulse.count;
@@ -638,6 +650,19 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       bigPicture += `\n🔄 **Umschlag wahrscheinlich (A-B-C → 1-2):** ${koRead.reversalNote}`;
     else if (koRead && koRead.reversalRisk === "WATCH")
       bigPicture += `\n👁️ **Umschlag-Beobachtung:** ${koRead.reversalNote}`;
+    // V137: Klein gezoomter Ausschnitt (Tagesdaten mit Range <= 1y) -> das
+    // übergeordnete Big Picture (5y/max) hinzuziehen, damit ein übergeordneter
+    // Wendepunkt nicht übersehen wird. Nur wenn die aktuelle Ebene NICHT schon
+    // 5y/max ist. Best-effort und asynchron.
+    if (interval === "1d" && ["1y", "2y", "6mo", "3mo"].includes(range)) {
+      try {
+        const hf = await assessHigherFrame(symbol, range);
+        if (hf.available) bigPicture += `\n${hf.note}`;
+      } catch {
+        /* übergeordnete Einordnung best-effort */
+      }
+    }
+
     // V131: Transparenz - die Korrektur-Lesart hängt vom Analyserahmen ab
     // (Fenster/Auflösung bestimmen den Wellengrad; Elliott ist fraktal).
     if (koRead && koRead.legPoints.length >= 2) {

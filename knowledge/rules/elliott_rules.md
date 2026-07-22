@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 5.5
+version: 5.6
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -455,3 +455,16 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
   (unterdrückt DK-9), hebt reversalRisk auf WATCH und erscheint prominent im
   Big Picture (📈 Trendwechsel-Aufbau). Wirkt in beide Richtungen (höhere
   Tiefs → Aufwärts-Trendwechsel; tiefere Hochs → Abwärts). Rein diagnostisch.
+- **DK-7b Übergeordnete Einordnung erzwingen (v5.6):** Bei einem klein
+  gezoomten Ausschnitt (Tagesdaten mit Range ≤ 1y) ODER bei Enthaltung (keine
+  Zählung auf der Zoom-Stufe) zieht der Bot AUTOMATISCH die übergeordnete
+  Ebene hinzu (5y, sonst max, Wochenkerzen) und ordnet ein: übergeordneter
+  Impuls (Ursprung → Extrem, Zeitraum), Phase (Impuls aktiv / vollendet,
+  Gegenbewegung läuft) und – falls am großen Extrem ein intaktes Multi-1-2
+  mit ≥ 3 gestaffelten Tiefs vorliegt – die Meldung eines möglichen
+  ÜBERGEORDNETEN Wendepunkts samt wandernder Invalidierung. So verschweigt ein
+  enger Ausschnitt keinen Großgrad-Kontext mehr (Beispiel P911.DE: Zoom-
+  Enthaltung, aber 5y zeigt Abwärtsimpuls 120,80 → 35,62, Impuls vollendet,
+  Gegenbewegung läuft). Rein additiv; nur wenn die aktuelle Ebene nicht schon
+  5y/max ist. Ist auch übergeordnet keine Zählung möglich, wird das ehrlich
+  gemeldet.
