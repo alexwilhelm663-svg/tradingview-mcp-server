@@ -41,28 +41,30 @@ export function assessMultiWave(
   };
 
   const post = candles.filter((k) => k.date >= w5Date);
-  if (post.length < 8) return empty;
+  if (post.length < 6) return empty;
 
-  // Feinere Auflösung für die Sub-Struktur der Gegenbewegung.
-  // Multi-1-2 ist eine FEINE Sub-Struktur - tiefe Auflösung nötig, sonst
-  // verschwinden die gestaffelten kleinen höheren Tiefs.
-  const subTh = Math.max(5, Math.min(10, parentThreshold / 3));
-  const piv = zigzag(post, subTh).filter((p) => p.date >= w5Date);
+  // V136: Multi-1-2 ist eine feine Sub-Struktur, deren Bein-Größe von der
+  // GESAMTAMPLITUDE der bisherigen Gegenbewegung abhängt - nicht vom Parent-
+  // Threshold. Eine junge Erholung hat winzige 1-2-Beine (1-3%). Wir wählen
+  // die Sub-Stufe adaptiv: grob ein Viertel der Gegenbewegungs-Amplitude,
+  // gedeckelt auf 2-8%. Das löst den Fall, dass frische Multi-1-2s (BTC/MSFT
+  // auf Tagesbasis) mangels Auflösung übersehen wurden.
+  const lastPx = post[post.length - 1].close;
+  const ampPct = (Math.exp(Math.abs(Math.log(lastPx) - Math.log(w5Price))) - 1) * 100;
+  const subTh = Math.max(2, Math.min(8, ampPct / 4));
+  let piv = zigzag(post, subTh).filter((p) => p.date >= w5Date);
+  if (piv.length < 4) {
+    piv = zigzag(post, Math.max(2, subTh / 2)).filter((p) => p.date >= w5Date);
+  }
   if (piv.length < 4) return empty;
 
-  // Höchstes Extrem der Gegenbewegung (Peak der Erholung / Tief der Abwärtskorrektur).
-  let peakIdx = 0;
-  for (let i = 1; i < piv.length; i++) {
-    if (dirCounter === 1 ? piv[i].price > piv[peakIdx].price : piv[i].price < piv[peakIdx].price) {
-      peakIdx = i;
-    }
-  }
-  const peakDate = piv[peakIdx].date;
-
-  // Gegenbewegungs-Rücksetzer VOR dem Peak = potenzielle Wellen 2.
-  // Bei Aufwärts-Gegenbewegung sind das die Tiefs (L), bei Abwärts die Hochs (H).
+  // V136: ALLE Gegenbewegungs-Rücksetzer (Wellen 2) bis zum aktuellen Rand.
+  // NICHT nur bis zum höchsten Hoch abschneiden - ein laufendes Multi-1-2
+  // baut weiter, das jüngste höhere Tief ist oft das relevanteste (es trägt
+  // die aktuelle wandernde Invalidierung). Bei Aufwärts-Gegenbewegung sind
+  // die Rücksetzer die Tiefs (L), bei Abwärts die Hochs (H).
   const troughKind: "L" | "H" = dirCounter === 1 ? "L" : "H";
-  const troughs = piv.filter((p) => p.kind === troughKind && p.date < peakDate && p.date > w5Date);
+  const troughs = piv.filter((p) => p.kind === troughKind && p.date > w5Date);
   if (troughs.length < 2) return empty; // mind. zwei gestaffelte 1-2 nötig
 
   // Monoton in Trendrichtung gestaffelt? (höhere Tiefs / tiefere Hochs)
