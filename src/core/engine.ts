@@ -11,6 +11,7 @@ import { getCritique, Critique } from "./commentary";
 import { classifyCorrection, CorrectionRead } from "./correction";
 import { assessCompletion, CompletionRead } from "./completion";
 import { assessConfluence } from "./confluence";
+import { assessMultiWave, MultiWaveRead } from "./multiWave";
 import { findBestImpulse, subThresholds } from "./impulseFinder";
 import { zigzag } from "./zigzag";
 import { assessQuality } from "./quality";
@@ -557,13 +558,29 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       }
     }
 
+    // V136: EIGENSTÄNDIGER Multi-1-2-Frühsignal-Check - unabhängig von der
+    // A-B-C-Leg-Bestimmung. Grund: Bei einer noch jungen Erholung existiert
+    // oft kein zweites Gegen-Extrem (bLow/aLow), sodass classifyCorrection gar
+    // nicht aufgerufen wird und Multi-1-2 nie geprüft würde. Die gestaffelten
+    // höheren Tiefs (BTC/MSFT) brauchen aber nur W5 + feine Sub-Struktur. Das
+    // war der eigentliche blinde Fleck: der Bot zeigte weiter Abwärtsziele,
+    // während der Markt strukturell einen neuen Trend aufbaute.
+    let mwEarly: MultiWaveRead | null = null;
+    if (w5 && ((wc.trend === "bearish" && currentPrice > w5.price) ||
+               (wc.trend === "bullish" && currentPrice < w5.price))) {
+      const dirCounterMain: 1 | -1 = wc.trend === "bearish" ? 1 : -1;
+      mwEarly = assessMultiWave(candles, w5.date, w5.price, dirCounterMain, threshold);
+    }
+    const multiWaveFrüh = mwEarly != null && mwEarly.intact && mwEarly.legs >= 3;
+
     // V127: Widerspruch aufloesen - eine ausgebildete Korrektur ab W5
-    // (>= A und B vorhanden) beweist, dass Welle 5 abgeschlossen ist.
+    // (>= A und B) ODER ein intaktes Multi-1-2 beweist, dass W5 fertig ist.
     const koActive =
       (correction && correction.legPoints.length >= 2) ||
-      (correctionS && correctionS.legPoints.length >= 2);
+      (correctionS && correctionS.legPoints.length >= 2) ||
+      multiWaveFrüh;
     if (koActive && completion && completion.status === "IN_PROGRESS") {
-      completion = null; // DK-9 schweigt; die Korrektur-Lesart hat Vorrang
+      completion = null; // DK-9 schweigt; die Korrektur-/Trendwechsel-Lesart hat Vorrang
     }
 
     // V123: Sub-Zählungen (eine Stufe tiefer) fuer die Antriebswellen 1/3/5
@@ -605,6 +622,16 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     let bigPicture = `🧭 **Big Picture:** ${cyc}`;
     if (koRead && koRead.pattern === "KOMBINATION")
       bigPicture += ` Korrektur läuft als **W-X-Y** (zusammengesetzt), nicht als einfache A-B-C – erfahrungsgemäß **tiefer** (0,618–0,786 statt ~0,5), Kaufzone entsprechend riskanter.`;
+    // V136: Intaktes Multi-1-2 als Frühsignal prominent - beantwortet die
+    // Frage "warum siehst du den Trendwechsel nicht", wenn gestaffelte höhere
+    // Tiefs den neuen Trend strukturell aufbauen. Nutzt den EIGENSTÄNDIGEN
+    // mwEarly-Check (nicht die A-B-C-gebundene Note), damit auch junge
+    // Erholungen ohne zweites Gegen-Extrem erfasst werden.
+    if (mwEarly && mwEarly.intact && mwEarly.legs >= 3) {
+      bigPicture += `\n📈 **Multi-1-2 (Trendwechsel-Aufbau):** ${mwEarly.note}`;
+    } else if (koRead && koRead.multiWaveNote && koRead.multiWaveNote.includes("erkannt")) {
+      bigPicture += `\n📈 **Multi-1-2 (Trendwechsel-Aufbau):** ${koRead.multiWaveNote}`;
+    }
     if (koRead && koRead.reversalRisk === "CONFIRMED")
       bigPicture += `\n🔄 **Trendwechsel:** ${koRead.reversalNote}`;
     else if (koRead && koRead.reversalRisk === "LIKELY")

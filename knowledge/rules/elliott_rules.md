@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 5.4
+version: 5.5
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -439,3 +439,19 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
   Umschlag-Verdacht (reversalRisk ≠ NONE, Retrace ≥ 61,8 %) UND impulsiver
   Gegenbewegung — verhindert Fehlalarme bei normalen, erwarteten Korrekturen.
   Mindestens 2 gestaffelte Extrema nötig; feine Sub-Auflösung (5–10 %).
+- **KO-7f Multi-1-2 als eigenständiges Frühsignal (v5.5):** Behebt einen
+  blinden Fleck: Der Bot übersah gestaffelte höhere Tiefs (Multi-1-2), die
+  einen Trendwechsel aufbauen, und zeigte weiter Abwärtsziele mit "Welle 5
+  läuft noch" (Fälle BTC/MSFT auf Tagesbasis). Drei Ursachen behoben:
+  (1) **Auflösung adaptiv** an die Gegenbewegungs-Amplitude (2-8 %) statt fix
+  parent/3 — junge Erholungen haben winzige 1-2-Beine (1-3 %), die sonst
+  unter der ZigZag-Schwelle verschwanden. (2) **Keine Peak-Abgrenzung** mehr
+  — alle gestaffelten Tiefs bis zum aktuellen Rand zählen, nicht nur bis zum
+  höchsten Hoch. (3) **Entkopplung von counterImpulsive** — ein Multi-1-2 ist
+  KEINE glatte Welle (segmentVerdict stuft es als "unklar"), daher eigen-
+  ständige Strukturerkennung, die nur W5 + feine Sub-Struktur braucht (nicht
+  eine vollständige A-B-C-Leg-Bestimmung mit zweitem Gegen-Extrem). Ein
+  INTAKTES Multi-1-2 mit ≥ 3 gestaffelten Tiefs beweist, dass W5 fertig ist
+  (unterdrückt DK-9), hebt reversalRisk auf WATCH und erscheint prominent im
+  Big Picture (📈 Trendwechsel-Aufbau). Wirkt in beide Richtungen (höhere
+  Tiefs → Aufwärts-Trendwechsel; tiefere Hochs → Abwärts). Rein diagnostisch.

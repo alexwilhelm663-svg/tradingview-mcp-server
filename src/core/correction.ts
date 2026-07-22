@@ -276,17 +276,40 @@ export function classifyCorrection(
       // V135 Koenz Multi-1-2: Nur sinnvoll, wenn die Gegenbewegung als
       // Trendbeginn plausibel ist (impulsives erstes Bein). Die wandernde
       // Invalidierung ersetzt die statische Ursprungs-Marke, solange intakt.
-      // Multi-1-2 nur, wenn ein echter Umschlag-Verdacht besteht (Retrace
-      // >= 61.8%, reversalRisk != NONE) - sonst ist die Abwärts-/Aufwärts-
-      // korrektur der ERWARTETE Trend, kein neuer. Verhindert Fehlalarme bei
-      // normalen Korrekturen (tiefere Hochs in erwarteter Abwärtskorrektur).
-      if (counterImpulsive && ctx && reversalRisk !== "NONE") {
+      // V136: Multi-1-2 wird gezeigt, wenn ENTWEDER ein Umschlag-Verdacht
+      // besteht (Retrace >= 61.8%) ODER ein INTAKTES Multi-1-2 mit >= 3
+      // gestaffelten Tiefs vorliegt. Letzteres ist Koenz' Kern: ein intaktes
+      // Multi-1-2 signalisiert den Trendwechsel FRÜH, lange vor 61.8% - genau
+      // die Situation, die der Bot bisher übersah (BTC/MSFT: junge Erholung
+      // mit gestaffelten höheren Tiefs, aber erst ~15% Retrace). Die
+      // >=3-Schwelle für den Früh-Fall verhindert Fehlalarme bei bloß
+      // zufälligen zwei höheren Tiefs einer normalen Korrektur.
+      //
+      // V136: NICHT an counterImpulsive (glatter 5er) gekoppelt! Ein Multi-1-2
+      // ist gerade KEINE glatte Welle, sondern eine verschachtelte 1-2-Serie -
+      // segmentVerdict stuft sie als "UNKLAR" ein und würde sie sonst
+      // verstecken. Genau das war der blinde Fleck: gestaffelte höhere Tiefs
+      // (BTC/MSFT) bauen einen neuen Trend auf, während der Bot noch "Welle 5
+      // läuft" meldete und Abwärtsziele zeigte.
+      {
         const mw = assessMultiWave(
           ctx.candles, ctx.topDate, ctx.impulseEnd, dirCounter, ctx.parentThreshold
         );
-        if (mw.legs >= 2) {
+        const umschlagVerdacht = reversalRisk !== "NONE" && mw.legs >= 2;
+        const intaktesFrühsignal = mw.intact && mw.legs >= 3;
+        if (umschlagVerdacht || intaktesFrühsignal) {
           multiWaveInvalidation = mw.currentInvalidation;
           multiWaveNote = mw.note;
+          // Ein intaktes Frühsignal hebt die Umschlag-Stufe an, auch wenn der
+          // Preis-Retrace noch < 61.8% ist - der Markt baut strukturell einen
+          // neuen Trend auf.
+          if (intaktesFrühsignal && reversalRisk === "NONE") {
+            reversalRisk = "WATCH";
+            reversalNote =
+              (reversalNote ? reversalNote + " " : "") +
+              "\u26a0\ufe0f Strukturelles Fr\u00fchsignal: " + mw.legs +
+              " gestaffelte h\u00f6here Tiefs (Multi-1-2) deuten einen Trendwechsel an, obwohl der Preis-Retrace noch gering ist \u2013 die Abw\u00e4rts-Fortsetzung ist damit fraglich.";
+          }
         }
       }
       if (counterImpulsive) {
