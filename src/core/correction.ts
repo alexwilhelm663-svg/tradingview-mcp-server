@@ -219,19 +219,15 @@ export function classifyCorrection(
       if (overOrigin) {
         reversalRisk = "CONFIRMED";
         reversalNote =
-          `Gegenbewegung hat den Impuls-Ursprung (${ctx.impulseOrigin.toFixed(2)}) überschritten – ` +
-          `A-B-C ausgeschlossen. Neue Zählung: die Bewegung ab dem Extrem ist Welle 1, die Reaktion Welle 2. Trendwechsel bestätigt.`;
+          `Ursprung ${ctx.impulseOrigin.toFixed(2)} überschritten → Trendwechsel (1-2 statt A-B-C)`;
       } else if (retr >= 0.786 && counterImpulsive) {
         reversalRisk = "LIKELY";
         reversalNote =
-          `Gegenbewegung retraced ${(retr * 100).toFixed(0)}% (> 78,6%) UND ist impulsiv strukturiert – ` +
-          `wahrscheinlich Welle 1 eines neuen Trends statt A einer Korrektur. Umschlag ABC→1-2 wird wahrscheinlich.`;
+          `Retrace ${(retr * 100).toFixed(0)}% + impulsiv → wahrscheinlich Welle 1`;
       } else if (retr >= 0.618) {
         reversalRisk = "WATCH";
         reversalNote =
-          `Gegenbewegung retraced bereits ${(retr * 100).toFixed(0)}% (> 61,8%) des Impulses – ` +
-          `wird die 78,6%-Marke impulsiv überschritten, kippt die Lesart von A-B-C (Korrektur) zu 1-2 (neuer Trend). ` +
-          `Umschlag-Trigger: Überschreiten von ${ctx.impulseOrigin.toFixed(2)} (Impuls-Ursprung).`;
+          `Retrace ${(retr * 100).toFixed(0)}% · Umschlag-Trigger ${ctx.impulseOrigin.toFixed(2)}`;
       }
 
       // V133: Impuls-These + Invalidierung. Ist die Gegenbewegung strukturell
@@ -324,17 +320,9 @@ export function classifyCorrection(
             : `Wochenschluss unter ${ctx.impulseOrigin.toFixed(2)}`;
         reversalNote =
           (reversalNote ? reversalNote + " " : "") +
-          `⚖️ ZWEI Lesarten offen: (A) Korrektur — die Erholung ist die A-Welle, danach setzt der Abwärtstrend fort; ` +
-          `(B) Trendwechsel — die Erholung ist Welle 1 (strukturell impulsiver 5er, daher handelbar). ` +
-          `Lesart B BESTÄTIGT sich bei ${bestätigungsTrigger} (Ursprung überschritten). ` +
-          `Lesart B INVALIDIERT bei ${invLabel} (HR-1: Welle 2 darf den Welle-1-Ursprung nie ` +
-          `${dirCounter === 1 ? "unterschreiten" : "überschreiten"}). Zwischen beiden Marken bleibt es offen.` +
-          (koenz618Level != null
-            ? ` 🎯 Koenz-Frühmarke: ${dirCounter === 1 ? "Rücklauf unter" : "Anstieg über"} ${koenz618Level.toFixed(2)} ` +
-              `(0.618 der Erholung) schwächt Lesart B – eine Welle 4 dürfte das 0.618 der Welle 3 nie treffen, ` +
-              `also spräche das für ABC statt Impuls.`
-            : "") +
-          (koenzTimeHint != null ? ` ${koenzTimeHint}` : "") +
+          `⚖️ A=Korrektur / B=Welle 1 · B bestätigt: ${bestätigungsTrigger} · invalide: ${invLabel}` +
+          (koenz618Level != null ? ` · 🎯 0.618 ${koenz618Level.toFixed(2)}` : "") +
+          "" +
           "";
       }
     }

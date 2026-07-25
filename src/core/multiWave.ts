@@ -139,12 +139,10 @@ export function assessMultiWave(
   let note: string | null;
   if (nested) {
     note = intact
-      ? `Multi-1-2 (echte Verschachtelung, ${staffel.length} Grade mit schrumpfenden Wellen-1): wandernde Invalidierung auf ${currentInvalidation.toFixed(2)} ` +
-        `(statt Ursprung ${w5Price.toFixed(2)}). Solange kein Wochenschluss ${invWord} ${currentInvalidation.toFixed(2)}, bleibt die These intakt; für jeden Grad steht noch eine dritte Welle aus (Beschleunigung).`
-      : `Multi-1-2 war angelegt (${staffel.length} Grade), wurde aber invalidiert – Wochenschluss ${invWord} ${currentInvalidation.toFixed(2)} durchbrach die wandernde Marke.`;
+      ? `Multi-1-2 · ${staffel.length} Grade · Marke ${currentInvalidation.toFixed(2)}`
+      : `Multi-1-2 gebrochen (${invWord} ${currentInvalidation.toFixed(2)})`;
   } else if (intact && staffel.length >= 3) {
-    note = `Trendstruktur intakt: ${staffel.length} gestaffelte ${dirWord}, nachziehende Marke ${currentInvalidation.toFixed(2)}. ` +
-      `KEIN Multi-1-2 – die Wellen-1 schrumpfen nicht, es liegt keine Gradverschachtelung vor (kein Anspruch auf ausstehende dritte Wellen).`;
+    note = `${staffel.length} ${dirWord} · Marke ${currentInvalidation.toFixed(2)}`;
   } else {
     note = null;
   }
