@@ -639,10 +639,14 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     // Tiefs den neuen Trend strukturell aufbauen. Nutzt den EIGENSTÄNDIGEN
     // mwEarly-Check (nicht die A-B-C-gebundene Note), damit auch junge
     // Erholungen ohne zweites Gegen-Extrem erfasst werden.
-    if (mwEarly && mwEarly.intact && mwEarly.legs >= 3) {
-      bigPicture += `\n📈 **Multi-1-2 (Trendwechsel-Aufbau):** ${mwEarly.note}`;
-    } else if (koRead && koRead.multiWaveNote && koRead.multiWaveNote.includes("erkannt")) {
-      bigPicture += `\n📈 **Multi-1-2 (Trendwechsel-Aufbau):** ${koRead.multiWaveNote}`;
+    // V138: Echte Verschachtelung und bloße Staffelung sind KLAR getrennt.
+    // Nur die Verschachtelung trägt die Multi-1-2-Implikation (ausstehende
+    // dritte Wellen je Grad); eine Treppe aus höheren Tiefs ist lediglich eine
+    // intakte Trendstruktur mit nachziehender Marke.
+    if (mwEarly && mwEarly.active) {
+      bigPicture += `\n📈 **Multi-1-2 (Verschachtelung):** ${mwEarly.note}`;
+    } else if (mwEarly && mwEarly.note) {
+      bigPicture += `\n📊 **Trendstruktur:** ${mwEarly.note}`;
     }
     if (koRead && koRead.reversalRisk === "CONFIRMED")
       bigPicture += `\n🔄 **Trendwechsel:** ${koRead.reversalNote}`;

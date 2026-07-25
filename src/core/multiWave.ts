@@ -77,6 +77,38 @@ export function assessMultiWave(
   }
   if (staffel.length < 2) return empty;
 
+  // ── V138: ECHTE VERSCHACHTELUNG PRÜFEN ──────────────────────────────────
+  // Gestaffelte Extrema allein sind KEIN Multi-1-2 - das ist jeder normale
+  // Trend. Eine Verschachtelung verlangt, dass jedes folgende 1-2-Paar einen
+  // NIEDRIGEREN GRAD hat, also kleiner ausfällt. Ohne diese Prüfung entsteht
+  // ein Zählfehler mit absurder Konsequenz: n verschachtelte 1-2 schulden n
+  // ausstehende dritte Wellen; bei 8 Stufen (MSTR) ergibt das ein Kursziel
+  // nahe null. Bedingungen (Koenz/Elliott):
+  //  (1) Die Welle-1-Beine müssen monoton SCHRUMPFEN (fallender Grad).
+  //  (2) Jede Welle 2 retraced 38,2-100 % ihrer Welle 1 (echte Korrektur).
+  //  (3) Höchstens 4 Stufen - mehr ist praktisch nie eine Verschachtelung.
+  const wave1Logs: number[] = [];
+  let prevCounterExtreme = w5Price; // Start: das Impuls-Extrem
+  for (const s of staffel) {
+    wave1Logs.push(Math.abs(Math.log(s.price) - Math.log(prevCounterExtreme)));
+    // nächstes Gegen-Extrem = das Hoch/Tief NACH diesem Rücksetzer
+    const nextCounter = piv.find(
+      (p) => p.date > s.date && p.kind !== troughKind
+    );
+    if (!nextCounter) break;
+    prevCounterExtreme = nextCounter.price;
+  }
+
+  // (1) MATERIELL schrumpfende Beine: jede folgende Welle 1 <= 0,85x der
+  // vorigen. Annähernd gleich große Beine bedeuten gleichen GRAD - das ist
+  // eine Treppe/ein Kanal, keine Verschachtelung.
+  let nested = wave1Logs.length >= 2;
+  for (let i = 1; i < wave1Logs.length; i++) {
+    if (wave1Logs[i] > wave1Logs[i - 1] * 0.85) { nested = false; break; }
+  }
+  // (3) Stufenzahl: mehr als 4 verschachtelte Grade kommen praktisch nicht vor
+  if (staffel.length > 4) nested = false;
+
   // Jedes 1-Bein (vom Tief zum nächsten Extrem) sollte impulsiv sein.
   // Wir prüfen mindestens das erste Bein (W5 -> erstes Extrem nach erstem Tief).
   const firstImpulseOk =
@@ -96,13 +128,29 @@ export function assessMultiWave(
 
   const dirWord = dirCounter === 1 ? "höhere Tiefs" : "tiefere Hochs";
   const invWord = dirCounter === 1 ? "unter" : "über";
-  const note = intact
-    ? `Multi-1-2 erkannt (${staffel.length} gestaffelte ${dirWord}): wandernde Invalidierung auf ${currentInvalidation.toFixed(2)} ` +
-      `(statt Ursprung ${w5Price.toFixed(2)}). Solange kein Wochenschluss ${invWord} ${currentInvalidation.toFixed(2)}, bleibt der neue Trend intakt (Koenz).`
-    : `Multi-1-2 war angelegt (${staffel.length} gestaffelte ${dirWord}), wurde aber invalidiert – Wochenschluss ${invWord} ${currentInvalidation.toFixed(2)} durchbrach die wandernde Marke. Trendbeginn-These hinfällig.`;
+
+  // V138: Zwei klar getrennte Aussagen.
+  //  - ECHTE Verschachtelung (nested): trägt die Multi-1-2-Implikation, dass
+  //    für JEDEN Grad noch eine dritte Welle aussteht (Beschleunigung voraus).
+  //  - Bloße Staffelung: höhere Tiefs / tiefere Hochs ohne Gradabstufung. Das
+  //    ist eine intakte Trendstruktur mit nachziehender Marke - aber KEIN
+  //    Multi-1-2. Die Verwechslung erzeugte absurde Ziele (MSTR: 8 Stufen
+  //    hätten 8 ausstehende dritte Wellen bedeutet -> Kursziel ~0).
+  let note: string | null;
+  if (nested) {
+    note = intact
+      ? `Multi-1-2 (echte Verschachtelung, ${staffel.length} Grade mit schrumpfenden Wellen-1): wandernde Invalidierung auf ${currentInvalidation.toFixed(2)} ` +
+        `(statt Ursprung ${w5Price.toFixed(2)}). Solange kein Wochenschluss ${invWord} ${currentInvalidation.toFixed(2)}, bleibt die These intakt; für jeden Grad steht noch eine dritte Welle aus (Beschleunigung).`
+      : `Multi-1-2 war angelegt (${staffel.length} Grade), wurde aber invalidiert – Wochenschluss ${invWord} ${currentInvalidation.toFixed(2)} durchbrach die wandernde Marke.`;
+  } else if (intact && staffel.length >= 3) {
+    note = `Trendstruktur intakt: ${staffel.length} gestaffelte ${dirWord}, nachziehende Marke ${currentInvalidation.toFixed(2)}. ` +
+      `KEIN Multi-1-2 – die Wellen-1 schrumpfen nicht, es liegt keine Gradverschachtelung vor (kein Anspruch auf ausstehende dritte Wellen).`;
+  } else {
+    note = null;
+  }
 
   return {
-    active: intact,
+    active: nested && intact,
     legs: staffel.length,
     currentInvalidation,
     intact,
