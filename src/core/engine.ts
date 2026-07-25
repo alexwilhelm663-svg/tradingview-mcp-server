@@ -577,13 +577,37 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     // höheren Tiefs (BTC/MSFT) brauchen aber nur W5 + feine Sub-Struktur. Das
     // war der eigentliche blinde Fleck: der Bot zeigte weiter Abwärtsziele,
     // während der Markt strukturell einen neuen Trend aufbaute.
-    let mwEarly: MultiWaveRead | null = null;
-    if (w5 && ((wc.trend === "bearish" && currentPrice > w5.price) ||
-               (wc.trend === "bullish" && currentPrice < w5.price))) {
-      const dirCounterMain: 1 | -1 = wc.trend === "bearish" ? 1 : -1;
-      mwEarly = assessMultiWave(candles, w5.date, w5.price, dirCounterMain, threshold);
+    // V139: Die 1-2-Zählung läuft in BEIDE Richtungen.
+    //  (a) Korrekturrichtung ab dem Impuls-Extrem W5.
+    //  (b) Gegenrichtung ab dem Extrem der Korrektur (die laufende Erholung
+    //      bzw. der laufende Rücksetzer). Diese Richtung fehlte bisher
+    //      komplett - eine sich aufbauende Gegenstruktur blieb unsichtbar,
+    //      obwohl sie die relevantere ist, wenn sie jünger ist.
+    let mwCorr: MultiWaveRead | null = null;   // ab W5, in Korrekturrichtung
+    let mwBack: MultiWaveRead | null = null;   // ab Korrektur-Extrem, zurück
+    let backAnchor: { date: string; price: number } | null = null;
+    if (w5) {
+      const dirCorr: 1 | -1 = wc.trend === "bearish" ? 1 : -1;
+      const postW5 = candles.filter((k) => k.date > w5.date);
+      if (postW5.length >= 6) {
+        mwCorr = assessMultiWave(candles, w5.date, w5.price, dirCorr, threshold);
+        // Extrem der Korrektur = weitester Punkt in Korrekturrichtung
+        const ext = postW5.reduce((m, k) =>
+          (dirCorr === 1 ? k.high > m.high : k.low < m.low) ? k : m);
+        const extPrice = dirCorr === 1 ? ext.high : ext.low;
+        const afterExt = candles.filter((k) => k.date > ext.date);
+        if (afterExt.length >= 6) {
+          backAnchor = { date: ext.date, price: extPrice };
+          mwBack = assessMultiWave(
+            candles, ext.date, extPrice, (dirCorr * -1) as 1 | -1, threshold);
+        }
+      }
     }
-    const multiWaveFrüh = mwEarly != null && mwEarly.intact && mwEarly.legs >= 3;
+    // Für die Vollendungs-Unterdrückung zählt jede intakte Struktur.
+    const mwEarly: MultiWaveRead | null = mwCorr;
+    const multiWaveFrüh =
+      (mwCorr != null && mwCorr.intact && mwCorr.legs >= 3) ||
+      (mwBack != null && mwBack.intact && mwBack.legs >= 3);
 
     // V127: Widerspruch aufloesen - eine ausgebildete Korrektur ab W5
     // (>= A und B) ODER ein intaktes Multi-1-2 beweist, dass W5 fertig ist.
@@ -643,11 +667,18 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     // Nur die Verschachtelung trägt die Multi-1-2-Implikation (ausstehende
     // dritte Wellen je Grad); eine Treppe aus höheren Tiefs ist lediglich eine
     // intakte Trendstruktur mit nachziehender Marke.
-    if (mwEarly && mwEarly.active) {
-      bigPicture += `\n📈 **Multi-1-2 (Verschachtelung):** ${mwEarly.note}`;
-    } else if (mwEarly && mwEarly.note) {
-      bigPicture += `\n📊 **Trendstruktur:** ${mwEarly.note}`;
+    const strukturZeilen: string[] = [];
+    if (mwCorr && mwCorr.note) {
+      const richtung = wc.trend === "bearish" ? "aufwärts" : "abwärts";
+      strukturZeilen.push(
+        `${mwCorr.active ? "📈 **Multi-1-2 (Verschachtelung)**" : "📊 **Struktur**"} · ${richtung} ab ${w5!.price.toFixed(2)}: ${mwCorr.note}`);
     }
+    if (mwBack && mwBack.note && backAnchor) {
+      const richtung = wc.trend === "bearish" ? "abwärts" : "aufwärts";
+      strukturZeilen.push(
+        `${mwBack.active ? "📈 **Multi-1-2 (Verschachtelung)**" : "📊 **Struktur**"} · ${richtung} ab ${backAnchor.price.toFixed(2)}: ${mwBack.note}`);
+    }
+    for (const z of strukturZeilen) bigPicture += `\n${z}`;
     if (koRead && koRead.reversalRisk === "CONFIRMED")
       bigPicture += `\n🔄 **Trendwechsel:** ${koRead.reversalNote}`;
     else if (koRead && koRead.reversalRisk === "LIKELY")

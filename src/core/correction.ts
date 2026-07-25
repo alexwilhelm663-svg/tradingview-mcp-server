@@ -335,7 +335,7 @@ export function classifyCorrection(
               `also spräche das für ABC statt Impuls.`
             : "") +
           (koenzTimeHint != null ? ` ${koenzTimeHint}` : "") +
-          (multiWaveNote != null ? ` 📈 ${multiWaveNote}` : "");
+          "";
       }
     }
   }
@@ -369,7 +369,9 @@ export function classifyCorrection(
     }
   }
 
-  if (reversalNote) text += ` · ⚠️ ${reversalNote}`;
+  // V139: reversalNote wird NICHT mehr in den Lesart-Text gehaengt - das
+  // Big Picture zeigt sie bereits. Frueher stand derselbe Absatz doppelt
+  // im Report (inkl. doppeltem Warnzeichen).
 
   return {
     pattern, text, targetPrice, targetLabel, cOverA, legPoints,

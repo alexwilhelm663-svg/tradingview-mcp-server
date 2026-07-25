@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 5.7
+version: 5.8
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -491,3 +491,16 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
   Nachprüfung: Nach Einführung der Bedingungen zeigt aktuell KEIN Titel eine
   echte Verschachtelung (MSTR, BTC, MSFT, NFLX, SAP fallen alle auf
   "Trendstruktur" zurück).
+- **KO-7h 1-2-Zählung beidseitig (v5.8):** Die Strukturprüfung läuft in BEIDE
+  Richtungen statt nur in Korrekturrichtung:
+  (a) ab dem Impuls-Extrem W5 in Korrekturrichtung,
+  (b) ab dem Extrem der Korrektur zurück in Gegenrichtung (die laufende
+      Erholung bzw. der laufende Rücksetzer).
+  Richtung (b) fehlte bislang komplett - eine sich gerade aufbauende
+  Gegenstruktur blieb unsichtbar, obwohl sie die handelsrelevantere ist, wenn
+  sie jünger ist. Beide Ergebnisse erscheinen als eigene Zeile mit Richtung
+  und Ankerkurs. Voraussetzung je Richtung: mindestens 6 Kerzen ab dem Anker.
+- **Report-Deduplizierung (v5.8):** Umschlag-Notiz und Strukturzeile erscheinen
+  nur noch EINMAL (im Big Picture) und werden nicht mehr zusätzlich in die
+  Korrektur-Lesart gehaengt. Früher stand derselbe Absatz doppelt im Report,
+  inklusive doppeltem Warnzeichen.
