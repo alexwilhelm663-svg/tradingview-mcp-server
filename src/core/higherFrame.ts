@@ -88,9 +88,7 @@ export async function assessHigherFrame(
       `📐 **Übergeordnet (${fr.label}, Wochen):** ${trendWord}impuls ` +
       `${w0.price.toFixed(2)} → ${w5.price.toFixed(2)} (${yr(w0.date)}–${yr(w5.date)}) – ${phase}.` +
       mwNote +
-      (mwNote === "" && awayFromExtreme
-        ? ` Noch kein bestätigtes Multi-1-2 am Extrem – Wendepunkt unbestätigt.`
-        : "");
+      "";
 
     return { available: true, note };
   }

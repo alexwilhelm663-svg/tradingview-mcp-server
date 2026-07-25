@@ -671,12 +671,12 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     if (mwCorr && mwCorr.note) {
       const richtung = wc.trend === "bearish" ? "aufwärts" : "abwärts";
       strukturZeilen.push(
-        `${mwCorr.active ? "📈 **Multi-1-2 (Verschachtelung)**" : "📊 **Struktur**"} · ${richtung} ab ${w5!.price.toFixed(2)}: ${mwCorr.note}`);
+        `📊 ${richtung}: ${mwCorr.note}`);
     }
     if (mwBack && mwBack.note && backAnchor) {
       const richtung = wc.trend === "bearish" ? "abwärts" : "aufwärts";
       strukturZeilen.push(
-        `${mwBack.active ? "📈 **Multi-1-2 (Verschachtelung)**" : "📊 **Struktur**"} · ${richtung} ab ${backAnchor.price.toFixed(2)}: ${mwBack.note}`);
+        `📊 ${richtung}: ${mwBack.note}`);
     }
     for (const z of strukturZeilen) bigPicture += `\n${z}`;
     if (koRead && koRead.reversalRisk === "CONFIRMED")
@@ -701,7 +701,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     // V131: Transparenz - die Korrektur-Lesart hängt vom Analyserahmen ab
     // (Fenster/Auflösung bestimmen den Wellengrad; Elliott ist fraktal).
     if (koRead && koRead.legPoints.length >= 2) {
-      bigPicture += `\nℹ️ Korrektur-Lesart gilt für diesen Rahmen (${range}, ${interval === "1d" ? "Tages" : "Wochen"}kerzen); anderer Grad → andere Zählung.`;
+      bigPicture += `\nℹ️ Rahmen ${range}/${interval === "1d" ? "Tag" : "Woche"}`;
     }
     if (scenPrimary) bigPicture += `\n1️⃣ **Primär:** ${scenPrimary}`;
     if (scenAlt) bigPicture += `\n2️⃣ **Alternativ:** ${scenAlt}`;
