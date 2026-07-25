@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 5.6
+version: 5.7
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -468,3 +468,26 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
   Gegenbewegung läuft). Rein additiv; nur wenn die aktuelle Ebene nicht schon
   5y/max ist. Ist auch übergeordnet keine Zählung möglich, wird das ehrlich
   gemeldet.
+- **KO-7g Verschachtelung vs. Staffelung (v5.7, KORREKTUR zu KO-7e/f):** Die
+  bisherige Multi-1-2-Erkennung prüfte nur, ob Gegen-Extrema gestaffelt
+  verlaufen (höhere Tiefs / tiefere Hochs). Das ist FALSCH — gestaffelte
+  Extrema hat jeder normale Trend. Die Fehl-Etikettierung hatte eine absurde
+  Konsequenz: n verschachtelte 1-2 schulden n noch ausstehende dritte Wellen
+  (je ≥ 1,618 × ihrer Welle 1). Bei MSTR meldete die Engine 8 Stufen — das
+  implizierte rechnerisch ein Kursziel von ≈ 0,21 USD, also praktisch null.
+  Eine Zählung, die den Nullpunkt impliziert, ist widerlegt.
+  **Echte Verschachtelung verlangt zusätzlich:**
+  (1) Die Welle-1-Beine müssen MATERIELL schrumpfen (jedes ≤ 0,85 × des
+      vorigen) — sie liegen auf absteigenden Graden. Annähernd gleich große
+      Beine bedeuten gleichen Grad, also eine Treppe, keine Verschachtelung.
+  (2) Höchstens 4 Grade.
+  (3) Zeitliche Kompression am Trendbeginn — nicht über den gesamten Verlauf.
+  **Zwei getrennte Aussagen im Report:**
+  - 📈 **Multi-1-2 (Verschachtelung)** — nur bei erfüllten Bedingungen; trägt
+    die Implikation ausstehender dritter Wellen (Beschleunigung voraus).
+  - 📊 **Trendstruktur** — gestaffelte Extrema mit nachziehender Marke, aber
+    ausdrücklich OHNE Multi-1-2-Anspruch. Weiterhin nützlich als
+    Trend-intakt-Signal und für die wandernde Invalidierung.
+  Nachprüfung: Nach Einführung der Bedingungen zeigt aktuell KEIN Titel eine
+  echte Verschachtelung (MSTR, BTC, MSFT, NFLX, SAP fallen alle auf
+  "Trendstruktur" zurück).

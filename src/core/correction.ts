@@ -308,7 +308,7 @@ export function classifyCorrection(
             reversalNote =
               (reversalNote ? reversalNote + " " : "") +
               "\u26a0\ufe0f Strukturelles Fr\u00fchsignal: " + mw.legs +
-              " gestaffelte h\u00f6here Tiefs (Multi-1-2) deuten einen Trendwechsel an, obwohl der Preis-Retrace noch gering ist \u2013 die Abw\u00e4rts-Fortsetzung ist damit fraglich.";
+              " gestaffelte Gegen-Extrema (Trendstruktur, KEINE Grad-Verschachtelung) stellen die Fortsetzung in Frage.";
           }
         }
       }
