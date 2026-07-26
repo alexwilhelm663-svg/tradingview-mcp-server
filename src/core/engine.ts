@@ -11,6 +11,7 @@ import { getCritique, Critique } from "./commentary";
 import { classifyCorrection, CorrectionRead } from "./correction";
 import { assessCompletion, CompletionRead } from "./completion";
 import { assessConfluence } from "./confluence";
+import { feedbackPenalty } from "./feedback";
 import { assessMultiWave, MultiWaveRead } from "./multiWave";
 import { assessHigherFrame } from "./higherFrame";
 import { findBestImpulse, subThresholds } from "./impulseFinder";
@@ -281,7 +282,14 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     // V121: Score>=3-Gate. Walk-Forward (8 Sym., 10 J.): Score>=3 traegt
     // ~5x die Expectancy von Score 2 (10.7% vs 2.4%). Score-2-Zonen werden
     // nur noch als WATCH gemeldet. Kritik-Asymmetrie bleibt informativ.
-    const minClusterScore = 3;
+    // V143: Feedback-Loop - die Trefferbilanz des Kritikers hebt die
+    // Schwelle, nicht seine Momentmeinung. Ohne Stichprobe bleibt es bei 3.
+    const fb = feedbackPenalty(critique);
+    if (fb.note) {
+      console.log(`[FEEDBACK] ${symbol}: ${fb.note}`);
+      wc.analysis += ` \u00b7 ${fb.note}`;
+    }
+    const minClusterScore = 3 + fb.penalty;
 
     const w0 = pt(wc, "0");
     const w1 = pt(wc, "1");
