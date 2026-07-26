@@ -1,0 +1,47 @@
+name: "🔍 Inspect (Kritiker + Zählungs-Auswahl)"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+
+      - name: "🔍 Relevante Stellen ausgeben"
+        run: |
+          {
+            echo "## 1) Dateien"
+            echo '```'
+            ls -1 src/core src/bot 2>/dev/null
+            echo '```'
+
+            echo "## 2) Wo der Kritiker lebt"
+            echo '```'
+            grep -rn "Kritik\|critique\|Confidence\|confidence" src --include=*.ts | head -30
+            echo '```'
+
+            echo "## 3) Kritiker-Aufruf im Kontext"
+            echo '```ts'
+            F=$(grep -rl "Kritik" src --include=*.ts | head -1)
+            echo "// Datei: $F"
+            grep -n -B4 -A18 "Kritik" "$F" | head -70
+            echo '```'
+
+            echo "## 4) Zählungs-Auswahl in engine.ts"
+            echo '```ts'
+            grep -n -A6 "const outcome = findImpulseAdaptive" src/core/engine.ts | head -20
+            echo '```'
+
+            echo "## 5) Signaturen im impulseFinder"
+            echo '```ts'
+            grep -n "^export function\|^export interface\|^export type" src/core/impulseFinder.ts | head -30
+            echo '```'
+
+            echo "## 6) Qualitaets-Flags"
+            echo '```ts'
+            grep -n "^export function\|^export interface\|flags" src/core/quality.ts | head -20
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
