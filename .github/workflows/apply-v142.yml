@@ -1,0 +1,55 @@
+name: "🔧 Apply V142 (C nachziehen)"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  v142:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+
+      - name: "✍️ Patch-Skript schreiben"
+        run: |
+          echo "aW1wb3J0IHBhdGhsaWIsIHN5cwpoaXRzLCBtaXNzZXMgPSBbXSwgW10KCmRlZiByZXAocGF0aCwgb2xkLCBuZXcsIHRhZyk6CiAgICBwID0gcGF0aGxpYi5QYXRoKHBhdGgpCiAgICBpZiBub3QgcC5leGlzdHMoKTogbWlzc2VzLmFwcGVuZCh0YWcrIiAoRGF0ZWkgZmVobHQpIik7IHJldHVybiBGYWxzZQogICAgdCA9IHAucmVhZF90ZXh0KGVuY29kaW5nPSJ1dGYtOCIpCiAgICBpZiBvbGQgbm90IGluIHQ6IG1pc3Nlcy5hcHBlbmQodGFnKTsgcmV0dXJuIEZhbHNlCiAgICBwLndyaXRlX3RleHQodC5yZXBsYWNlKG9sZCwgbmV3LCAxKSwgZW5jb2Rpbmc9InV0Zi04IikKICAgIGhpdHMuYXBwZW5kKHRhZyk7IHJldHVybiBUcnVlCgpFID0gInNyYy9jb3JlL2VuZ2luZS50cyIKCiMgMSkgQyBuYWNoemllaGVuLCB3ZW5uIGRpZSBLb3JyZWt0dXIgd2VpdCB1ZWJlciBkaWUgZXJzdGUgU2VxdWVueiBoaW5hdXNsYWV1ZnQgKExPTkcpCnJlcChFLAonJycgIHJldHVybiB7CiAgICBhTG93OiBhUGl2b3QucHJpY2UsIGFEYXRlOiBhUGl2b3QuZGF0ZSwnJycsCicnJyAgLy8gVjE0MjogTGFldWZ0IGRpZSBLb3JyZWt0dXIgd2VpdCB1ZWJlciBkaWUgZXJzdGUgRHJlaWVyLVNlcXVlbnogaGluYXVzLAogIC8vIG1hcmtpZXJ0IGRlcmVuIEMgbmljaHQgZGFzIEVuZGUgZGVyIEtvcnJla3R1ci4gRGFzIEMgd2lyZCBkYW5uIGF1ZiBkYXMKICAvLyBsYXVmZW5kZSBFeHRyZW0gbmFjaGdlem9nZW4gLSBzb25zdCBrbGVidCBkaWUgQy1NYXJrZSBpbSBDaGFydCBvYmVuIGFtCiAgLy8gS29ycmVrdHVyYmVnaW5uLCB3YWVocmVuZCBkZXIgS3VycyBsYWVuZ3N0IHdlaXQgZGFydW50ZXIgc3RlaHQKICAvLyAoTVNUUjogQz0yODUgYmVzY2hyaWZ0ZXQsIHRhdHNhZWNobGljaGVzIFRpZWYgODEsODEpLgogIGlmIChjRGF0ZSAhPSBudWxsICYmIGNMb3cgIT0gbnVsbCkgewogICAgbGV0IHJ1bkxvdyA9IGNMb3c7CiAgICBsZXQgcnVuRGF0ZSA9IGNEYXRlOwogICAgZm9yIChjb25zdCBrIG9mIGNhbmRsZXMpIHsKICAgICAgaWYgKGsuZGF0ZSA+IGNEYXRlICYmIGsubG93IDwgcnVuTG93KSB7IHJ1bkxvdyA9IGsubG93OyBydW5EYXRlID0gay5kYXRlOyB9CiAgICB9CiAgICBpZiAoTWF0aC5sb2coY0xvdykgLSBNYXRoLmxvZyhydW5Mb3cpID4gMC4yMikgeyBjTG93ID0gcnVuTG93OyBjRGF0ZSA9IHJ1bkRhdGU7IH0KICB9CgogIHJldHVybiB7CiAgICBhTG93OiBhUGl2b3QucHJpY2UsIGFEYXRlOiBhUGl2b3QuZGF0ZSwnJycsCiJlbmdpbmU6IEMgbmFjaHppZWhlbiAobG9uZykiKQoKIyAyKSBkYXNzZWxiZSBmdWVyIGRpZSBTaG9ydC1Lb3JyZWt0dXIgKEVyaG9sdW5nIG5hY2ggYmVhcmlzaGVtIEltcHVscykKcmVwKEUsCicgIHJldHVybiB7IGFIaWdoOiBhUGl2b3QucHJpY2UsIGFEYXRlOiBhUGl2b3QuZGF0ZSwgYkxvdzogYlBpdm90LnByaWNlLCBiRGF0ZTogYlBpdm90LmRhdGUsIGNIaWdoLCBjRGF0ZSB9OycsCicnJyAgLy8gVjE0Mjogc2llaGUgbG9uZy1WYXJpYW50ZSAtIEMgYXVmIGRhcyBsYXVmZW5kZSBFeHRyZW0gbmFjaHppZWhlbi4KICBpZiAoY0RhdGUgIT0gbnVsbCAmJiBjSGlnaCAhPSBudWxsKSB7CiAgICBsZXQgcnVuSGlnaCA9IGNIaWdoOwogICAgbGV0IHJ1bkRhdGUgPSBjRGF0ZTsKICAgIGZvciAoY29uc3QgayBvZiBjYW5kbGVzKSB7CiAgICAgIGlmIChrLmRhdGUgPiBjRGF0ZSAmJiBrLmhpZ2ggPiBydW5IaWdoKSB7IHJ1bkhpZ2ggPSBrLmhpZ2g7IHJ1bkRhdGUgPSBrLmRhdGU7IH0KICAgIH0KICAgIGlmIChNYXRoLmxvZyhydW5IaWdoKSAtIE1hdGgubG9nKGNIaWdoKSA+IDAuMjIpIHsgY0hpZ2ggPSBydW5IaWdoOyBjRGF0ZSA9IHJ1bkRhdGU7IH0KICB9CgogIHJldHVybiB7IGFIaWdoOiBhUGl2b3QucHJpY2UsIGFEYXRlOiBhUGl2b3QuZGF0ZSwgYkxvdzogYlBpdm90LnByaWNlLCBiRGF0ZTogYlBpdm90LmRhdGUsIGNIaWdoLCBjRGF0ZSB9OycnJywKImVuZ2luZTogQyBuYWNoemllaGVuIChzaG9ydCkiKQoKIyAzKSAxLTItU3RydWt0dXIgd2llZGVyIGluIGRlciBLdXJ6YW5zaWNodCAoYmVpZGUgUmljaHR1bmdlbikKcmVwKEUsICIgICAgaWYgKHZlcmJvc2UpIGZvciAoY29uc3QgeiBvZiBzdHJ1a3R1clplaWxlbikgYmlnUGljdHVyZSArPSBgXFxuJHt6fWA7IiwKICAgICAgICIgICAgZm9yIChjb25zdCB6IG9mIHN0cnVrdHVyWmVpbGVuKSBiaWdQaWN0dXJlICs9IGBcXG4ke3p9YDsiLAogICAgICAgImVuZ2luZTogU3RydWt0dXJ6ZWlsZW4gd2llZGVyIHNpY2h0YmFyIikKCiMgNCkgVmVyc2lvbgpmb3Igb2xkIGluIFsnInZlcnNpb24iOiAiMTQxLjAuMCInLCAnInZlcnNpb24iOiAiMTQwLjAuMCInXToKICAgIGlmIHJlcCgicGFja2FnZS5qc29uIiwgb2xkLCAnInZlcnNpb24iOiAiMTQyLjAuMCInLCAicGFja2FnZS5qc29uIik6IGJyZWFrCmZvciBvbGQgaW4gWyJWMTQxOiBFVy1FbmdpbmUgKEt1cnptb2R1cykgc3RhcnRldCIsCiAgICAgICAgICAgICJWMTQwOiBFVy1FbmdpbmUgKFJlcG9ydCBhdWYgTWFya2VuIGdla1x1MDBmY3J6dCkgc3RhcnRldCJdOgogICAgaWYgcmVwKCJzcmMvaW5kZXgudHMiLCBvbGQsICJWMTQyOiBFVy1FbmdpbmUgKEMgbmFjaHppZWhlbiwgU3RydWt0dXIgc2ljaHRiYXIpIHN0YXJ0ZXQiLCAiaW5kZXg6IFZlcnNpb24iKTogYnJlYWsKCnByaW50KCJHRVBBVENIVDoiLCBsZW4oaGl0cykpCmZvciBoIGluIGhpdHM6IHByaW50KCIgICsiLCBoKQppZiBtaXNzZXM6CiAgICBwcmludCgiTklDSFQgR0VGVU5ERU46IikKICAgIGZvciBtIGluIG1pc3NlczogcHJpbnQoIiAgLSIsIG0pCmlmIG5vdCBoaXRzOiBwcmludCgiTmljaHRzIGdlcGF0Y2h0IC0gQWJicnVjaC4iKTsgc3lzLmV4aXQoMSkK" | base64 -d > /tmp/patch_v142.py
+          echo "IyMgVjE0MjogQy1NYXJrZSBuYWNoemllaGVuICsgMS0yLVN0cnVrdHVyIHdpZWRlciBzaWNodGJhcgoKKioxLiDigJ5XYXJ1bSBrbGVidCBkYXMgQyBvYmVuPyIqKiDigJQgRGllIGJlc2NocmlmdGV0ZW4gUHVua3RlIGJlaSBNU1RSIHNpbmQgQSA9IDMzOCw2NyAoMjYuMTEuMjQpLCBCID0gNDQ0LDk0ICgwNS4xMi4yNCksIEMgPSAyODUsMDEgKDMxLjEyLjI0KSwgYWxzbyBhbGxlIGluIGRlbiBlcnN0ZW4gc2VjaHMgV29jaGVuIG5hY2ggZGVtIEhvY2ggYmVpIDU0My4gU2VpdGhlciBpc3QgZGVyIEt1cnMgYXVmIDgxLDgxIGdlZmFsbGVuIOKAlCBkYXMgQyBsaWVndCAqKjI0OCAlIMO8YmVyIGRlbSB0YXRzw6RjaGxpY2hlbiBLb3JyZWt0dXJ0aWVmKiouCgpVcnNhY2hlOiBkaWUgVjEyOC1SZWdlbCDigJ5lcnN0ZSBBLUItQy1TZXF1ZW56IHN0YXR0IGdsb2JhbGVyIEV4dHJlbWEiLiBGw7xyIGVpbmUgZnJpc2NoZSBLb3JyZWt0dXIgKENSQ0wgZGFtYWxzKSByaWNodGlnLCBmw7xyIGVpbmUgc2VpdCAxLDUgSmFocmVuIGxhdWZlbmRlIGZhbHNjaCDigJQgZGllIGVyc3RlIERyZWllcnN0cnVrdHVyIGlzdCBkYW5uIG51ciBlaW4gVGVpbHN0w7xjayBhbSBBbmZhbmcuCgoqKkZpeDoqKiBMw6R1ZnQgZGllIEtvcnJla3R1ciBtZWhyIGFscyB+MjUgJSAobG9nKSDDvGJlciBkYXMgQyBkZXIgZXJzdGVuIFNlcXVlbnogaGluYXVzLCB3aXJkIGRhcyBDIGF1ZiBkYXMgbGF1ZmVuZGUgRXh0cmVtIG5hY2hnZXpvZ2VuLiBEYW1pdCBzaXR6dCBkaWUgTWFya2UgaW0gQ2hhcnQgYW0gdGF0c8OkY2hsaWNoZW4gVGllZiBzdGF0dCBvYmVuIGFtIEtvcnJla3R1cmJlZ2lubi4gR2lsdCBmw7xyIGJlaWRlIFJpY2h0dW5nZW4gKEFid8OkcnRza29ycmVrdHVyIHVuZCBFcmhvbHVuZykuCgoqKjIuIOKAnktlaW5lIDEtMiBTdHJ1a3R1ciBmw7xyIGRlbiBXZWcgbmFjaCBvYmVuPyIqKiDigJQgQmVyZWNodGlndDogVjE0MSBoYXR0ZSBkaWUgU3RydWt0dXJ6ZWlsZW4gbWl0IGhpbnRlciBgZGV0YWlsYCBnZXNjaG9iZW4uIERhcyB3YXIgenUgdmllbCBkZXMgR3V0ZW4sIGRlbm4gZGllIFN0cnVrdHVyIGlzdCBnZW5hdSBkYXMsIHdhcyBkdSBzZWhlbiB3aWxsc3QuIFNpZSBpc3Qgd2llZGVyIGluIGRlciBLdXJ6YW5zaWNodCDigJQgYmVpZGUgUmljaHR1bmdlbiwgamUgZWluZSBaZWlsZToKCmBgYArwn5OKIGFid8OkcnRzOiAzIHRpZWZlcmUgSG9jaHMgwrcgTWFya2UgNjQ4MDIuMzkK8J+TiiBhdWZ3w6RydHM6IDIgaMO2aGVyZSBUaWVmcyDCtyBNYXJrZSA4NC4xMgpgYGAKCkFsbGVzIGFuZGVyZSAoVW1zY2hsYWcsIEtvZW56LCBSYWhtZW4sIERldGFpbGJsb2NrLCBLcml0aWspIGJsZWlidCBoaW50ZXIgYGRldGFpbGAuCgoqKkFjaHR1bmc6KiogRGFzIG5hY2hnZXpvZ2VuZSBDIHZlcsOkbmRlcnQgZGllIEtlbm56YWhsIOKAnkMgYmlzaGVyIHjDl0EiIHVuZCBkYW1pdCBhdWNoIGRpZSBDLVppZWxwcm9qZWt0aW9uIOKAlCBkYXMgaXN0IGJlYWJzaWNodGlndCB1bmQgc2FjaGxpY2ggcmljaHRpZ2VyLCBhYmVyIGVzIGlzdCBkaWUgZXJzdGUgw4RuZGVydW5nIGRpZXNlciBTZXNzaW9uLCBkaWUgWmFobGVuIGJld2VndC4gRGEgZGllIFNhbmRib3gtQXJiZWl0c2tvcGllIGZlaGx0LCBrb25udGUgaWNoIFJlZmVyZW56esOkaGx1bmdlbiB1bmQgV2Fsay1Gb3J3YXJkIGRpZXNtYWwgbmljaHQgZ2VnZW5wcsO8ZmVuOyBkYXMgQnVpbGQtR2F0ZSBsw6R1ZnQgd2llIGltbWVyLg==" | base64 -d > /tmp/pr_body.md
+
+      - name: "🩹 Patch anwenden"
+        run: python3 /tmp/patch_v142.py | tee /tmp/patch_log.txt
+
+      - name: "🟢 Node 20"
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: "🧪 Build-Verifikation (Gate vor Commit)"
+        run: |
+          npm install
+          npm run build
+
+      - name: "🌿 Branch, Commit & Pull Request"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B fix/v142-c-nachziehen
+          git add -A
+          git commit -m "V142: C-Marke auf laufendes Extrem nachziehen, wenn die Korrektur weit ueber die erste A-B-C-Sequenz hinauslaeuft; 1-2-Strukturzeilen wieder in der Kurzansicht"
+          git push -u origin fix/v142-c-nachziehen --force
+          gh pr create --base main --head fix/v142-c-nachziehen \
+            --title "V142: C nachziehen, Struktur sichtbar" \
+            --body-file /tmp/pr_body.md \
+            || echo "::warning::PR manuell: https://github.com/$GITHUB_REPOSITORY/compare/main...fix/v142-c-nachziehen"
+          {
+            echo "### ✅ V142 gebaut & gepusht"
+            echo ""
+            echo '```'
+            cat /tmp/patch_log.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
