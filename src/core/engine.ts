@@ -117,6 +117,20 @@ function correctionLegs(pivots: Pivot[], candles: Candle[], topDate: string): Co
       if (cLow === null || k.low < cLow) { cLow = k.low; cDate = k.date; }
     }
   }
+  // V142: Laeuft die Korrektur weit ueber die erste Dreier-Sequenz hinaus,
+  // markiert deren C nicht das Ende der Korrektur. Das C wird dann auf das
+  // laufende Extrem nachgezogen - sonst klebt die C-Marke im Chart oben am
+  // Korrekturbeginn, waehrend der Kurs laengst weit darunter steht
+  // (MSTR: C=285 beschriftet, tatsaechliches Tief 81,81).
+  if (cDate != null && cLow != null) {
+    let runLow = cLow;
+    let runDate = cDate;
+    for (const k of candles) {
+      if (k.date > cDate && k.low < runLow) { runLow = k.low; runDate = k.date; }
+    }
+    if (Math.log(cLow) - Math.log(runLow) > 0.22) { cLow = runLow; cDate = runDate; }
+  }
+
   return {
     aLow: aPivot.price, aDate: aPivot.date,
     bHigh: bPivot.price, bDate: bPivot.date,
@@ -174,6 +188,16 @@ function correctionLegsShort(
       if (cHigh === null || k.high > cHigh) { cHigh = k.high; cDate = k.date; }
     }
   }
+  // V142: siehe long-Variante - C auf das laufende Extrem nachziehen.
+  if (cDate != null && cHigh != null) {
+    let runHigh = cHigh;
+    let runDate = cDate;
+    for (const k of candles) {
+      if (k.date > cDate && k.high > runHigh) { runHigh = k.high; runDate = k.date; }
+    }
+    if (Math.log(runHigh) - Math.log(cHigh) > 0.22) { cHigh = runHigh; cDate = runDate; }
+  }
+
   return { aHigh: aPivot.price, aDate: aPivot.date, bLow: bPivot.price, bDate: bPivot.date, cHigh, cDate };
 }
 
@@ -678,7 +702,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       strukturZeilen.push(
         `📊 ${richtung}: ${mwBack.note}`);
     }
-    if (verbose) for (const z of strukturZeilen) bigPicture += `\n${z}`;
+    for (const z of strukturZeilen) bigPicture += `\n${z}`;
     if (koRead && koRead.reversalRisk === "CONFIRMED")
       bigPicture += `\n🔄 Trendwechsel bestätigt`;
     else if (verbose && koRead && koRead.reversalRisk === "LIKELY")
