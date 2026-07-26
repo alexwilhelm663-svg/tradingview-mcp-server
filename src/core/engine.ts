@@ -185,7 +185,7 @@ const addDaysE = (iso: string, d: number): string => {
 const daysBetweenE = (a: string, b: string): number =>
   (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
 
-export async function analyzeAsset(symbol: string, range: string = "5y", interval: string = "1wk"): Promise<AnalysisResult> {
+export async function analyzeAsset(symbol: string, range: string = "5y", interval: string = "1wk", verbose: boolean = false): Promise<AnalysisResult> {
   try {
     // 1. Marktdaten (Weekly, 5 Jahre) + deterministische Pivots
     const { weeklyAnalysisCandles: candles } = await fetchMarketData(symbol, interval, range);
@@ -678,13 +678,13 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       strukturZeilen.push(
         `📊 ${richtung}: ${mwBack.note}`);
     }
-    for (const z of strukturZeilen) bigPicture += `\n${z}`;
+    if (verbose) for (const z of strukturZeilen) bigPicture += `\n${z}`;
     if (koRead && koRead.reversalRisk === "CONFIRMED")
-      bigPicture += `\n🔄 **Trendwechsel:** ${koRead.reversalNote}`;
-    else if (koRead && koRead.reversalRisk === "LIKELY")
-      bigPicture += `\n🔄 **Umschlag wahrscheinlich (A-B-C → 1-2):** ${koRead.reversalNote}`;
-    else if (koRead && koRead.reversalRisk === "WATCH")
-      bigPicture += `\n👁️ **Umschlag-Beobachtung:** ${koRead.reversalNote}`;
+      bigPicture += `\n🔄 Trendwechsel bestätigt`;
+    else if (verbose && koRead && koRead.reversalRisk === "LIKELY")
+      bigPicture += `\n🔄 Umschlag wahrscheinlich: ${koRead.reversalNote}`;
+    else if (verbose && koRead && koRead.reversalRisk === "WATCH")
+      bigPicture += `\n👁️ ${koRead.reversalNote}`;
     // V137: Klein gezoomter Ausschnitt (Tagesdaten mit Range <= 1y) -> das
     // übergeordnete Big Picture (5y/max) hinzuziehen, damit ein übergeordneter
     // Wendepunkt nicht übersehen wird. Nur wenn die aktuelle Ebene NICHT schon
@@ -692,7 +692,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     if (interval === "1d" && ["1y", "2y", "6mo", "3mo"].includes(range)) {
       try {
         const hf = await assessHigherFrame(symbol, range);
-        if (hf.available) bigPicture += `\n${hf.note}`;
+        if (hf.available && verbose) bigPicture += `\n${hf.note}`;
       } catch {
         /* übergeordnete Einordnung best-effort */
       }
@@ -701,7 +701,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     // V131: Transparenz - die Korrektur-Lesart hängt vom Analyserahmen ab
     // (Fenster/Auflösung bestimmen den Wellengrad; Elliott ist fraktal).
     if (koRead && koRead.legPoints.length >= 2) {
-      bigPicture += `\nℹ️ Rahmen ${range}/${interval === "1d" ? "Tag" : "Woche"}`;
+      if (verbose) bigPicture += `\nℹ️ Rahmen ${range}/${interval === "1d" ? "Tag" : "Woche"}`;
     }
     if (scenPrimary) bigPicture += `\n1️⃣ **Primär:** ${scenPrimary}`;
     if (scenAlt) bigPicture += `\n2️⃣ **Alternativ:** ${scenAlt}`;
@@ -764,7 +764,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
         confluenceNote = `${conf.verdict === "BESTÄTIGT" ? "✅" : conf.verdict === "FRÜHWARNUNG" ? "⚡" : "◽"} Konfluenz ${conf.verdict}: ${conf.note}`;
         // Frühwarnung erscheint zusätzlich leise im Big Picture.
         if (conf.verdict === "FRÜHWARNUNG") {
-          bigPicture += `\n⚡ **Sub-Ebene-Frühwarnung:** ${conf.note}`;
+          if (verbose) bigPicture += `\n⚡ ${conf.note}`;
         }
       } catch {
         confluenceNote = null;
