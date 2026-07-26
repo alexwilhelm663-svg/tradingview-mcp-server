@@ -80,6 +80,10 @@ export function registerCommands(
     const arg2 = (parts[2] || "").toLowerCase();
     const arg3 = (parts[3] || "").toLowerCase();
     const tokens = [arg2, arg3];
+    // V141: Kurzmodus ist Standard. "detail" (oder "voll") schaltet alles frei.
+    const wantDetail = parts
+      .slice(2)
+      .some((x) => ["detail", "voll", "full", "alles"].includes((x || "").toLowerCase()));
     const isDaily = tokens.some((x) => ["1d", "d", "day", "daily", "tag"].includes(x));
     const rangeTok = tokens.find((x) => ["1y", "2y", "5y", "10y", "max"].includes(x));
     const interval = isDaily ? "1d" : "1wk";
@@ -100,7 +104,7 @@ export function registerCommands(
     });
 
     try {
-      const r = await analyzeAsset(symbol, range, interval);
+      const r = await analyzeAsset(symbol, range, interval, wantDetail);
 
       if (!r.analysis) {
         if (r.abstention) {
@@ -136,7 +140,7 @@ export function registerCommands(
       if (!r.clusterInfo && !r.isBreakoutSetup) details += "⚪ Aktuell in keiner Trigger-Zone.\n";
       if (r.analysis.analysis) details += `\n${r.analysis.analysis}`;
       if (r.confluenceNote) details += `\n\n${r.confluenceNote}`;
-      await ctx.reply(details, { parse_mode: "Markdown" });
+      if (wantDetail) await ctx.reply(details, { parse_mode: "Markdown" });
       // V122: Detail-Chart standardmäßig entfernt (auf Wunsch reaktivierbar).
 
       // LLM-Kommentar separat: kein Caption-Limit, kein Abschneiden
