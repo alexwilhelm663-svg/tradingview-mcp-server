@@ -1,0 +1,37 @@
+name: "🔍 Inspect 2 (Setup-Pfad + Kalibrierung)"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+
+      - name: "🔍 Ausgeben"
+        run: |
+          {
+            echo "## A) engine.ts 255-305 (Kritik-Aufruf + Setup-Entscheid)"
+            echo '```ts'
+            sed -n '255,305p' src/core/engine.ts
+            echo '```'
+
+            echo "## B) setups.ts – wo ein Setup entsteht"
+            echo '```ts'
+            grep -n "export function\|export async function\|export interface" src/core/setups.ts
+            echo "// ---- Kern:"
+            sed -n '20,70p' src/core/setups.ts
+            echo '```'
+
+            echo "## C) stats.ts – vorhandene Kalibrierung"
+            echo '```ts'
+            sed -n '15,60p' src/core/stats.ts
+            echo '```'
+
+            echo "## D) db.ts – Schema trade_history"
+            echo '```ts'
+            sed -n '45,75p' src/core/db.ts
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
