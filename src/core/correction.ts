@@ -333,7 +333,11 @@ export function classifyCorrection(
   if (ctx && ctx.aDate && ctx.bDate) {
     const isWXY = pattern === "KOMBINATION";
     const cDate = findExtremeDate(ctx.candles, ctx.bDate, dir);
-    legPoints.push({ label: isWXY ? "W" : "A", date: ctx.aDate, price: aExtreme });
+    legPoints.push({
+      label: isWXY ? "W" : impulseCandidate ? "A/1" : "A",
+      date: ctx.aDate,
+      price: aExtreme,
+    });
     legPoints.push({ label: isWXY ? "X" : "B", date: ctx.bDate, price: bExtreme });
     if (cExtremeSoFar != null && cDate) {
       legPoints.push({ label: isWXY ? "Y" : "C", date: cDate, price: cExtremeSoFar });
