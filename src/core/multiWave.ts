@@ -3,31 +3,48 @@ import { Pivot, zigzag } from "./zigzag";
 import { segmentVerdict } from "./impulseFinder";
 
 export interface MultiWaveRead {
-  active: boolean;             // liegt ein (intaktes) Multi-1-2 vor?
-  legs: number;               // Anzahl gestaffelter höherer Tiefs/Hochs
-  currentInvalidation: number | null; // wandernde Invalidierungsmarke (letztes höheres Tief)
-  intact: boolean;            // wurde die wandernde Marke noch nicht unterschritten?
-  note: string | null;
+  active: boolean;                    // echte Grad-Verschachtelung
+  legs: number;                       // Anzahl vollstaendiger 1-2-Einheiten
+  currentInvalidation: number | null; // nachziehende Marke = letztes Welle-2-Extrem
+  intact: boolean;
+  note: string | null;                // null = Schweigen
+}
+
+const EMPTY: MultiWaveRead = {
+  active: false, legs: 0, currentInvalidation: null, intact: false, note: null,
+};
+
+// ── Belastbarkeits-Anforderungen (V144) ────────────────────────────────────
+// Vorher genuegten drei gestaffelte Pivots auf einer Schwelle, die aus der
+// Amplitude abgeleitet war - bei einer jungen Bewegung also Rauschen. Jetzt
+// muss jede 1-2-Einheit einzeln belegt sein, sonst wird geschwiegen.
+const MIN_LEG_LOG = 0.05;      // jede Welle 1 mind. ~5 %
+const MIN_LEG_CANDLES = 4;     // keine Zwei-Kerzen-Wellen
+const MIN_RETRACE = 0.236;     // Welle 2 muss wirklich korrigieren
+const MAX_RETRACE = 0.90;      // ... aber die Welle 1 nicht aufloesen
+const MIN_UNITS = 2;           // mind. zwei vollstaendige 1-2
+const MAX_DEGREES = 4;
+const NEST_SHRINK = 0.85;      // Verschachtelung: jede Welle 1 klar kleiner
+
+interface Unit {
+  startPrice: number; startDate: string;
+  peakPrice: number;  peakDate: string;
+  troughPrice: number; troughDate: string;
+  legLog: number; retrace: number;
 }
 
 /**
- * V135: Koenz' staffelnde Multi-1-2-Invalidierung.
+ * V144: Strenge 1-2-Struktur-Erkennung.
  *
- * Ein Multi-1-2 ist eine Serie verschachtelter 1-2-Setups am Trendbeginn:
- * gestaffelte höhere Tiefs (bei Aufwärts-Gegenbewegung nach bearishem
- * Impuls) bzw. tiefere Hochs (bei Abwärts-Gegenbewegung). Die
- * Invalidierung WANDERT: Start am Struktur-Extrem, nach jeder fertigen
- * Welle 2 auf das jeweils letzte höhere Tief.
+ * Es wird nur gemeldet, was Einheit fuer Einheit belegt ist:
+ *  - jede Welle 1 mindestens 5 % gross und ueber mindestens 4 Kerzen,
+ *  - jede Welle 2 korrigiert 23,6-90 % ihrer Welle 1,
+ *  - die erste Welle 1 muss strukturell impulsiv sein (segmentVerdict),
+ *  - mindestens zwei vollstaendige 1-2-Einheiten.
+ * Faellt eine Bedingung, gibt es KEINE Meldung (Enthaltung statt Rauschen).
  *
- * Voraussetzung (streng): Die Gegenbewegung muss selbst als Trendbeginn
- * plausibel sein (impulsives erstes Bein - via Aufrufer geprüft). Diese
- * Funktion findet die Staffel und prüft, ob sie noch intakt ist.
- *
- * @param candles       Vollserie
- * @param w5Date        Impuls-Ende (Beginn der Gegenbewegung)
- * @param w5Price       Impuls-Extrem (Ursprungs-Invalidierung)
- * @param dirCounter    Richtung der Gegenbewegung (+1 aufwärts, -1 abwärts)
- * @param parentThreshold ZigZag-Stufe der Hauptebene
+ * Zusaetzlich Multi-1-2 (Verschachtelung) nur, wenn die Wellen-1 materiell
+ * schrumpfen (<= 0,85x) und hoechstens vier Grade vorliegen.
  */
 export function assessMultiWave(
   candles: Candle[],
@@ -36,120 +53,100 @@ export function assessMultiWave(
   dirCounter: 1 | -1,
   parentThreshold: number
 ): MultiWaveRead {
-  const empty: MultiWaveRead = {
-    active: false, legs: 0, currentInvalidation: null, intact: false, note: null,
-  };
-
   const post = candles.filter((k) => k.date >= w5Date);
-  if (post.length < 6) return empty;
+  if (post.length < 12) return EMPTY;
 
-  // V136: Multi-1-2 ist eine feine Sub-Struktur, deren Bein-Größe von der
-  // GESAMTAMPLITUDE der bisherigen Gegenbewegung abhängt - nicht vom Parent-
-  // Threshold. Eine junge Erholung hat winzige 1-2-Beine (1-3%). Wir wählen
-  // die Sub-Stufe adaptiv: grob ein Viertel der Gegenbewegungs-Amplitude,
-  // gedeckelt auf 2-8%. Das löst den Fall, dass frische Multi-1-2s (BTC/MSFT
-  // auf Tagesbasis) mangels Auflösung übersehen wurden.
+  // Aufloesung an die Bewegung koppeln, aber nie unter 3 % - darunter zaehlt
+  // der ZigZag Rauschen als Struktur.
   const lastPx = post[post.length - 1].close;
   const ampPct = (Math.exp(Math.abs(Math.log(lastPx) - Math.log(w5Price))) - 1) * 100;
-  const subTh = Math.max(2, Math.min(8, ampPct / 4));
-  let piv = zigzag(post, subTh).filter((p) => p.date >= w5Date);
-  if (piv.length < 4) {
-    piv = zigzag(post, Math.max(2, subTh / 2)).filter((p) => p.date >= w5Date);
+  const subTh = Math.max(3, Math.min(8, ampPct / 4));
+  const piv = zigzag(post, subTh).filter((p) => p.date > w5Date);
+  if (piv.length < 3) return EMPTY;
+
+  const peakKind: "H" | "L" = dirCounter === 1 ? "H" : "L";
+  const troughKind: "H" | "L" = dirCounter === 1 ? "L" : "H";
+  const beyond = (a: number, b: number) => (dirCounter === 1 ? a > b : a < b);
+
+  const countCandles = (from: string, to: string) =>
+    candles.filter((k) => k.date >= from && k.date <= to).length;
+
+  // ── Einheiten aufbauen: Anker -> Peak (Welle 1) -> Trough (Welle 2) ──────
+  const units: Unit[] = [];
+  let anchorPrice = w5Price;
+  let anchorDate = w5Date;
+  let i = 0;
+  while (i < piv.length) {
+    const peak = piv.slice(i).find((p) => p.kind === peakKind && beyond(p.price, anchorPrice));
+    if (!peak) break;
+    const pIdx = piv.indexOf(peak);
+    const trough = piv.slice(pIdx + 1).find((p) => p.kind === troughKind);
+    if (!trough) break;
+
+    // Welle 2 darf den Ursprung der Welle 1 nicht aufloesen
+    if (!beyond(trough.price, anchorPrice)) break;
+
+    const legLog = Math.abs(Math.log(peak.price) - Math.log(anchorPrice));
+    const backLog = Math.abs(Math.log(peak.price) - Math.log(trough.price));
+    const retrace = legLog > 0 ? backLog / legLog : 1;
+
+    if (legLog < MIN_LEG_LOG) return EMPTY;
+    if (countCandles(anchorDate, peak.date) < MIN_LEG_CANDLES) return EMPTY;
+    if (retrace < MIN_RETRACE || retrace > MAX_RETRACE) return EMPTY;
+
+    units.push({
+      startPrice: anchorPrice, startDate: anchorDate,
+      peakPrice: peak.price, peakDate: peak.date,
+      troughPrice: trough.price, troughDate: trough.date,
+      legLog, retrace,
+    });
+
+    anchorPrice = trough.price;
+    anchorDate = trough.date;
+    i = piv.indexOf(trough) + 1;
+    if (units.length >= MAX_DEGREES + 2) break;
   }
-  if (piv.length < 4) return empty;
 
-  // V136: ALLE Gegenbewegungs-Rücksetzer (Wellen 2) bis zum aktuellen Rand.
-  // NICHT nur bis zum höchsten Hoch abschneiden - ein laufendes Multi-1-2
-  // baut weiter, das jüngste höhere Tief ist oft das relevanteste (es trägt
-  // die aktuelle wandernde Invalidierung). Bei Aufwärts-Gegenbewegung sind
-  // die Rücksetzer die Tiefs (L), bei Abwärts die Hochs (H).
-  const troughKind: "L" | "H" = dirCounter === 1 ? "L" : "H";
-  const troughs = piv.filter((p) => p.kind === troughKind && p.date > w5Date);
-  if (troughs.length < 2) return empty; // mind. zwei gestaffelte 1-2 nötig
+  if (units.length < MIN_UNITS) return EMPTY;
 
-  // Monoton in Trendrichtung gestaffelt? (höhere Tiefs / tiefere Hochs)
-  const staffel: Pivot[] = [troughs[0]];
-  for (let i = 1; i < troughs.length; i++) {
-    const higher = dirCounter === 1
-      ? troughs[i].price > staffel[staffel.length - 1].price
-      : troughs[i].price < staffel[staffel.length - 1].price;
-    if (higher) staffel.push(troughs[i]);
-  }
-  if (staffel.length < 2) return empty;
+  // Die erste Welle 1 muss strukturell impulsiv sein - sonst ist es kein
+  // Trendbeginn, sondern eine beliebige Gegenbewegung.
+  const firstImpulsive =
+    segmentVerdict(candles, units[0].startDate, units[0].peakDate, dirCounter, parentThreshold) ===
+    "IMPULSIVE";
+  if (!firstImpulsive) return EMPTY;
 
-  // ── V138: ECHTE VERSCHACHTELUNG PRÜFEN ──────────────────────────────────
-  // Gestaffelte Extrema allein sind KEIN Multi-1-2 - das ist jeder normale
-  // Trend. Eine Verschachtelung verlangt, dass jedes folgende 1-2-Paar einen
-  // NIEDRIGEREN GRAD hat, also kleiner ausfällt. Ohne diese Prüfung entsteht
-  // ein Zählfehler mit absurder Konsequenz: n verschachtelte 1-2 schulden n
-  // ausstehende dritte Wellen; bei 8 Stufen (MSTR) ergibt das ein Kursziel
-  // nahe null. Bedingungen (Koenz/Elliott):
-  //  (1) Die Welle-1-Beine müssen monoton SCHRUMPFEN (fallender Grad).
-  //  (2) Jede Welle 2 retraced 38,2-100 % ihrer Welle 1 (echte Korrektur).
-  //  (3) Höchstens 4 Stufen - mehr ist praktisch nie eine Verschachtelung.
-  const wave1Logs: number[] = [];
-  let prevCounterExtreme = w5Price; // Start: das Impuls-Extrem
-  for (const s of staffel) {
-    wave1Logs.push(Math.abs(Math.log(s.price) - Math.log(prevCounterExtreme)));
-    // nächstes Gegen-Extrem = das Hoch/Tief NACH diesem Rücksetzer
-    const nextCounter = piv.find(
-      (p) => p.date > s.date && p.kind !== troughKind
-    );
-    if (!nextCounter) break;
-    prevCounterExtreme = nextCounter.price;
-  }
-
-  // (1) MATERIELL schrumpfende Beine: jede folgende Welle 1 <= 0,85x der
-  // vorigen. Annähernd gleich große Beine bedeuten gleichen GRAD - das ist
-  // eine Treppe/ein Kanal, keine Verschachtelung.
-  let nested = wave1Logs.length >= 2;
-  for (let i = 1; i < wave1Logs.length; i++) {
-    if (wave1Logs[i] > wave1Logs[i - 1] * 0.85) { nested = false; break; }
-  }
-  // (3) Stufenzahl: mehr als 4 verschachtelte Grade kommen praktisch nicht vor
-  if (staffel.length > 4) nested = false;
-
-  // Jedes 1-Bein (vom Tief zum nächsten Extrem) sollte impulsiv sein.
-  // Wir prüfen mindestens das erste Bein (W5 -> erstes Extrem nach erstem Tief).
-  const firstImpulseOk =
-    segmentVerdict(candles, w5Date, staffel[0].date, (dirCounter * -1) as 1 | -1, parentThreshold) !==
-    "UNKLAR" || true; // erstes Bein ist der Anstieg VOR dem ersten Tief - vom Aufrufer geprüft
-
-  // Wandernde Invalidierung = letztes höheres Tief der Staffel.
-  const currentInvalidation = staffel[staffel.length - 1].price;
-
-  // Intakt? Die wandernde Marke darf nach ihrer Entstehung nicht mehr
-  // (per Wochenschluss) unterschritten worden sein.
-  const afterLast = candles.filter((k) => k.date > staffel[staffel.length - 1].date);
-  const breached = afterLast.some((k) =>
-    dirCounter === 1 ? k.close < currentInvalidation : k.close > currentInvalidation
+  const last = units[units.length - 1];
+  const currentInvalidation = last.troughPrice;
+  const breached = candles.some(
+    (k) => k.date > last.troughDate &&
+      (dirCounter === 1 ? k.close < currentInvalidation : k.close > currentInvalidation)
   );
   const intact = !breached;
+
+  // Verschachtelung: materiell schrumpfende Wellen-1, hoechstens 4 Grade
+  let nested = units.length >= 2 && units.length <= MAX_DEGREES;
+  for (let u = 1; u < units.length && nested; u++) {
+    if (units[u].legLog > units[u - 1].legLog * NEST_SHRINK) nested = false;
+  }
 
   const dirWord = dirCounter === 1 ? "höhere Tiefs" : "tiefere Hochs";
   const invWord = dirCounter === 1 ? "unter" : "über";
 
-  // V138: Zwei klar getrennte Aussagen.
-  //  - ECHTE Verschachtelung (nested): trägt die Multi-1-2-Implikation, dass
-  //    für JEDEN Grad noch eine dritte Welle aussteht (Beschleunigung voraus).
-  //  - Bloße Staffelung: höhere Tiefs / tiefere Hochs ohne Gradabstufung. Das
-  //    ist eine intakte Trendstruktur mit nachziehender Marke - aber KEIN
-  //    Multi-1-2. Die Verwechslung erzeugte absurde Ziele (MSTR: 8 Stufen
-  //    hätten 8 ausstehende dritte Wellen bedeutet -> Kursziel ~0).
   let note: string | null;
   if (nested) {
     note = intact
-      ? `Multi-1-2 · ${staffel.length} Grade · Marke ${currentInvalidation.toFixed(2)}`
+      ? `Multi-1-2 · ${units.length} Grade · Marke ${currentInvalidation.toFixed(2)}`
       : `Multi-1-2 gebrochen (${invWord} ${currentInvalidation.toFixed(2)})`;
-  } else if (intact && staffel.length >= 3) {
-    note = `${staffel.length} ${dirWord} · Marke ${currentInvalidation.toFixed(2)}`;
+  } else if (intact) {
+    note = `${units.length}× 1-2 · ${dirWord} · Marke ${currentInvalidation.toFixed(2)}`;
   } else {
-    note = null;
+    note = null; // gebrochene Treppe ist keine Meldung wert
   }
 
   return {
     active: nested && intact,
-    legs: staffel.length,
+    legs: units.length,
     currentInvalidation,
     intact,
     note,
