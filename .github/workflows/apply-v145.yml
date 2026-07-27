@@ -1,0 +1,55 @@
+name: "🔧 Apply V145 (A oder 1)"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  v145:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+
+      - name: "✍️ Patch-Skript schreiben"
+        run: |
+          echo "aW1wb3J0IHBhdGhsaWIsIHN5cwpoaXRzLCBtaXNzZXMgPSBbXSwgW10KCmRlZiByZXAocGF0aCwgb2xkLCBuZXcsIHRhZyk6CiAgICBwID0gcGF0aGxpYi5QYXRoKHBhdGgpCiAgICBpZiBub3QgcC5leGlzdHMoKTogbWlzc2VzLmFwcGVuZCh0YWcrIiAoRGF0ZWkgZmVobHQpIik7IHJldHVybiBGYWxzZQogICAgdCA9IHAucmVhZF90ZXh0KGVuY29kaW5nPSJ1dGYtOCIpCiAgICBpZiBvbGQgbm90IGluIHQ6IG1pc3Nlcy5hcHBlbmQodGFnKTsgcmV0dXJuIEZhbHNlCiAgICBwLndyaXRlX3RleHQodC5yZXBsYWNlKG9sZCwgbmV3LCAxKSwgZW5jb2Rpbmc9InV0Zi04IikKICAgIGhpdHMuYXBwZW5kKHRhZyk7IHJldHVybiBUcnVlCgpFID0gInNyYy9jb3JlL2VuZ2luZS50cyIKClpFSUxFID0gJycnCiAgICAvLyBWMTQ1OiAiQSBvZGVyIDE/IiBnZWhvZXJ0IGluIGRpZSBLdXJ6YW5zaWNodC4gTmFjaCBlaW5lbSB2b2xsZW5kZXRlbgogICAgLy8gSW1wdWxzIGlzdCBkaWUgS29ycmVrdHVyIGRpZSBTdGFuZGFyZGxlc2FydCAtIGFiZXIgd2VubiBkaWUgR2VnZW4tCiAgICAvLyBiZXdlZ3VuZyBpbXB1bHNpdiBpc3QsIGlzdCBzaWUgV2VsbGUtMS1mYWVoaWcuIEVudHNjaGllZGVuIHdpcmQgYW4gendlaQogICAgLy8gTWFya2VuOiBVcnNwcnVuZyB1ZWJlcnNjaHJpdHRlbiAtPiAxIGJlc3RhZXRpZ3Q7IEltcHVscy1FeHRyZW0KICAgIC8vIHVudGVyc2Nocml0dGVuIC0+IGRpZSAxIGlzdCB0b3QgKEhSLTEpLiBEYXp3aXNjaGVuIGJsZWlidCBlcyBvZmZlbi4KICAgIGlmIChrb1JlYWQgJiYga29SZWFkLmltcHVsc2VDYW5kaWRhdGUgJiYgdzAgJiYgdzUpIHsKICAgICAgY29uc3QgYXVmID0gd2MudHJlbmQgPT09ICJiZWFyaXNoIjsKICAgICAgYmlnUGljdHVyZSArPQogICAgICAgIGBcXG5cXHUyNjk2XFx1ZmUwZiBBIG9kZXIgMT8gXFx1MDBiNyAxIGJlc3RcXHUwMGU0dGlndCAke2F1ZiA/ICI+IiA6ICI8In0gJHt3MC5wcmljZS50b0ZpeGVkKDIpfWAgKwogICAgICAgIGAgXFx1MDBiNyAxIHRvdCAke2F1ZiA/ICI8IiA6ICI+In0gJHt3NS5wcmljZS50b0ZpeGVkKDIpfWA7CiAgICB9JycnCgojIEFua2VyOiBWMTQxLUZhc3N1bmcgZGVzIFVtc2NobGFnLUJsb2NrcwpBMSA9ICcnJyAgICBpZiAoa29SZWFkICYmIGtvUmVhZC5yZXZlcnNhbFJpc2sgPT09ICJDT05GSVJNRUQiKQogICAgICBiaWdQaWN0dXJlICs9IGBcXG5cXFUwMDAxRjUwNCBUcmVuZHdlY2hzZWwgYmVzdFxcdTAwZTR0aWd0YDsnJycKIyBBbmtlcjogVjEzMC1PcmlnaW5hbGZhc3N1bmcgKGZhbGxzIFYxNDEgbmljaHQgZ2VtZXJnZWQpCkEyID0gJycnICAgIGlmIChrb1JlYWQgJiYga29SZWFkLnJldmVyc2FsUmlzayA9PT0gIkNPTkZJUk1FRCIpCiAgICAgIGJpZ1BpY3R1cmUgKz0gYFxcblxcVTAwMDFGNTA0ICoqVHJlbmR3ZWNoc2VsOioqICR7a29SZWFkLnJldmVyc2FsTm90ZX1gOycnJwoKaWYgbm90IHJlcChFLCBBMSwgQTEgKyBaRUlMRSwgImVuZ2luZTogQS1vZGVyLTEtWmVpbGUiKToKICAgIHJlcChFLCBBMiwgQTIgKyBaRUlMRSwgImVuZ2luZTogQS1vZGVyLTEtWmVpbGUgKEZhbGxiYWNrKSIpCgojIENoYXJ0OiBlcnN0ZXMgS29ycmVrdHVyYmVpbiBhbHMgIkEvMSIgYmVzY2hyaWZ0ZW4sIHdlbm4gV2VsbGUtMS1mYWVoaWcKcmVwKCJzcmMvY29yZS9jb3JyZWN0aW9uLnRzIiwKICAnICAgIGxlZ1BvaW50cy5wdXNoKHsgbGFiZWw6IGlzV1hZID8gIlciIDogIkEiLCBkYXRlOiBjdHguYURhdGUsIHByaWNlOiBhRXh0cmVtZSB9KTsnLAogICcgICAgbGVnUG9pbnRzLnB1c2goe1xuJwogICcgICAgICBsYWJlbDogaXNXWFkgPyAiVyIgOiBpbXB1bHNlQ2FuZGlkYXRlID8gIkEvMSIgOiAiQSIsXG4nCiAgJyAgICAgIGRhdGU6IGN0eC5hRGF0ZSxcbicKICAnICAgICAgcHJpY2U6IGFFeHRyZW1lLFxuJwogICcgICAgfSk7JywKICAiY29ycmVjdGlvbjogQ2hhcnQtTGFiZWwgQS8xIikKCmZvciBvbGQgaW4gWycidmVyc2lvbiI6ICIxNDQuMC4wIicsICcidmVyc2lvbiI6ICIxNDMuMC4wIicsICcidmVyc2lvbiI6ICIxNDIuMC4wIiddOgogICAgaWYgcmVwKCJwYWNrYWdlLmpzb24iLCBvbGQsICcidmVyc2lvbiI6ICIxNDUuMC4wIicsICJwYWNrYWdlLmpzb24iKTogYnJlYWsKZm9yIG9sZCBpbiBbIlYxNDQ6IEVXLUVuZ2luZSAoYmVsYXN0YmFyZSAxLTItU3RydWt0dXIpIHN0YXJ0ZXQiLAogICAgICAgICAgICAiVjE0MzogRVctRW5naW5lIChLcml0aWtlci1GZWVkYmFjay1Mb29wKSBzdGFydGV0IiwKICAgICAgICAgICAgIlYxNDI6IEVXLUVuZ2luZSAoQyBuYWNoemllaGVuLCBTdHJ1a3R1ciBzaWNodGJhcikgc3RhcnRldCJdOgogICAgaWYgcmVwKCJzcmMvaW5kZXgudHMiLCBvbGQsICJWMTQ1OiBFVy1FbmdpbmUgKEEgb2RlciAxIHNpY2h0YmFyKSBzdGFydGV0IiwgImluZGV4OiBWZXJzaW9uIik6IGJyZWFrCgpwcmludCgiR0VQQVRDSFQ6IiwgbGVuKGhpdHMpKQpmb3IgaCBpbiBoaXRzOiBwcmludCgiICArIiwgaCkKaWYgbWlzc2VzOgogICAgcHJpbnQoIk5JQ0hUIEdFRlVOREVOOiIpCiAgICBmb3IgbSBpbiBtaXNzZXM6IHByaW50KCIgIC0iLCBtKQppZiBub3QgYW55KGguc3RhcnRzd2l0aCgiZW5naW5lOiBBLW9kZXItMSIpIGZvciBoIGluIGhpdHMpOgogICAgcHJpbnQoIktlcm4tSG9vayBmZWhsdCAtIEFiYnJ1Y2guIik7IHN5cy5leGl0KDEpCg==" | base64 -d > /tmp/patch_v145.py
+          echo "IyMgVjE0NTog4oCeQSBvZGVyIDE/IiB3aWVkZXIgc2ljaHRiYXIKCioqRnJhZ2UgKENSQ0wpOiDigJ5XYXJ1bSB6w6RobHN0IGR1IGRpZSBBIG5pY2h0IGFscyAxPyIqKgoKV2VpbCBuYWNoIGVpbmVtIHZvbGxlbmRldGVuIEbDvG5mZXIgZGllIEtvcnJla3R1ciBkaWUgU3RhbmRhcmRsZXNhcnQgaXN0IOKAlCBlaW4gVHJlbmR3ZWNoc2VsIG11c3Mgc2ljaCBlcnN0IGJld2Vpc2VuLiBEYXMgaXN0IHJpY2h0aWcgc28gdW5kIGJsZWlidC4KCkRlciBlaWdlbnRsaWNoZSBGZWhsZXI6IERpZSBFbmdpbmUga2VubnQgYmVpZGUgTGVzYXJ0ZW4gbMOkbmdzdCAoS08tN2IsIHNlaXQgVjEzMyksIGFiZXIgaWNoIGhhYmUgc2llIGluIFYxNDEgenVzYW1tZW4gbWl0IGRlbSDDvGJyaWdlbiBCYWxsYXN0IGhpbnRlciBgZGV0YWlsYCBnZXNjaG9iZW4uIFNlaXRoZXIgc2llaHN0IGR1IG51ciBub2NoIGRhcyBBIHVuZCBuaWNodCBtZWhyLCBkYXNzIGRpZSBadW9yZG51bmcgb2ZmZW4gaXN0LgoKKipOZXUgaW4gZGVyIEt1cnphbnNpY2h0KiosIHNvYmFsZCBkaWUgR2VnZW5iZXdlZ3VuZyBpbXB1bHNpdiAoV2VsbGUtMS1mw6RoaWcpIGlzdDoKCmBgYArimpbvuI8gQSBvZGVyIDE/IMK3IDEgYmVzdMOkdGlndCA+IDI5OC45OSDCtyAxIHRvdCA8IDQ5LjkwCmBgYAoKWndlaSBNYXJrZW4sIGVpbmUgWmVpbGUuIMOcYmVyIGRlbSBJbXB1bHMtVXJzcHJ1bmcgaXN0IGVzIGVpbmUgMSAoZWluZSBLb3JyZWt0dXIga2FubiBpaHJlbiBBdXNnYW5nc3B1bmt0IG5pY2h0IMO8YmVyc2NocmVpdGVuKSwgdW50ZXIgZGVtIEltcHVscy1FeHRyZW0gaXN0IGRpZSAxIHRvdCAoSFItMTogV2VsbGUgMiBkYXJmIGRlbiBXZWxsZS0xLVVyc3BydW5nIG5pZSB1bnRlcnNjaHJlaXRlbikuIERhendpc2NoZW4gYmxlaWJ0IGVzIGJld3Vzc3Qgb2ZmZW4uCgoqKlp1c8OkdHpsaWNoIGltIENoYXJ0OioqIERhcyBlcnN0ZSBLb3JyZWt0dXJiZWluIHdpcmQgYWxzICoqQS8xKiogYmVzY2hyaWZ0ZXQgc3RhdHQgbnVyIEEsIHdlbm4gZXMgc3RydWt0dXJlbGwgaW1wdWxzaXYgaXN0LiBTbyBpc3QgZGllIEFtYmlndWl0w6R0IGF1Y2ggZ3JhZmlzY2ggc2ljaHRiYXIsIHN0YXR0IGVpbmUgRWluZGV1dGlna2VpdCB2b3J6dXTDpHVzY2hlbiwgZGllIGVzIG5pY2h0IGdpYnQuCgpLZWluZSBMb2dpa8OkbmRlcnVuZyBhbiBkZXIgWsOkaGx1bmcg4oCUIG51ciBkYXMsIHdhcyBkaWUgRW5naW5lIG9obmVoaW4gd2Vpw58sIHdpcmQgd2llZGVyIGdlemVpZ3Qu" | base64 -d > /tmp/pr_body.md
+
+      - name: "🩹 Patch anwenden"
+        run: python3 /tmp/patch_v145.py | tee /tmp/patch_log.txt
+
+      - name: "🟢 Node 22"
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: "🧪 Build-Verifikation (Gate vor Commit)"
+        run: |
+          npm install
+          npm run build
+
+      - name: "🌿 Branch, Commit & Pull Request"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B feat/v145-a-oder-1
+          git add -A
+          git commit -m "V145: A-oder-1-Lesart wieder in der Kurzansicht (zwei Marken, eine Zeile); Chart-Label A/1 bei impulsivem erstem Korrekturbein"
+          git push -u origin feat/v145-a-oder-1 --force
+          gh pr create --base main --head feat/v145-a-oder-1 \
+            --title "V145: A oder 1 sichtbar" \
+            --body-file /tmp/pr_body.md \
+            || echo "::warning::PR manuell: https://github.com/$GITHUB_REPOSITORY/compare/main...feat/v145-a-oder-1"
+          {
+            echo "### ✅ V145 gebaut & gepusht"
+            echo ""
+            echo '```'
+            cat /tmp/patch_log.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
