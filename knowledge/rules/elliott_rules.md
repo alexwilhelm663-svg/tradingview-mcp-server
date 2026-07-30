@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 6.2
+version: 6.3
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -564,3 +564,15 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
     Ueberschreiten des Ursprungs der vorangegangenen Bewegung schliesst die C aus.
   Rein additiv: keine Setups, keine Ziele, keine Selektion. Verifiziert:
   Referenzzaehlungen unveraendert, Walk-Forward unveraendert +8,6 %.
+- **ZY-3 Zyklen im Chart (v6.3):** Zyklus-Skelett und Binnenstruktur werden
+  gezeichnet, nicht nur beschrieben. Zwei zusaetzliche Ebenen:
+  - **Zyklus-Skelett** (violett, duenn, halbtransparent): Linienzug ueber die
+    Wendepunkte der Antriebs- und Korrekturphasen; Antriebsenden mit Z1, Z2 …
+    beschriftet, Korrekturenden nur als Marker. Bewusst zurueckhaltend
+    gehalten - die 0-5-Zaehlung (blau) und die A-B-C-Korrektur (rot) bleiben
+    dominant.
+  - **Binnenstruktur der laufenden Phase** (hellviolett): die Teilwellen als
+    kleine Punkte, roemisch beschriftet (i, ii, iii …) bei antriebsartiger
+    Struktur, alphabetisch (a, b, c …) bei korrektiver.
+  Erscheint auch im Enthaltungsfall - dort ist der Chart sonst voellig
+  unbeschriftet.

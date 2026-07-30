@@ -30,6 +30,8 @@ export interface ChartPayload {
   timeWindows?: { start: string; end: string; label: string }[];
   subwaves?: ChartWave[];
   candlestick?: boolean; // V129: echte Tageskerzen statt Linie
+  cycles?: ChartWave[];   // V150: Zyklus-Skelett (Antrieb/Korrektur)
+  phaseSub?: ChartWave[]; // V150: Binnenstruktur der laufenden Phase
 }
 
 /**

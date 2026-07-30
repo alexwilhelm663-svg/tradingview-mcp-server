@@ -20,6 +20,7 @@ export interface PhaseStructure {
   subLegs: number;                                  // gezaehlte Teilbeine
   verdict: "IMPULSIV" | "KORREKTIV" | "UNKLAR";
   note: string;
+  points: { label: string; date: string; price: number }[]; // fuer den Chart
 }
 
 export interface CycleRead {
@@ -28,6 +29,7 @@ export interface CycleRead {
   summary: string;     // eine Zeile fuer den Kurzreport
   lines: string[];     // Zyklusliste fuer die Enthaltungs-Ausgabe
   structure: PhaseStructure | null; // Binnenstruktur der laufenden Phase
+  points: { label: string; date: string; price: number }[]; // Zyklus-Skelett
 }
 
 const pctOf = (from: number, to: number) => (to / from - 1) * 100;
@@ -106,6 +108,7 @@ function readStructure(
       subLegs: 0,
       verdict: "UNKLAR",
       note: `Phase zu jung für Binnenstruktur (${seg.length} Kerzen)`,
+      points: [],
     };
   }
 
@@ -156,7 +159,17 @@ function readStructure(
         : ` · Welle 3 oder C – entschieden ${leg.dir === 1 ? "über" : "unter"} ${origin.toFixed(2)}`;
     }
   }
-  return { subLegs, verdict, note };
+  // Teilwellen-Beschriftung: Antrieb roemisch, Korrektur alphabetisch.
+  const romans = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi"];
+  const letters = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"];
+  const marks = verdict === "IMPULSIV" ? romans : letters;
+  const points = piv.slice(0, marks.length).map((pv, n) => ({
+    label: marks[n],
+    date: pv.date,
+    price: pv.price,
+  }));
+
+  return { subLegs, verdict, note, points };
 }
 
 /**
@@ -235,9 +248,21 @@ export function readCycles(candles: Candle[]): CycleRead | null {
     ? readStructure(candles, runningLeg, picked.th, priorMotive, isCorr)
     : null;
 
+  // Zyklus-Skelett fuer den Chart: Startpunkt, dann je Zyklus das
+  // Antriebsende (nummeriert) und das Korrekturende (unbeschriftet).
+  const points: { label: string; date: string; price: number }[] = [];
+  if (cycles.length > 0) {
+    points.push({ label: "", date: cycles[0].motive.fromDate, price: cycles[0].motive.from });
+    cycles.forEach((z, n) => {
+      points.push({ label: `Z${n + 1}`, date: z.motive.toDate, price: z.motive.to });
+      if (z.corr) points.push({ label: "", date: z.corr.toDate, price: z.corr.to });
+    });
+  }
+
   return {
     degree: picked.th,
     cycles,
+    points,
     summary:
       `🔄 ${cycles.length} Zyklen (Grad ${picked.th} %) · ${phase}` +
       (structure ? `\n🔬 ${structure.note}` : ""),

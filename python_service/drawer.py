@@ -232,6 +232,37 @@ def main():
         ax.set_yscale("log")
         ax.grid(True, which="major", ls="-", alpha=0.2)
         ax.grid(True, which="minor", ls=":", alpha=0.1)
+
+        # V150: Zyklus-Skelett (Antrieb/Korrektur) - duenn, violett, im
+        # Hintergrund. Bewusst zurueckhaltend, damit die 0-5-Zaehlung (blau)
+        # und die A-B-C-Korrektur (rot) weiterhin dominieren.
+        cyc = payload.get("cycles", []) or []
+        if len(cyc) >= 2:
+            cx = [pd.to_datetime(p["date"]) for p in cyc]
+            cy = [float(p["price"]) for p in cyc]
+            ax.plot(cx, cy, color="#7c3aed", linewidth=1.1, alpha=0.55,
+                    linestyle="-", zorder=3)
+            for j, p in enumerate(cyc):
+                ax.plot(cx[j], cy[j], "s", color="#7c3aed", markersize=3.2,
+                        alpha=0.75, zorder=3)
+                lab = str(p.get("label", ""))
+                if lab:
+                    ax.annotate(lab, (cx[j], cy[j]), textcoords="offset points",
+                                xytext=(0, 9), fontsize=7.5, color="#7c3aed",
+                                ha="center", alpha=0.9, zorder=3)
+
+        # V150: Binnenstruktur der laufenden Phase (i-ii-iii bzw. a-b-c)
+        psub = payload.get("phaseSub", []) or []
+        if psub:
+            px_ = [pd.to_datetime(p["date"]) for p in psub]
+            py_ = [float(p["price"]) for p in psub]
+            for j in range(len(psub)):
+                ax.plot(px_[j], py_[j], "o", color="#a855f7", markersize=3.0,
+                        zorder=4)
+                ax.annotate(psub[j]["label"], (px_[j], py_[j]),
+                            textcoords="offset points", xytext=(0, 7),
+                            fontsize=7, color="#a855f7", ha="center", zorder=4)
+
         # V123: Sub-Zaehlungen (i-v) - duenn, klein, Teal, eine Ebene tiefer
         subs = payload.get("subwaves", []) or []
         if subs:
