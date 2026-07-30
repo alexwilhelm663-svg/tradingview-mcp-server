@@ -11,6 +11,7 @@ import { getCritique, Critique } from "./commentary";
 import { classifyCorrection, CorrectionRead } from "./correction";
 import { assessCompletion, CompletionRead } from "./completion";
 import { assessConfluence } from "./confluence";
+import { checkProportion } from "./proportion";
 import { feedbackPenalty } from "./feedback";
 import { assessMultiWave, MultiWaveRead } from "./multiWave";
 import { assessHigherFrame } from "./higherFrame";
@@ -236,6 +237,26 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     }
     const { result: impulse, pivots, threshold } = outcome.impulse;
     const wc = impulse.count;
+
+    // V146: Proportionalitaets-Veto - verwirft Zaehlungen, die die harten
+    // Regeln nur ueber eine degenerierte Welle 1 oder ein in sich
+    // zerrissenes Bein erfuellen. Rein restriktiv: fuehrt zur Enthaltung,
+    // erzeugt niemals eine eigene Zaehlung.
+    const prop = checkProportion(candles, wc);
+    if (!prop.ok) {
+      console.log(`[ENGINE] ${symbol}: Zaehlung verworfen - ${prop.reason}`);
+      const buffer = await renderChart({
+        symbol, waves: [], candles, candlestick: interval === "1d",
+      });
+      let abst = `Keine belastbare Zaehlung: ${prop.reason} (DK-7).`;
+      try {
+        const hf = await assessHigherFrame(symbol, range);
+        abst += `\n\n${hf.note}`;
+      } catch {
+        /* best effort */
+      }
+      return { ...EMPTY, buffer, abstention: abst };
+    }
 
     // 2b. Deterministische Qualitaets-Checks (V114 Stufe 1):
     // Divergenz + Subwellen-Struktur erweitern den Score, Negativbefunde werden Flags.
