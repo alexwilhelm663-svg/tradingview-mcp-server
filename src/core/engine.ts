@@ -12,6 +12,7 @@ import { classifyCorrection, CorrectionRead } from "./correction";
 import { assessCompletion, CompletionRead } from "./completion";
 import { assessConfluence } from "./confluence";
 import { checkProportion } from "./proportion";
+import { readCycles } from "./cycles";
 import { feedbackPenalty } from "./feedback";
 import { assessMultiWave, MultiWaveRead } from "./multiWave";
 import { assessHigherFrame } from "./higherFrame";
@@ -241,6 +242,13 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
         }
       } catch {
         /* best effort */
+      }
+      // V148: Auch ohne regelkonforme Fuenferzaehlung ist der Verlauf
+      // strukturiert. Die Zyklen-Sicht sagt, wo im Rhythmus wir stehen,
+      // statt gar nichts zu melden (Fall ALAB).
+      const cyc = readCycles(candles);
+      if (cyc) {
+        abst += `\n\n${cyc.summary}\n` + cyc.lines.map((l) => `  ${l}`).join("\n");
       }
       try {
         const hf = await assessHigherFrame(symbol, range);
@@ -728,6 +736,10 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
         `📊 ${richtung}: ${mwBack.note}`);
     }
     for (const z of strukturZeilen) bigPicture += `\n${z}`;
+
+    // V148: Eine Zeile Zyklus-Kontext - Antrieb/Korrektur-Rhythmus.
+    const cycRead = readCycles(candles);
+    if (cycRead) bigPicture += `\n${cycRead.summary}`;
     if (koRead && koRead.reversalRisk === "CONFIRMED")
       bigPicture += `\n🔄 Trendwechsel bestätigt`;
     else if (verbose && koRead && koRead.reversalRisk === "LIKELY")
