@@ -212,7 +212,10 @@ function augmentEdgeExtremes(pivots: Pivot[], candles: Candle[]): Pivot[] {
   return out;
 }
 
-export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
+export function findImpulseAdaptive(
+  candles: Candle[],
+  accept?: (r: ImpulseResult) => boolean
+): AdaptiveOutcome {
   // V117.1 "Best-ueber-Stufen": ALLE Aufloesungen werden ausgewertet.
   // Unter den Doktrin-Treffern gewinnt der hoechste Score; bei Gleichstand
   // die groebere Stufe (Makro-Praeferenz). Fallbacks nur, wenn keine
@@ -224,7 +227,11 @@ export function findImpulseAdaptive(candles: Candle[]): AdaptiveOutcome {
     const pivots = augmentEdgeExtremes(zigzag(candles, threshold), candles);
     if (pivots.length < 6) continue;
 
-    const result = findBestImpulse(pivots);
+    // V147: Mit Validator wird die Rangliste abgelaufen (DK-8-Walk-down) -
+    // die beste Zaehlung, die den Proportionalitaets-Test besteht, gewinnt.
+    // Ohne Validator unveraendertes Verhalten.
+    const ranked = findRankedImpulses(pivots, accept ? 5 : 1);
+    const result = accept ? ranked.find((r) => accept(r)) : ranked[0];
 
     if (!result) continue;
 

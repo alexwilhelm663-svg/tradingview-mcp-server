@@ -20,8 +20,9 @@ export interface ProportionCheck { ok: boolean; reason: string | null }
  *  (P2) Zeitproportion: laengste zu kuerzester Antriebswelle <= 8x.
  *  (P3) Welle 1 muss mindestens 8 % der Impuls-Loglaenge tragen.
  */
-const MAX_TIME_RATIO = 8;
-const MIN_W1_SHARE = 0.08;
+const MAX_TIME_RATIO = 25;
+const MAX_INNER_RATIO = 2.5;
+const MIN_W1_SHARE = 0.15;
 
 function pt(wc: WaveCount, label: string) {
   return wc.points.find((p) => p.label === label) ?? null;
@@ -89,18 +90,19 @@ export function checkProportion(candles: Candle[], wc: WaveCount): ProportionChe
   }
 
   // (P1) interner Gegenzug vs. benachbarte Korrektur
+  // V147: empirisch kalibriert an den Referenzzaehlungen. Gemessen wurde das
+  // Verhaeltnis "groesster Gegenzug in Welle 3" zu "groesste Nachbarkorrektur":
+  // MSTR 0,85 · BTC 1,06 · TSLA 0,67 · NET 1,39 · SAP 0,43 · PYPL 1,30 gegen
+  // ARM 4,22. Schwelle 2,5 trennt sauber. Die analoge Welle-5-Regel wurde
+  // gestrichen: dort liegen PYPL (2,17) und ARM (2,16) gleichauf, sie hat
+  // keine Trennschaerfe.
   const inner3 = maxCounterMove(candles, i2, i3, dir);
-  if (inner3 > Math.max(w2, w4) * 1.15 && inner3 > 0.15) {
+  const korr = Math.max(w2, w4);
+  if (korr > 0 && inner3 > korr * MAX_INNER_RATIO && inner3 > 0.15) {
+    const ddPct = (1 - Math.exp(-inner3)) * 100;
     return {
       ok: false,
-      reason: `Ruecksetzer innerhalb Welle 3 (${((Math.exp(inner3) - 1) * 100).toFixed(0)} %) uebersteigt die Korrekturen W2/W4 - Welle 3 nicht zusammenhaengend`,
-    };
-  }
-  const inner5 = maxCounterMove(candles, i4, i5, dir);
-  if (inner5 > Math.max(w2, w4) * 1.15 && inner5 > 0.15) {
-    return {
-      ok: false,
-      reason: `Ruecksetzer innerhalb Welle 5 (${((Math.exp(inner5) - 1) * 100).toFixed(0)} %) uebersteigt die Korrekturen W2/W4`,
+      reason: `Ruecksetzer innerhalb Welle 3 (-${ddPct.toFixed(0)} %) ist das ${(inner3 / korr).toFixed(1)}-fache der Korrekturen W2/W4 - Welle 3 nicht zusammenhaengend`,
     };
   }
   return { ok: true, reason: null };

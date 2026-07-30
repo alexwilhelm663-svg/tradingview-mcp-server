@@ -218,7 +218,12 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     const currentPrice = candles[candles.length - 1].close;
 
     // 2. Deterministische Impulszaehlung (V113.1) mit Enthaltungs-Gebot (DK-7)
-    const outcome = findImpulseAdaptive(candles);
+    // V147: Der Proportionalitaets-Test wird als Filter in die Zaehlungs-
+    // Auswahl gereicht. Faellt die beste Kandidatin durch, rueckt die
+    // naechstbeste nach - Enthaltung erst, wenn keine besteht.
+    const outcome = findImpulseAdaptive(candles, (r) =>
+      checkProportion(candles, r.count).ok
+    );
     if (outcome.impulse === null) {
       console.log(`[ENGINE] ${symbol}: Enthaltung (DK-7) - ${outcome.abstention}`);
       const buffer = await renderChart({ symbol, waves: [], candles, candlestick: interval === "1d" });
@@ -227,6 +232,16 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       // einen übergeordneten Wendepunkt verschweigen (z.B. großes Tief +
       // beginnende Gegenbewegung). Genau der Fall, den der Nutzer adressiert.
       let abst = outcome.abstention ?? "Keine regelkonforme Zählung.";
+      // V147: Wenn nur die Proportionalitaet gescheitert ist, das benennen.
+      try {
+        const raw = findImpulseAdaptive(candles);
+        if (raw.impulse) {
+          const why = checkProportion(candles, raw.impulse.result.count).reason;
+          if (why) abst = `Keine belastbare Zählung: ${why} (DK-7).`;
+        }
+      } catch {
+        /* best effort */
+      }
       try {
         const hf = await assessHigherFrame(symbol, range);
         abst += `\n\n${hf.note}`;
@@ -238,25 +253,6 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     const { result: impulse, pivots, threshold } = outcome.impulse;
     const wc = impulse.count;
 
-    // V146: Proportionalitaets-Veto - verwirft Zaehlungen, die die harten
-    // Regeln nur ueber eine degenerierte Welle 1 oder ein in sich
-    // zerrissenes Bein erfuellen. Rein restriktiv: fuehrt zur Enthaltung,
-    // erzeugt niemals eine eigene Zaehlung.
-    const prop = checkProportion(candles, wc);
-    if (!prop.ok) {
-      console.log(`[ENGINE] ${symbol}: Zaehlung verworfen - ${prop.reason}`);
-      const buffer = await renderChart({
-        symbol, waves: [], candles, candlestick: interval === "1d",
-      });
-      let abst = `Keine belastbare Zaehlung: ${prop.reason} (DK-7).`;
-      try {
-        const hf = await assessHigherFrame(symbol, range);
-        abst += `\n\n${hf.note}`;
-      } catch {
-        /* best effort */
-      }
-      return { ...EMPTY, buffer, abstention: abst };
-    }
 
     // 2b. Deterministische Qualitaets-Checks (V114 Stufe 1):
     // Divergenz + Subwellen-Struktur erweitern den Score, Negativbefunde werden Flags.
