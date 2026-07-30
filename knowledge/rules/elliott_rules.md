@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 6.0
+version: 6.1
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -527,3 +527,23 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
   8 D 11 -> 8 D 9 ist Datenwanderung, unabhaengig von dieser Aenderung),
   Walk-Forward unveraendert +8,6 %, keine neue Enthaltung ueber 24 Titel,
   bessere Zaehlung bei 7 Titeln (AAPL, AMZN, AMD, ORCL, INTC, ETH-USD, ARM).
+- **ZY-1 Zyklen-Sicht (v6.1):** Die Fuenferzaehlung braucht EINE regelkonforme
+  0-5-Sequenz im gesamten Analysefenster. Findet sie keine, schwieg die Engine
+  bisher vollstaendig - auch wenn der Verlauf offensichtlich strukturiert ist
+  (Fall ALAB: drei aufeinanderfolgende Antriebe mit Korrekturen, aber keine
+  regelkonforme Fuenfersequenz, weil Welle 2 die Welle 1 zu 93 % korrigiert und
+  Welle 4 zu 63 %). Die Zyklen-Sicht segmentiert stattdessen in alternierende
+  **Antriebs- und Korrekturphasen** und beantwortet die Frage, wo im Rhythmus
+  wir stehen.
+  - **Gradwahl:** die ZigZag-Stufe wird so gewaehlt, dass 4-12 Beine entstehen
+    (Kandidaten 60/50/40/33/27/22/18/15/12 %). Zu fein zaehlt Rauschen, zu grob
+    macht den ganzen Chart zu einem Bein.
+  - **Zyklus** = Antrieb + darauf folgende Korrektur, sofern diese den Antrieb
+    nicht vollstaendig aufloest (Retracement < 1,0). Andernfalls beginnt ein
+    neuer Zyklus in der Gegenrichtung.
+  - **Ausgabe:** eine Zeile im Kurzreport (Anzahl Zyklen, Grad, laufende Phase);
+    im Enthaltungsfall die vollstaendige Zyklusliste anstelle der bisherigen
+    reinen Fehlanzeige.
+  Die Zyklen-Sicht ersetzt keine Zaehlung, erzeugt keine Setups und beeinflusst
+  weder Selektion noch Ziele. Verifiziert: Referenzzaehlungen unveraendert,
+  Walk-Forward unveraendert +8,6 %.
