@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 5.8
+version: 6.0
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -504,3 +504,26 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
   nur noch EINMAL (im Big Picture) und werden nicht mehr zusätzlich in die
   Korrektur-Lesart gehaengt. Früher stand derselbe Absatz doppelt im Report,
   inklusive doppeltem Warnzeichen.
+- **DK-8b Proportionalitaets-Filter (v6.0):** Die harten Regeln lassen sich
+  ueber eine degenerierte Welle 1 trivial erfuellen — HR-2 (Welle 3 nicht die
+  kuerzeste) ist bei einer winzigen Welle 1 automatisch erfuellt, und der Score
+  belohnt grosse W3-Extension. Der Optimierer wurde also dafuer BELOHNT, eine
+  Mini-Welle-1 zu waehlen (Fall ARM: W1 +20 % / 4 Wochen, W3 +371 % / 135
+  Wochen mit 58 % internem Rueckgang). Drei Filter, empirisch an den
+  Referenzzaehlungen kalibriert:
+  - **W1-Anteil ≥ 15 %** der Impuls-Loglaenge (Referenzen 22,8-67,4 %; ARM 8,2 %)
+  - **Zeitproportion ≤ 25×** zwischen laengster und kuerzester Antriebswelle
+    (Referenzen 5,3-16,8×; ARM 63,5×)
+  - **Groesster Gegenzug in Welle 3 ≤ 2,5×** der groessten Nachbarkorrektur
+    (Referenzen 0,43-1,39; ARM 4,22)
+  Die analoge Welle-5-Regel wurde gestrichen: PYPL (2,17) und ARM (2,16) liegen
+  gleichauf, sie hat keine Trennschaerfe.
+  **Wirkungsweise (DK-8-Walk-down):** Der Filter fliesst als Validator in
+  \`findImpulseAdaptive\` ein. Faellt die beste Kandidatin durch, rueckt die
+  naechstbeste aus \`findRankedImpulses\` nach; Enthaltung erst, wenn auf keiner
+  ZigZag-Stufe eine Kandidatin besteht. Der Filter kann nur verwerfen, nie
+  selbst zaehlen.
+  **Verifiziert:** 5 von 6 Referenzzaehlungen unveraendert (PYPL-Score-Drift
+  8 D 11 -> 8 D 9 ist Datenwanderung, unabhaengig von dieser Aenderung),
+  Walk-Forward unveraendert +8,6 %, keine neue Enthaltung ueber 24 Titel,
+  bessere Zaehlung bei 7 Titeln (AAPL, AMZN, AMD, ORCL, INTC, ETH-USD, ARM).
