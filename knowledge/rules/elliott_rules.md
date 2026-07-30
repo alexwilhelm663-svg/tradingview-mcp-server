@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 6.1
+version: 6.2
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -547,3 +547,20 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
   Die Zyklen-Sicht ersetzt keine Zaehlung, erzeugt keine Setups und beeinflusst
   weder Selektion noch Ziele. Verifiziert: Referenzzaehlungen unveraendert,
   Walk-Forward unveraendert +8,6 %.
+- **ZY-2 Binnenstruktur der laufenden Phase (v6.2):** Die Zyklen-Sicht sagt,
+  WO im Rhythmus wir stehen - nicht, WAS die laufende Bewegung ist. Dafuer wird
+  die laufende Phase eine Stufe feiner zerlegt (Sub-Stufe = Zyklus-Grad / 3,
+  begrenzt auf 3-15 %):
+  - **3-teilig (a-b-c)** -> korrektiv
+  - **5-teilig** und per segmentVerdict impulsiv -> antriebsartig
+  - **7/9/11-teilig** -> zusammengesetzte Korrektur (W-X-Y)
+  - **unter 12 Kerzen** -> keine Aussage. Ein feiner ZigZag liefert auf sechs
+    Kerzen muehelos "sechs Teilbeine", die keine sind.
+  **Lage-Diskriminante, je nach Phasentyp eine ANDERE Frage:**
+  - laufende **Korrektur**: bleibt es Korrektur (solange der Ursprung des
+    korrigierten Antriebs haelt) oder kippt der Trend (darunter)?
+  - laufender **Antrieb**: Welle 3 oder Welle C? Fuenfteiligkeit allein
+    entscheidet das NICHT - eine C ist ebenfalls fuenfteilig. Erst das
+    Ueberschreiten des Ursprungs der vorangegangenen Bewegung schliesst die C aus.
+  Rein additiv: keine Setups, keine Ziele, keine Selektion. Verifiziert:
+  Referenzzaehlungen unveraendert, Walk-Forward unveraendert +8,6 %.

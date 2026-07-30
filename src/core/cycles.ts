@@ -1,5 +1,6 @@
 import type { Candle } from "./marketData";
 import { zigzag } from "./zigzag";
+import { segmentVerdict } from "./impulseFinder";
 
 export interface CycleLeg {
   dir: 1 | -1;
@@ -15,11 +16,18 @@ export interface Cycle {
   retr: number | null;
 }
 
+export interface PhaseStructure {
+  subLegs: number;                                  // gezaehlte Teilbeine
+  verdict: "IMPULSIV" | "KORREKTIV" | "UNKLAR";
+  note: string;
+}
+
 export interface CycleRead {
   degree: number;      // gewaehlte ZigZag-Stufe in %
   cycles: Cycle[];
   summary: string;     // eine Zeile fuer den Kurzreport
   lines: string[];     // Zyklusliste fuer die Enthaltungs-Ausgabe
+  structure: PhaseStructure | null; // Binnenstruktur der laufenden Phase
 }
 
 const pctOf = (from: number, to: number) => (to / from - 1) * 100;
@@ -67,6 +75,88 @@ function pickDegree(c: Candle[]): { th: number; legs: CycleLeg[] } | null {
     if (score === 0) break;
   }
   return best ? { th: best.th, legs: best.legs } : null;
+}
+
+/**
+ * V149: Binnenstruktur der laufenden Phase.
+ *
+ * Die Zyklen-Sicht sagt, WO im Rhythmus wir stehen - nicht, WAS die laufende
+ * Bewegung ist. Dafuer wird sie eine Stufe feiner zerlegt:
+ *  - fuenfteilig  -> antriebsartig
+ *  - dreiteilig   -> korrektiv
+ * WICHTIG: Fuenfteiligkeit allein unterscheidet NICHT zwischen Welle 3 und
+ * Welle C - eine C ist ebenfalls fuenfteilig. Die Unterscheidung liefert erst
+ * die Lage: ueberschreitet die Bewegung den Ursprung des vorangegangenen
+ * Antriebs, ist eine C ausgeschlossen. Genau diese Marke wird mitgegeben.
+ */
+function readStructure(
+  candles: Candle[],
+  leg: CycleLeg,
+  parentDegree: number,
+  priorMotive: CycleLeg | null,
+  legIsCorrection: boolean
+): PhaseStructure | null {
+  const seg = candles.filter((k) => k.date >= leg.fromDate && k.date <= leg.toDate);
+  if (seg.length < 6) return null;
+
+  // Unter 12 Kerzen ist jede Teilwellen-Zaehlung Rauschen: bei sechs Kerzen
+  // liefert ein feiner ZigZag muehelos "sechs Teilbeine", die keine sind.
+  if (seg.length < 12) {
+    return {
+      subLegs: 0,
+      verdict: "UNKLAR",
+      note: `Phase zu jung für Binnenstruktur (${seg.length} Kerzen)`,
+    };
+  }
+
+  const subTh = Math.max(3, Math.min(15, parentDegree / 3));
+  const piv = zigzag(seg, subTh);
+  const subLegs = piv.length >= 1 ? piv.length + 1 : 0;
+
+  const impulsive =
+    segmentVerdict(candles, leg.fromDate, leg.toDate, leg.dir as 1 | -1, parentDegree) ===
+    "IMPULSIVE";
+
+  // Elliott: Antrieb fuenfteilig, einfache Korrektur dreiteilig,
+  // zusammengesetzte Korrektur sieben- oder elfteilig.
+  let verdict: PhaseStructure["verdict"];
+  let form: string;
+  if (subLegs === 3) {
+    verdict = "KORREKTIV"; form = "3-teilig (a-b-c)";
+  } else if (subLegs === 5 && impulsive) {
+    verdict = "IMPULSIV"; form = "5-teilig";
+  } else if (subLegs >= 7 && subLegs % 2 === 1) {
+    verdict = "KORREKTIV"; form = `${subLegs}-teilig (zusammengesetzt, W-X-Y)`;
+  } else if (impulsive) {
+    verdict = "IMPULSIV"; form = `${subLegs}-teilig, geradlinig`;
+  } else {
+    verdict = "UNKLAR"; form = `${subLegs} Teilbeine`;
+  }
+
+  let note =
+    verdict === "IMPULSIV"
+      ? `Binnenstruktur ${form} → antriebsartig`
+      : verdict === "KORREKTIV"
+        ? `Binnenstruktur ${form} → korrektiv`
+        : `Binnenstruktur unklar (${form})`;
+
+  // Lage-Diskriminante - je nach Phasentyp eine ANDERE Frage.
+  if (priorMotive) {
+    const origin = priorMotive.from;
+    const beyond = leg.dir === 1 ? leg.to > origin : leg.to < origin;
+    if (legIsCorrection) {
+      // Korrektur laeuft: bleibt es Korrektur oder kippt der Trend?
+      note += beyond
+        ? ` · Ursprung ${origin.toFixed(2)} durchbrochen → keine Korrektur mehr, Trendwechsel`
+        : ` · Korrektur solange über ${origin.toFixed(2)}; darunter Trendwechsel`;
+    } else if (verdict === "IMPULSIV") {
+      // Antrieb laeuft: Welle 3 oder Welle C? Beide sind fuenfteilig.
+      note += beyond
+        ? ` · Ursprung ${origin.toFixed(2)} überschritten → C ausgeschlossen`
+        : ` · Welle 3 oder C – entschieden ${leg.dir === 1 ? "über" : "unter"} ${origin.toFixed(2)}`;
+    }
+  }
+  return { subLegs, verdict, note };
 }
 
 /**
@@ -132,10 +222,26 @@ export function readCycles(candles: Candle[]): CycleRead | null {
     phase = `letzter Antrieb endete bei ${last.motive.to.toFixed(2)} – neue Bewegung im Aufbau`;
   }
 
+  // Binnenstruktur der laufenden Phase
+  const runningLeg = last.corr && last.corr.running
+    ? last.corr
+    : last.motive.running
+      ? last.motive
+      : null;
+  const priorMotive = last.corr && last.corr.running ? last.motive
+    : cycles.length >= 2 ? cycles[cycles.length - 2].motive : null;
+  const isCorr = !!(last.corr && last.corr.running);
+  const structure = runningLeg
+    ? readStructure(candles, runningLeg, picked.th, priorMotive, isCorr)
+    : null;
+
   return {
     degree: picked.th,
     cycles,
-    summary: `🔄 ${cycles.length} Zyklen (Grad ${picked.th} %) · ${phase}`,
+    summary:
+      `🔄 ${cycles.length} Zyklen (Grad ${picked.th} %) · ${phase}` +
+      (structure ? `\n🔬 ${structure.note}` : ""),
     lines,
+    structure,
   };
 }
