@@ -227,7 +227,12 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     );
     if (outcome.impulse === null) {
       console.log(`[ENGINE] ${symbol}: Enthaltung (DK-7) - ${outcome.abstention}`);
-      const buffer = await renderChart({ symbol, waves: [], candles, candlestick: interval === "1d" });
+      const cycPre = readCycles(candles);
+      const buffer = await renderChart({
+        symbol, waves: [], candles, candlestick: interval === "1d",
+        cycles: cycPre ? cycPre.points : undefined,
+        phaseSub: cycPre?.structure ? cycPre.structure.points : undefined,
+      });
       // V137: Enthaltung auf der Zoom-Stufe -> automatisch das übergeordnete
       // Big Picture (5y/max) hinzuziehen. Der gezoomte Ausschnitt allein kann
       // einen übergeordneten Wendepunkt verschweigen (z.B. großes Tief +
@@ -246,7 +251,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       // V148: Auch ohne regelkonforme Fuenferzaehlung ist der Verlauf
       // strukturiert. Die Zyklen-Sicht sagt, wo im Rhythmus wir stehen,
       // statt gar nichts zu melden (Fall ALAB).
-      const cyc = readCycles(candles);
+      const cyc = cycPre;
       if (cyc) {
         abst += `\n\n${cyc.summary}\n` + cyc.lines.map((l) => `  ${l}`).join("\n");
       }
@@ -779,6 +784,8 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       timeWindows: chartTimeWindows.concat(completion ? completion.timeWindows : []),
       subwaves,
       candlestick: interval === "1d",
+      cycles: cycRead ? cycRead.points : undefined,
+      phaseSub: cycRead?.structure ? cycRead.structure.points : undefined,
     });
 
     // V118.1: Detail-Chart der W5-Binnenstruktur (Sub-Wellen bzw. ED-Keil).
