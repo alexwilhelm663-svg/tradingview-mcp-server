@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 6.3
+version: 6.4
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -576,3 +576,16 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
     Struktur, alphabetisch (a, b, c …) bei korrektiver.
   Erscheint auch im Enthaltungsfall - dort ist der Chart sonst voellig
   unbeschriftet.
+- **DK-10 Erreichte Ziele als erreicht melden (v6.4):** Der Report fuehrte
+  Kurszonen und C-Ziele weiter als "naechste Kaufzone", obwohl der Kurs dort
+  laengst durchgehandelt war. Beispiel BTC: gemeldet wurde "naechste Kaufzone
+  62547.85, praeferiertes C-Ziel 62547.85", das Tief lag jedoch schon bei
+  57747.77 (01.07.2026) - also darunter. Das Ziel war abgearbeitet, nicht
+  bevorstehend.
+  Ab v6.4 wird das Extrem der laufenden Korrektur gegen Zone und Ziel geprueft:
+  - Extrem jenseits der Zone -> "Zone X-Y bereits durchhandelt (Tief/Hoch Z am
+    Datum)", Watch-Zone erhaelt den Zusatz "(erreicht)".
+  - Extrem jenseits des C-Ziels -> "C-Ziel X erreicht" statt "praeferiertes
+    C-Ziel X".
+  Gilt in beide Richtungen (Abwaertskorrektur und Erholung). Reine
+  Textaenderung - Zonen, Ziele und Selektion bleiben unveraendert.
