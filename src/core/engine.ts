@@ -83,6 +83,26 @@ interface CorrectionLegs {
 }
 
 /** A-Tief, B-Hoch und bisheriges C-Tief der laufenden Korrektur nach dem Impuls-Top. */
+/**
+ * V151: Extrem der laufenden Korrektur. Wird gebraucht, um bereits
+ * abgearbeitete Ziele nicht weiter als "naechste Zone" zu fuehren -
+ * der Report nannte bei BTC 62547.85 als Kaufzone, obwohl der Kurs
+ * dort laengst durch war (Tief 57747.77).
+ */
+function extremeSince(
+  candles: Candle[],
+  fromDate: string,
+  dir: 1 | -1
+): { price: number; date: string } | null {
+  const post = candles.filter((k) => k.date > fromDate);
+  if (post.length === 0) return null;
+  let best = post[0];
+  for (const k of post) {
+    if (dir === 1 ? k.high > best.high : k.low < best.low) best = k;
+  }
+  return { price: dir === 1 ? best.high : best.low, date: best.date };
+}
+
 function correctionLegs(pivots: Pivot[], candles: Candle[], topDate: string): CorrectionLegs {
   const empty: CorrectionLegs = {
     aLow: null, aDate: null, bHigh: null, bDate: null, cLow: null, cDate: null,
@@ -452,14 +472,29 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
             (overhead != null ? ` · Overhead-Trigger: ${overhead.toFixed(2)}` : "")
           : "⚪ Kein Fib-Cluster unterhalb des Kurses ableitbar.")
           + (correction ? `\n${correction.text}` : "");
+        // V151: Erreichte Ziele als erreicht melden, nicht als bevorstehend.
+        const corrExt = extremeSince(candles, w5.date, -1);
+        const tgtHit =
+          correction != null && correction.targetPrice != null && corrExt != null &&
+          corrExt.price <= correction.targetPrice;
+        const zoneHit = below != null && corrExt != null && corrExt.price <= below.ceiling;
         scenPrimary = below
-          ? `Korrektur aktiv – nächste Kaufzone ${below.floor.toFixed(2)}–${below.ceiling.toFixed(2)}` +
-            (correction && correction.targetPrice != null ? `, präferiertes C-Ziel ${correction.targetPrice.toFixed(2)}` : "") + "."
+          ? (zoneHit && corrExt
+              ? `Korrektur aktiv – Zone ${below.floor.toFixed(2)}–${below.ceiling.toFixed(2)} bereits durchhandelt ` +
+                `(Tief ${corrExt.price.toFixed(2)} am ${corrExt.date})`
+              : `Korrektur aktiv – nächste Kaufzone ${below.floor.toFixed(2)}–${below.ceiling.toFixed(2)}`) +
+            (correction && correction.targetPrice != null
+              ? (tgtHit
+                  ? `, C-Ziel ${correction.targetPrice.toFixed(2)} erreicht`
+                  : `, präferiertes C-Ziel ${correction.targetPrice.toFixed(2)}`)
+              : "") + "."
           : "Korrektur aktiv – keine belastbare Kaufzone darunter ableitbar.";
         scenAlt = overhead != null
           ? `Rückeroberung > ${overhead.toFixed(2)} deutet auf Trend-Fortsetzung nach oben.`
           : "Rückeroberung des W4-Niveaus deutet auf Trend-Fortsetzung.";
-        keyLine = below ? `Watch-Zone ${below.floor.toFixed(2)}–${below.ceiling.toFixed(2)}` : "";
+        keyLine = below
+          ? `Watch-Zone ${below.floor.toFixed(2)}–${below.ceiling.toFixed(2)}` + (zoneHit ? " (erreicht)" : "")
+          : "";
       }
     }
 
@@ -571,14 +606,29 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
             (underfoot != null ? ` · Underfoot-Trigger: ${underfoot.toFixed(2)}` : "")
           : "⚪ Kein Widerstands-Cluster oberhalb des Kurses ableitbar.")
           + (correctionS ? `\n${correctionS.text}` : "");
+        // V151: siehe Long-Fall - erreichte Ziele als erreicht melden.
+        const corrExtS = extremeSince(candles, w5.date, 1);
+        const tgtHitS =
+          correctionS != null && correctionS.targetPrice != null && corrExtS != null &&
+          corrExtS.price >= correctionS.targetPrice;
+        const zoneHitS = above != null && corrExtS != null && corrExtS.price >= above.floor;
         scenPrimary = above
-          ? `Erholung läuft – nächste Widerstandszone ${above.floor.toFixed(2)}–${above.ceiling.toFixed(2)}` +
-            (correctionS && correctionS.targetPrice != null ? `, präferiertes C-Ziel ${correctionS.targetPrice.toFixed(2)}` : "") + "."
+          ? (zoneHitS && corrExtS
+              ? `Erholung läuft – Zone ${above.floor.toFixed(2)}–${above.ceiling.toFixed(2)} bereits erreicht ` +
+                `(Hoch ${corrExtS.price.toFixed(2)} am ${corrExtS.date})`
+              : `Erholung läuft – nächste Widerstandszone ${above.floor.toFixed(2)}–${above.ceiling.toFixed(2)}`) +
+            (correctionS && correctionS.targetPrice != null
+              ? (tgtHitS
+                  ? `, C-Ziel ${correctionS.targetPrice.toFixed(2)} erreicht`
+                  : `, präferiertes C-Ziel ${correctionS.targetPrice.toFixed(2)}`)
+              : "") + "."
           : "Erholung läuft – keine belastbare Widerstandszone darüber ableitbar.";
         scenAlt = underfoot != null
           ? `Wochenschluss < ${underfoot.toFixed(2)} deutet auf Abwärts-Fortsetzung.`
           : "Bruch der Erholungstiefs deutet auf Abwärts-Fortsetzung.";
-        keyLine = above ? `Watch-Zone ${above.floor.toFixed(2)}–${above.ceiling.toFixed(2)}` : "";
+        keyLine = above
+          ? `Watch-Zone ${above.floor.toFixed(2)}–${above.ceiling.toFixed(2)}` + (zoneHitS ? " (erreicht)" : "")
+          : "";
       }
     }
 
