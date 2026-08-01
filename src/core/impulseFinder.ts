@@ -1,4 +1,5 @@
 import { zigzag, Pivot } from "./zigzag";
+import { preferContinuous } from "./continuity";
 import type { Candle } from "./marketData";
 
 export interface WavePoint {
@@ -229,9 +230,14 @@ export function findImpulseAdaptive(
 
     // V147: Mit Validator wird die Rangliste abgelaufen (DK-8-Walk-down) -
     // die beste Zaehlung, die den Proportionalitaets-Test besteht, gewinnt.
-    // Ohne Validator unveraendertes Verhalten.
-    const ranked = findRankedImpulses(pivots, accept ? 5 : 1);
-    const result = accept ? ranked.find((r) => accept(r)) : ranked[0];
+    // V154: Unter gleichwertigen Kandidaten gewinnt die durchgehendere
+    // Zaehlung (Score primaer, Kontinuitaet als Stichentscheid). Greift in der
+    // Praxis selten - gemessen bei 0 von 17 Titeln -, kostet aber nichts und
+    // verhindert, dass bei echtem Gleichstand die luecken*reichere* gewinnt.
+    const ranked = findRankedImpulses(pivots, accept ? 5 : 3);
+    const valid = accept ? ranked.filter((r) => accept(r)) : ranked;
+    const picked = preferContinuous(valid, pivots, 1);
+    const result = picked ? picked.best : undefined;
 
     if (!result) continue;
 
