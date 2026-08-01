@@ -191,53 +191,96 @@ export async function screenSymbol(symbol: string): Promise<ScreenerRow> {
   };
 }
 
-const ICON: Record<SupportStatus, string> = {
-  AN_ZONE: "🎯", NAH: "🟡", FERN: "⚪", UNTER: "🔴", KEINE: "⚫",
+/**
+ * V158: Kompakte Monospace-Tabelle.
+ *
+ * Der frühere Blocktext war auf dem Handy kaum zu scannen: pro Titel drei
+ * Zeilen, umbrechende Fliesstexte, Emojis mitten in der Zeile. Jetzt eine
+ * Tabelle im Codeblock - dort haelt Telegram die Spalten, weil Monospace
+ * gerendert und horizontal gescrollt statt umgebrochen wird.
+ *
+ * WICHTIG: Keine Emojis INNERHALB der Tabelle. Sie sind je nach Font
+ * unterschiedlich breit und zerreissen die Ausrichtung. Status steckt in der
+ * Sortierung (naechste Unterstuetzung zuerst), Quelle und Reife in je einem
+ * Zeichen.
+ */
+
+/** Kompakte Zahl: 1.72M · 63.0k · 823 · 47.08 · 0.0700 */
+function num(n: number): string {
+  if (!isFinite(n)) return "-";
+  const a = Math.abs(n);
+  if (a >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (a >= 1e4) return (n / 1e3).toFixed(1) + "k";
+  if (a >= 100) return n.toFixed(0);
+  if (a >= 1) return n.toFixed(2);
+  return n.toFixed(4);
+}
+
+/** Quelle auf ein Zeichen: F=Fib · M=1-2-Marke · R=Median-Retr · S=Swing */
+function srcCode(source: string): string {
+  if (source.startsWith("Fib")) return "F";
+  if (source.startsWith("1-2")) return "M";
+  if (source.startsWith("Median")) return "R";
+  if (source.startsWith("Swing")) return "S";
+  return "-";
+}
+
+/** Reife auf ein Zeichen: ! = überfällig · ~ = reif · Leerzeichen = früh */
+function ripeCode(note: string | null): string {
+  if (!note) return " ";
+  if (note.includes("überfällig")) return "!";
+  if (note.includes("reif")) return "~";
+  return " ";
+}
+
+const RANK: Record<SupportStatus, number> = {
+  AN_ZONE: 0, NAH: 1, UNTER: 2, FERN: 3, KEINE: 4,
 };
 
-const ORDER: SupportStatus[] = ["AN_ZONE", "NAH", "UNTER", "FERN", "KEINE"];
-
 export function formatDigest(rows: ScreenerRow[]): string {
-  const dec = (n: number) => (n >= 100 ? n.toFixed(0) : n >= 1 ? n.toFixed(2) : n.toFixed(4));
-  const byStatus = new Map<SupportStatus, ScreenerRow[]>();
-  for (const r of rows) {
-    if (!byStatus.has(r.status)) byStatus.set(r.status, []);
-    byStatus.get(r.status)!.push(r);
-  }
-  for (const list of byStatus.values()) {
-    list.sort((a, b) => Math.abs(a.distPct ?? 999) - Math.abs(b.distPct ?? 999));
+  const shown = rows.filter((r) => r.status === "AN_ZONE" || r.status === "NAH" || r.status === "UNTER");
+  shown.sort((a, b) => {
+    const d = RANK[a.status] - RANK[b.status];
+    return d !== 0 ? d : Math.abs(a.distPct ?? 999) - Math.abs(b.distPct ?? 999);
+  });
+
+  const head = `🛰️ **Unterstützung** · ${new Date().toISOString().slice(0, 10)} · ${shown.length}/${rows.length} nah`;
+  if (shown.length === 0) {
+    return head + "\n\nKein Titel in Reichweite einer Unterstützung.";
   }
 
-  const head = `🛰️ **Unterstützungs-Screener** · ${new Date().toISOString().slice(0, 10)} · ${rows.length} Titel`;
-  const blocks: string[] = [];
-  const TITEL: Record<SupportStatus, string> = {
-    AN_ZONE: "🎯 An der Zone",
-    NAH: "🟡 Nahe Unterstützung",
-    UNTER: "🔴 Unter der Marke",
-    FERN: "⚪ Entfernt",
-    KEINE: "⚫ Keine Marke",
-  };
+  const cells = shown.map((r) => ({
+    sym: r.symbol.length > 9 ? r.symbol.slice(0, 9) : r.symbol,
+    kurs: num(r.price),
+    zone: r.support != null ? num(r.support) : "-",
+    abst: r.distPct != null ? `${r.distPct >= 0 ? "+" : ""}${r.distPct.toFixed(1)}` : "-",
+    q: srcCode(r.source) + ripeCode(r.note),
+    tief: r.deeper ? num(r.deeper.level) : "",
+  }));
+  const hasTief = cells.some((c) => c.tief !== "");
+  const w = (k: "sym" | "kurs" | "zone" | "abst" | "tief") =>
+    Math.max(k.length, ...cells.map((c) => c[k].length));
+  const wS = w("sym"), wK = w("kurs"), wZ = w("zone"), wA = w("abst");
+  const wT = hasTief ? Math.max(5, ...cells.map((c) => c.tief.length)) : 0;
 
-  for (const st of ORDER) {
-    const list = byStatus.get(st);
-    if (!list || list.length === 0) continue;
-    if (st === "FERN" || st === "KEINE") {
-      blocks.push(`${TITEL[st]} (${list.length}): ` + list.map((r) => r.symbol).join(", "));
-      continue;
-    }
-    const lines = list.map((r) => {
-      const d = r.distPct != null ? `${r.distPct >= 0 ? "+" : ""}${r.distPct.toFixed(1)} %` : "-";
-      const deep = r.deeper
-        ? `\n     ↓ ${dec(r.deeper.level)} · ${r.deeper.source}`
-        : "";
-      return (
-        `${ICON[r.status]} **${r.symbol}** ${dec(r.price)} → ${r.support != null ? dec(r.support) : "-"} (${d})\n` +
-        `     ${r.source}${r.note ? ` · ${r.note}` : ""}${deep}`
-      );
-    });
-    blocks.push(`**${TITEL[st]}**\n` + lines.join("\n"));
-  }
-  return [head, ...blocks].join("\n\n");
+  // Zweite Zone als SPALTE statt als Fliesstextzeile - die war 106 Zeichen
+  // lang und brach auf dem Handy um, was die Tabellenwirkung zerstoerte.
+  const row = (sym: string, kurs: string, zone: string, abst: string, q: string, tief: string) =>
+    sym.padEnd(wS) + "  " + kurs.padStart(wK) + "  " + zone.padStart(wZ) + "  " +
+    abst.padStart(wA) + "  " + q.padEnd(2) + (hasTief ? "  " + tief.padStart(wT) : "");
+
+  const lines = [
+    row("SYM", "KURS", "ZONE", "ABST", "Q", "↓ZONE"),
+    ...cells.map((c) => row(c.sym, c.kurs, c.zone, c.abst, c.q, c.tief)),
+  ];
+
+  const parts = [head, "```\n" + lines.join("\n") + "\n```"];
+
+  const rest = rows.filter((r) => r.status === "FERN" || r.status === "KEINE");
+  if (rest.length) parts.push(`⚪ Entfernt (${rest.length}): ${rest.map((r) => r.symbol).join(" ")}`);
+
+  parts.push("_F_ Fib · _M_ 1-2-Marke · _R_ Retr · _S_ Swing | _!_ überfällig · _~_ reif");
+  return parts.join("\n\n");
 }
 
 export async function runScreener(symbols?: string[]): Promise<ScreenerRow[]> {
