@@ -3,6 +3,9 @@ import { Telegraf } from "telegraf";
 import http from "http";
 import crypto from "crypto";
 import cron from "node-cron";
+import { runScreener, formatDigest } from "./core/screener";
+import { ensureScreenerUniverse } from "./core/watchlist";
+import { splitMessage } from "./bot/commands";
 import db from "./core/db";
 import { analyzeAsset } from "./core/engine";
 import { getWatchlist } from "./core/watchlist";
@@ -20,7 +23,8 @@ const PORT = Number(process.env.PORT) || 10000;
 const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const COOLDOWN_MS = 7 * 24 * 3600 * 1000; // 7 Tage pro Symbol
 
-console.log("🚀 EW Quant Hunter V156: EW-Engine (Multi-1-2 wieder auffindbar) startet...");
+ensureScreenerUniverse();
+console.log("🚀 EW Quant Hunter V157: EW-Engine + täglicher Unterstützungs-Screener startet...");
 
 function getActiveChatId(): number | null {
   const row = db.prepare("SELECT value FROM config WHERE key = 'chat_id'").get() as
@@ -89,6 +93,28 @@ cron.schedule("0 * * * *", async () => {
     updateStatistics();
   } catch (err: any) {
     console.error("❌ Zyklus-Fehler:", err?.message ?? err);
+  }
+});
+
+// V157: Taeglicher Unterstuetzungs-Screener, 06:00 UTC (08:00 MESZ) - vor
+// Xetra-Eroeffnung, mit den Schlusskursen der US-Sitzung. Eine Nachricht,
+// kein Bild, kein LLM-Aufruf (der stuendliche Radar-Scan macht beides).
+cron.schedule("0 6 * * *", async () => {
+  const chatId = getActiveChatId();
+  if (!chatId) {
+    console.log("⚠️ Kein Screener: Chat-ID fehlt (einmal /start senden).");
+    return;
+  }
+  try {
+    console.log("🛰️ Taeglicher Screener startet...");
+    ensureScreenerUniverse();
+    const rows = await runScreener();
+    for (const part of splitMessage(formatDigest(rows))) {
+      await bot.telegram.sendMessage(chatId, part, { parse_mode: "Markdown" }).catch(() => {});
+    }
+    console.log(`🛰️ Screener fertig: ${rows.length} Titel.`);
+  } catch (err: any) {
+    console.error("❌ Screener-Fehler:", err?.message ?? err);
   }
 });
 
