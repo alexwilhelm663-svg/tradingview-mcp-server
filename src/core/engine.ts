@@ -13,6 +13,7 @@ import { assessCompletion, CompletionRead } from "./completion";
 import { assessConfluence } from "./confluence";
 import { checkProportion } from "./proportion";
 import { readCycles } from "./cycles";
+import { readDegree, entryGrid } from "./degree";
 import { feedbackPenalty } from "./feedback";
 import { assessMultiWave, MultiWaveRead } from "./multiWave";
 import { assessHigherFrame } from "./higherFrame";
@@ -795,6 +796,27 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     // V148: Eine Zeile Zyklus-Kontext - Antrieb/Korrektur-Rhythmus.
     const cycRead = readCycles(candles);
     if (cycRead) bigPicture += `\n${cycRead.summary}`;
+
+    // V153: Wellengrad und titelspezifisches Korrektur-Raster. Beantwortet
+    // "auf welchem Grad sind wir" und "wie tief/lange korrigiert DIESER Titel
+    // ueblicherweise" - aus seiner eigenen Historie, nicht aus dem Lehrbuch.
+    const degRead = readDegree(candles, currentPrice);
+    if (degRead) {
+      bigPicture += `\n${degRead.note}`;
+      if (degRead.zoneNote) bigPicture += `\n${degRead.zoneNote}`;
+      // Laeuft gerade eine Korrektur? Dann das Raster auf sie anwenden.
+      const lastCyc = cycRead && cycRead.cycles.length
+        ? cycRead.cycles[cycRead.cycles.length - 1]
+        : null;
+      if (degRead.stats && lastCyc && lastCyc.corr && lastCyc.corr.running) {
+        bigPicture += `\n${entryGrid(
+          degRead.stats,
+          lastCyc.motive.from,
+          lastCyc.motive.to,
+          lastCyc.corr.bars
+        )}`;
+      }
+    }
     if (koRead && koRead.reversalRisk === "CONFIRMED")
       bigPicture += `\n🔄 Trendwechsel bestätigt`;
     else if (verbose && koRead && koRead.reversalRisk === "LIKELY")

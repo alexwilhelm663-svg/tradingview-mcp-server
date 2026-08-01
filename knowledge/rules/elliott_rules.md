@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 6.5
+version: 6.6
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -601,3 +601,22 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
   nicht hart geprueft - die laufende Kerze verschiebt ihn regelmaessig.
   \`npm run verify -- --update\` schreibt die Baseline neu (nur nach bewusster,
   geprueffter Zaehlungsaenderung).
+- **GR-1 Wellengrad und eigenes Korrektur-Raster (v6.6):** Drei Fragen, die die
+  Fuenferzaehlung offen laesst, werden jetzt beantwortet:
+  1. **Grad:** Elliott-Leiter nach Log-Spanne (Subminuette 0,10 · Minuette 0,22
+     · Minute 0,45 · Minor 0,85 · Intermediate 1,60 · Primary 3,00 · Cycle 5,50
+     · darueber Supercycle). Ausgegeben werden Fensterspanne UND typische
+     Bewegungsgroesse - beide koennen unterschiedliche Grade ergeben.
+  2. **Korrekturtiefe:** aus der EIGENEN Historie des Titels, nicht aus dem
+     Lehrbuch. Gesammelt ueber drei Stufen (22/15/10 %), ausgegeben als
+     min-median-max. Beispiele: BTC 27-61-89 %, SAP 22-58-89 %, CRCL 25-48-77 %.
+  3. **Korrekturdauer:** analog in Kerzen.
+  **Filterung ist entscheidend:** Gezaehlt werden nur Gegenbewegungen, die den
+  vorangegangenen Antrieb zu 20-90 % zuruecknehmen. Ein naiver Ansatz, der jedes
+  ZigZag-Bein als Korrektur zaehlt, liefert Median-Retracements um 1,0 und
+  Maxima ueber 5 - dort wird der Trend selbst als Korrektur gezaehlt.
+  **Einstiegsraster:** Laeuft eine Korrektur, werden Median- und Tief-Zone auf
+  den aktuellen Antrieb projiziert und die zeitliche Reife eingeordnet
+  (frueh / reif / ueberfaellig). Beispiel BTC: Zonen 35.321 und 19.569, Zeit
+  ueberfaellig (299 K gegen eigenes Maximum 89). Rein additiv - keine Setups,
+  keine Selektion.
