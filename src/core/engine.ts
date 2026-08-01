@@ -14,6 +14,7 @@ import { assessConfluence } from "./confluence";
 import { checkProportion } from "./proportion";
 import { readCycles } from "./cycles";
 import { readDegree, entryGrid } from "./degree";
+import { measureContinuity, continuityNote } from "./continuity";
 import { feedbackPenalty } from "./feedback";
 import { assessMultiWave, MultiWaveRead } from "./multiWave";
 import { assessHigherFrame } from "./higherFrame";
@@ -800,6 +801,13 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     // V153: Wellengrad und titelspezifisches Korrektur-Raster. Beantwortet
     // "auf welchem Grad sind wir" und "wie tief/lange korrigiert DIESER Titel
     // ueblicherweise" - aus seiner eigenen Historie, nicht aus dem Lehrbuch.
+    // V154: Wie viel des Verlaufs erklaert diese Zaehlung ueberhaupt?
+    // Ein Fuenfer auf der Elternstufe ueberspringt zwangslaeufig Sub-Wellen -
+    // aber 71-93 % sind ein Hinweis darauf, dass die Zaehlung nur fuenf Punkte
+    // herausgreift statt den Verlauf zu erklaeren.
+    const contRead = measureContinuity(pivots, wc);
+    if (contRead) bigPicture += `\n${continuityNote(contRead)}`;
+
     const degRead = readDegree(candles, currentPrice);
     if (degRead) {
       bigPicture += `\n${degRead.note}`;

@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 6.6
+version: 6.7
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -620,3 +620,22 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
   (frueh / reif / ueberfaellig). Beispiel BTC: Zonen 35.321 und 19.569, Zeit
   ueberfaellig (299 K gegen eigenes Maximum 89). Rein additiv - keine Setups,
   keine Selektion.
+- **DK-12 Kontinuitaet der Zaehlung (v6.7):** Der Finder waehlt die
+  bestbewertete Fuenfersequenz und darf dabei beliebig viele Pivots
+  ueberspringen. Gemessen ueber 17 Titel: 71-93 % uebersprungene Pivots sind
+  die Regel (BTC 76 %, NET 78 %, PYPL 93 %), nur TSLA zaehlt lueckenlos.
+  Die Zaehlung greift also fuenf Punkte heraus, statt den Verlauf zu erklaeren.
+  **Ausgewiesen wird jetzt:**
+  - **uebersprungene Pivots** zwischen W0 und W5 als Quote (durchgehend
+    ≤ 25 % · teilweise ≤ 60 % · lueckenhaft darueber)
+  - **ungezaehlte Vorgeschichte**: Pivots vor W0 (SAP 5, INTC 54, TSLA 37)
+  **Stichentscheid:** Unter Kandidaten mit hoechstens 1 Punkt Score-Rueckstand
+  gewinnt die deutlich durchgehendere Zaehlung (mind. 25 % weniger Luecken).
+  Greift in der Praxis selten - gemessen bei 0 von 17 Titeln -, verhindert aber
+  bei echtem Gleichstand, dass die lueckenreichere gewinnt.
+  **Wichtig - was NICHT geht:** Eine lueckenlose Zaehlung ist kein erreichbares
+  Ziel. Ein Fuenfer auf der Elternstufe MUSS Sub-Wellen ueberspringen; bei 8 %
+  ZigZag enthaelt Welle 3 zwangslaeufig ein Dutzend Pivots. Waere jedes Pivot
+  ein Wellenpunkt, waere es keine Elliott-Zaehlung mehr. Die Kennzahl schafft
+  Transparenz darueber, wie viel eine Zaehlung erklaert - sie ist kein
+  Qualitaetsurteil.
