@@ -14,6 +14,21 @@ let scanInFlight = false;
  * runScan wird vom Composition Root (index.ts) injiziert, damit /scan
  * und der Cron-Zyklus exakt dieselbe Logik nutzen.
  */
+let screenerInFlight = false;
+
+/** Telegram begrenzt auf 4096 Zeichen - an Absaetzen trennen. */
+export function splitMessage(text: string, limit = 3800): string[] {
+  if (text.length <= limit) return [text];
+  const parts: string[] = [];
+  let cur = "";
+  for (const block of text.split("\n\n")) {
+    if (cur.length + block.length + 2 > limit && cur) { parts.push(cur); cur = ""; }
+    cur += (cur ? "\n\n" : "") + block;
+  }
+  if (cur) parts.push(cur);
+  return parts;
+}
+
 export function registerCommands(
   bot: Telegraf,
   runScan: (chatId: number) => Promise<void>
@@ -29,13 +44,34 @@ export function registerCommands(
         "• `/remove <SYMBOL>` – Asset entfernen\n" +
         "• `/analyse <SYMBOL> [1d|1w] [1y|5y|10y|max]` – EW-Analyse; Intervall & Fenster optional\n" +
         "• `/setups` – Setup-Status (PENDING/CONFIRMED)\n" +
-        "• `/scan` – manueller Radar-Durchlauf\n\n" +
+        "• `/scan` – manueller Radar-Durchlauf\n" +
+        "• `/screener` – Unterstützungs-Status aller Titel (täglich 08:00)\n\n" +
         "✅ Chat-ID für automatische Alerts gespeichert.",
       { parse_mode: "Markdown" }
     );
   });
 
   bot.command("radar", (ctx) => ctx.reply(viewWatchlist(), { parse_mode: "Markdown" }));
+
+  // V157: Unterstuetzungs-Screener - eine Nachricht, kein Bild, kein LLM.
+  bot.command("screener", async (ctx) => {
+    if (screenerInFlight) return ctx.reply("⏳ Screener läuft bereits – bitte warten.");
+    screenerInFlight = true;
+    try {
+      await ctx.reply("🛰️ Screener startet…");
+      const { runScreener, formatDigest } = await import("../core/screener");
+      const { ensureScreenerUniverse } = await import("../core/watchlist");
+      ensureScreenerUniverse();
+      const rows = await runScreener();
+      for (const part of splitMessage(formatDigest(rows))) {
+        await ctx.reply(part, { parse_mode: "Markdown" });
+      }
+    } catch (err: any) {
+      await ctx.reply(`❌ Screener-Fehler: ${err?.message ?? err}`);
+    } finally {
+      screenerInFlight = false;
+    }
+  });
   bot.command("setups", (ctx) => ctx.reply(listSetups(), { parse_mode: "Markdown" }));
   bot.command("watchlist", (ctx) => ctx.reply(viewWatchlist(), { parse_mode: "Markdown" }));
 
