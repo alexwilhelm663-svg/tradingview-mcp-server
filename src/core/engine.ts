@@ -15,6 +15,7 @@ import { checkProportion } from "./proportion";
 import { readCycles } from "./cycles";
 import { readDegree, entryGrid } from "./degree";
 import { measureContinuity, continuityNote } from "./continuity";
+import { runCascade } from "./cascade";
 import { feedbackPenalty } from "./feedback";
 import { assessMultiWave, MultiWaveRead } from "./multiWave";
 import { assessHigherFrame } from "./higherFrame";
@@ -276,6 +277,14 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       const cyc = cycPre;
       if (cyc) {
         abst += `\n\n${cyc.summary}\n` + cyc.lines.map((l) => `  ${l}`).join("\n");
+      }
+      // V155: Rahmen-Kaskade - hier stumm heisst nicht ueberall stumm.
+      // Gemessen: 12 von 20 Titeln zaehlen nur in manchen Rahmen.
+      try {
+        const casc = await runCascade(symbol, interval, range, null);
+        if (casc.note) abst += `\n\n${casc.note}`;
+      } catch {
+        /* best effort */
       }
       try {
         const hf = await assessHigherFrame(symbol, range);
@@ -807,6 +816,24 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     // herausgreift statt den Verlauf zu erklaeren.
     const contRead = measureContinuity(pivots, wc);
     if (contRead) bigPicture += `\n${continuityNote(contRead)}`;
+
+    // V155: Liegt anderswo eine deutlich klarere Zaehlung? Nur pruefen, wenn
+    // der aktuelle Rahmen schwach ist - sonst kostet es vier Fetches umsonst.
+    // Gleicher Massstab wie in der Kaskade: reine Zaehlguete OHNE Qualitaets-
+    // Boni. Sonst werden zwei verschiedene Groessen verglichen (SAP: 13/19
+    // mit Boni = 68 %, aber 10/12 reine Zaehlung = 83 %).
+    const curQuality =
+      outcome.impulse.result.maxScore > 0
+        ? outcome.impulse.result.score / outcome.impulse.result.maxScore
+        : 0;
+    if (curQuality < 0.9) {
+      try {
+        const casc = await runCascade(symbol, interval, range, curQuality);
+        if (casc.note) bigPicture += `\n${casc.note}`;
+      } catch {
+        /* best effort */
+      }
+    }
 
     const degRead = readDegree(candles, currentPrice);
     if (degRead) {
