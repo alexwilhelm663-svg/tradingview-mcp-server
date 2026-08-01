@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 6.4
+version: 6.5
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -589,3 +589,15 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
     C-Ziel X".
   Gilt in beide Richtungen (Abwaertskorrektur und Erholung). Reine
   Textaenderung - Zonen, Ziele und Selektion bleiben unveraendert.
+- **DK-11 Referenzpruefung (v6.5):** Die Regressionspruefung der
+  Referenzzaehlungen liegt jetzt als Skript im Repo (\`npm run verify\`, Baseline
+  in \`knowledge/reference/counts.json\`) statt als Wegwerf-Code je Sitzung.
+  **Verglichen werden Trend und Wellenpunkte (Toleranz 0,5 %), NICHT die
+  ZigZag-Stufe.** Grund: Bei Punktgleichstand im Score ist die Stufenwahl
+  willkuerlich - NET erreicht auf allen vier Stufen (25/18/12/8 %) Score 11 mit
+  identischer Zaehlung, nur Welle 4 unterscheidet sich um einen Dollar. Die
+  frueher gepinnte Stufe (\"18 D 11\") schlug dadurch Alarm, obwohl sich an der
+  Zaehlung nichts geaendert hatte. Der Score wird informativ mitgefuehrt, aber
+  nicht hart geprueft - die laufende Kerze verschiebt ihn regelmaessig.
+  \`npm run verify -- --update\` schreibt die Baseline neu (nur nach bewusster,
+  geprueffter Zaehlungsaenderung).
