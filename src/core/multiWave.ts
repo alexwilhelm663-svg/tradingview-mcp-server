@@ -46,7 +46,65 @@ interface Unit {
  * Zusaetzlich Multi-1-2 (Verschachtelung) nur, wenn die Wellen-1 materiell
  * schrumpfen (<= 0,85x) und hoechstens vier Grade vorliegen.
  */
+/**
+ * V156: Ankersuche. Ein Multi-1-2 baut sich am BEGINN einer Gegenbewegung auf -
+ * nicht zwingend nach der Welle 5 der Hauptzaehlung. Genau daran scheiterte
+ * die Erkennung: W5 liegt bei den meisten Titeln erst wenige Kerzen zurueck
+ * (LLY 5, BILL 8), womit die 12-Kerzen-Mindestlaenge greift, bevor ueberhaupt
+ * geprueft wird - gemessen 0 Treffer ueber 20 Titel.
+ *
+ * Kandidaten sind daher W5 UND die markanten Gegen-Extrema der juengeren
+ * Vergangenheit (20-150 Kerzen zurueck). Der beste Treffer gewinnt.
+ */
+function anchorCandidates(
+  candles: Candle[],
+  w5Date: string,
+  w5Price: number,
+  dirCounter: 1 | -1
+): { date: string; price: number }[] {
+  const out: { date: string; price: number }[] = [{ date: w5Date, price: w5Price }];
+  const n = candles.length;
+  const want: "L" | "H" = dirCounter === 1 ? "L" : "H";
+  const seen = new Set<string>([w5Date]);
+  for (const th of [15, 12, 9]) {
+    for (const p of zigzag(candles, th)) {
+      if (p.kind !== want || seen.has(p.date)) continue;
+      const i = candles.findIndex((k) => k.date === p.date);
+      if (i < 0) continue;
+      const age = n - 1 - i;
+      if (age < 20 || age > 150) continue;
+      seen.add(p.date);
+      out.push({ date: p.date, price: p.price });
+    }
+  }
+  return out;
+}
+
 export function assessMultiWave(
+  candles: Candle[],
+  w5Date: string,
+  w5Price: number,
+  dirCounter: 1 | -1,
+  parentThreshold: number
+): MultiWaveRead {
+  // Alle plausiblen Anker durchprobieren, besten Treffer nehmen.
+  const cands = anchorCandidates(candles, w5Date, w5Price, dirCounter);
+  let best: MultiWaveRead | null = null;
+  for (const a of cands) {
+    const r = assessFromAnchor(candles, a.date, a.price, dirCounter, parentThreshold);
+    if (!r.note) continue;
+    if (
+      best === null ||
+      (r.active && !best.active) ||
+      (r.active === best.active && r.legs > best.legs)
+    ) {
+      best = r;
+    }
+  }
+  return best ?? EMPTY;
+}
+
+function assessFromAnchor(
   candles: Candle[],
   w5Date: string,
   w5Price: number,

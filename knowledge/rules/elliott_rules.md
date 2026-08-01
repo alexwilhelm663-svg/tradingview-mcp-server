@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 6.8
+version: 6.9
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -656,3 +656,20 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
   **Die Kaskade ERSETZT den gewaehlten Rahmen nicht.** Die Lesart ist
   gradabhaengig (v5.0) - der Nutzer hat den Rahmen bewusst gewaehlt. Sie weist
   nur den Weg. Laufzeit unter 3,5 s.
+- **KO-7i Multi-1-2 wieder auffindbar (v6.9):** Nach der Verschaerfung in v5.x
+  fand das Modul ueber 20 Titel **null** Treffer. Zwei Ursachen, beide
+  behoben:
+  1. **Anker zu eng.** Geprueft wurde ausschliesslich ab der Welle 5 der
+     Hauptzaehlung - die liegt aber meist erst wenige Kerzen zurueck (LLY 5,
+     BILL 8), womit die 12-Kerzen-Mindestlaenge griff, bevor ueberhaupt
+     geprueft wurde. Ein Multi-1-2 baut sich am BEGINN einer Gegenbewegung auf,
+     nicht zwingend nach dem letzten W5. Kandidaten sind jetzt W5 UND die
+     markanten Gegen-Extrema der juengeren Vergangenheit (20-150 Kerzen
+     zurueck); der beste Treffer gewinnt.
+  2. **Falsche Aufloesung.** Multi-1-2 ist ein TAGESphaenomen - die feinen
+     1-2-Beine (5-15 %) verschwinden in Wochenkerzen. Gemessen: Wochenbasis
+     2 Treffer (0 verschachtelt), Tagesbasis 4 (1 verschachtelt). Bei einer
+     Wochen-Analyse wird die Tagesebene daher zusaetzlich geprueft und ein
+     intakter Treffer als "📈 Tagesebene: …" ausgewiesen.
+  Beispiele: BILL "Multi-1-2 · 3 Grade · Marke 44.05" (echte Verschachtelung),
+  NVDA "2× 1-2 · tiefere Hochs · Marke 212.71".

@@ -817,6 +817,33 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     const contRead = measureContinuity(pivots, wc);
     if (contRead) bigPicture += `\n${continuityNote(contRead)}`;
 
+    // V156: Multi-1-2 ist ein TAGESphaenomen. Gemessen ueber 20 Titel:
+    // Wochenbasis 2 Treffer (0 verschachtelt), Tagesbasis 4 (1 verschachtelt).
+    // Die feinen 1-2-Beine (5-15 %) verschwinden in Wochenkerzen. Bei einer
+    // Wochen-Analyse wird die Tagesebene daher zusaetzlich geprueft.
+    if (interval === "1wk") {
+      try {
+        const { weeklyAnalysisCandles: dCandles } = await fetchMarketData(symbol, "1d", "2y");
+        if (dCandles && dCandles.length >= 60) {
+          const dOut = findImpulseAdaptive(dCandles, (r) => checkProportion(dCandles, r.count).ok);
+          if (dOut.impulse) {
+            const dW5 = dOut.impulse.result.count.points.find((p) => p.label === "5");
+            if (dW5) {
+              const dDir: 1 | -1 = dOut.impulse.result.count.trend === "bullish" ? -1 : 1;
+              const dMw = assessMultiWave(
+                dCandles, dW5.date, dW5.price, dDir, dOut.impulse.threshold
+              );
+              if (dMw.note && dMw.intact) {
+                bigPicture += `\n📈 Tagesebene: ${dMw.note}`;
+              }
+            }
+          }
+        }
+      } catch {
+        /* best effort */
+      }
+    }
+
     // V155: Liegt anderswo eine deutlich klarere Zaehlung? Nur pruefen, wenn
     // der aktuelle Rahmen schwach ist - sonst kostet es vier Fetches umsonst.
     // Gleicher Massstab wie in der Kaskade: reine Zaehlguete OHNE Qualitaets-
