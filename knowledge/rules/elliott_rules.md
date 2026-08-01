@@ -1,7 +1,7 @@
 ---
 type: knowledge_rule
 category: elliott_waves
-version: 6.7
+version: 6.8
 scope: Single Source of Truth für Engine (deterministisch) und Kritiker (LLM-Review)
 konvention: Preislängen mehrjähriger Bewegungen werden logarithmisch gemessen (DK-2)
 ---
@@ -639,3 +639,20 @@ Bänder (GL-7). Koenz'' staffelnde Multi-1-2-Invalidierung ist ab v5.4 implement
   ein Wellenpunkt, waere es keine Elliott-Zaehlung mehr. Die Kennzahl schafft
   Transparenz darueber, wie viel eine Zaehlung erklaert - sie ist kein
   Qualitaetsurteil.
+- **DK-13 Rahmen-Kaskade (v6.8):** Die Engine analysierte nur den angeforderten
+  Rahmen. Gemessen ueber 20 Titel zaehlen **12 nur in manchen Rahmen**: ALAB und
+  LCID sind woechentlich stumm, taeglich sauber zaehlbar; AMZN umgekehrt;
+  TSLA, AAPL, PYPL, NVDA, MSFT nur in bestimmten Fenstern. Wer die falsche
+  Kombination waehlt, bekommt Enthaltung, obwohl daneben Score 12/12 liegt.
+  Die Kaskade probiert die uebrigen Rahmen (1wk/5y · 1wk/max · 1d/2y · 1d/1y)
+  und meldet den besten Treffer:
+  - **bei Enthaltung** immer - dort ist jeder Treffer ein Gewinn
+  - **bei schwacher Zaehlung** (Guete < 90 %) nur, wenn ein anderer Rahmen um
+    mindestens 15 Prozentpunkte klarer zaehlt
+  - **bei guter Zaehlung** gar nicht (spart vier Fetches)
+  **Massstab:** reine Zaehlguete (score/maxScore der Zaehlung), NICHT der
+  Gesamtscore mit Qualitaets-Boni - sonst werden zwei verschiedene Groessen
+  verglichen (SAP: 13/19 mit Boni = 68 %, aber 10/12 reine Zaehlung = 83 %).
+  **Die Kaskade ERSETZT den gewaehlten Rahmen nicht.** Die Lesart ist
+  gradabhaengig (v5.0) - der Nutzer hat den Rahmen bewusst gewaehlt. Sie weist
+  nur den Weg. Laufzeit unter 3,5 s.
