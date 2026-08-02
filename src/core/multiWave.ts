@@ -26,6 +26,12 @@ const MIN_LEG_CANDLES = 4;     // keine Zwei-Kerzen-Wellen
 const MIN_RETRACE = 0.236;     // Welle 2 muss wirklich korrigieren
 const MAX_RETRACE = 0.90;      // ... aber die Welle 1 nicht aufloesen
 const MIN_UNITS = 2;           // mind. zwei vollstaendige 1-2
+// V160: Eine Welle 2 ist erst vollstaendig, wenn der Markt sie bestaetigt hat.
+// Ohne diese Huerde zaehlt die Erkennung das juengste Tief als fertige Einheit,
+// obwohl der Ruecksetzer noch laeuft - bei NVO wurde so eine dritte Einheit
+// gemeldet, deren "2" die letzte Kerze war (Marke 46,44 statt belastbarer
+// 41,00). Denselben Fehler hatte der Screener; dort loeste ihn V157.
+const MIN_TROUGH_AGE = 5;      // Kerzen seit dem Welle-2-Tief
 const MAX_DEGREES = 4;
 const NEST_SHRINK = 0.85;      // Verschachtelung: jede Welle 1 klar kleiner
 
@@ -154,6 +160,11 @@ function assessFromAnchor(
     if (legLog < MIN_LEG_LOG) return EMPTY;
     if (countCandles(anchorDate, peak.date) < MIN_LEG_CANDLES) return EMPTY;
     if (retrace < MIN_RETRACE || retrace > MAX_RETRACE) return EMPTY;
+    // Welle-2-Tief muss ueberstanden sein - sonst laeuft der Ruecksetzer noch
+    // und die Einheit ist unfertig. Abbrechen statt verwerfen: die bereits
+    // gesammelten Einheiten bleiben gueltig.
+    const troughIdx = candles.findIndex((k) => k.date === trough.date);
+    if (troughIdx < 0 || candles.length - 1 - troughIdx < MIN_TROUGH_AGE) break;
 
     units.push({
       startPrice: anchorPrice, startDate: anchorDate,
