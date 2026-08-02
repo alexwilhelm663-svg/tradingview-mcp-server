@@ -1,13 +1,15 @@
 {
   "name": "ew-quant-hunter",
-  "version": "161.0.0",
+  "version": "162.0.0",
   "description": "Elliott Wave Trading Bot (konsolidierter Composition Root)",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "backtest": "node dist/backtest.js",
-    "verify": "node dist/verify.js"
+    "verify": "node dist/verify.js",
+    "report": "node dist/report.js",
+    "snapshot": "node dist/snapshot.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
