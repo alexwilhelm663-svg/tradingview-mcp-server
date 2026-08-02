@@ -803,9 +803,15 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     }
     for (const z of strukturZeilen) bigPicture += `\n${z}`;
 
-    // V148: Eine Zeile Zyklus-Kontext - Antrieb/Korrektur-Rhythmus.
+    // V161: Die Zyklen-Sicht wird weiterhin berechnet - das Einstiegsraster
+    // (v6.6) braucht die laufende Korrekturphase -, aber NICHT mehr
+    // ausgegeben. Wo eine Zaehlung existiert, segmentiert sie dasselbe
+    // Fenster auf einem anderen Grad unabhaengig von den Wellenpunkten: bei
+    // BILL endet "Zyklus 1" bei 179.85, waehrend Welle 2 bei 262.17 liegt.
+    // Zwei Segmentierungen nebeneinander widersprechen sich, statt sich zu
+    // ergaenzen. Im Enthaltungsfall bleibt sie sichtbar - dort ist sie das
+    // einzige Strukturangebot.
     const cycRead = readCycles(candles);
-    if (cycRead) bigPicture += `\n${cycRead.summary}`;
 
     // V153: Wellengrad und titelspezifisches Korrektur-Raster. Beantwortet
     // "auf welchem Grad sind wir" und "wie tief/lange korrigiert DIESER Titel
@@ -930,9 +936,10 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       timeWindows: chartTimeWindows.concat(completion ? completion.timeWindows : []),
       subwaves,
       candlestick: interval === "1d",
-      cycles: cycRead ? cycRead.points : undefined,
-      phaseSub: cycRead?.structure ? cycRead.structure.points : undefined,
-      multiWave: mwPoints.length ? mwPoints : undefined,
+      // V161: Der Hauptchart zeigt nur noch die Zaehlung (0-5 blau), die
+      // Korrektur (A-B-C rot) und die Sub-Zaehlungen. Zyklus-Skelett,
+      // Binnenstruktur und 1-2-Staffelung sind in den Setup-Chart
+      // gewandert (/setup) - sechs Ebenen in einem Bild waren unlesbar.
     });
 
     // V118.1: Detail-Chart der W5-Binnenstruktur (Sub-Wellen bzw. ED-Keil).

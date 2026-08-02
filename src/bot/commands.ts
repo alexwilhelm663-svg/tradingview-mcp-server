@@ -45,13 +45,35 @@ export function registerCommands(
         "• `/analyse <SYMBOL> [1d|1w] [1y|5y|10y|max]` – EW-Analyse; Intervall & Fenster optional\n" +
         "• `/setups` – Setup-Status (PENDING/CONFIRMED)\n" +
         "• `/scan` – manueller Radar-Durchlauf\n" +
-        "• `/screener` – Unterstützungs-Status aller Titel (täglich 08:00)\n\n" +
+        "• `/screener` – Unterstützungs-Status aller Titel (täglich 08:00)\n" +
+        "• `/setup <SYMBOL> [30m|1h]` – 1-2-Struktur als eigener Chart\n\n" +
         "✅ Chat-ID für automatische Alerts gespeichert.",
       { parse_mode: "Markdown" }
     );
   });
 
   bot.command("radar", (ctx) => ctx.reply(viewWatchlist(), { parse_mode: "Markdown" }));
+
+  // V161: Setup-Chart - 1-2-Struktur auf 30-Minuten-Basis, eigenes Bild.
+  bot.command("setup", async (ctx) => {
+    const parts = (ctx.message as any)?.text?.trim().split(/\s+/) ?? [];
+    const symbol = (parts[1] || "").toUpperCase();
+    if (!symbol) return ctx.reply("Nutzung: `/setup SYMBOL [30m|1h] [60d|1mo]`", { parse_mode: "Markdown" });
+    const iv = (parts[2] || "30m").toLowerCase();
+    const rng = (parts[3] || "60d").toLowerCase();
+    try {
+      await ctx.reply(`🔍 Setup-Chart ${symbol} (${iv})…`);
+      const { buildSetupChart } = await import("../core/setupChart");
+      const res = await buildSetupChart(symbol, iv, rng);
+      if (res.buffer) {
+        await ctx.replyWithPhoto({ source: res.buffer }, { caption: res.caption, parse_mode: "Markdown" });
+      } else {
+        await ctx.reply(res.caption, { parse_mode: "Markdown" });
+      }
+    } catch (err: any) {
+      await ctx.reply(`❌ Setup-Fehler: ${err?.message ?? err}`);
+    }
+  });
 
   // V157: Unterstuetzungs-Screener - eine Nachricht, kein Bild, kein LLM.
   bot.command("screener", async (ctx) => {
