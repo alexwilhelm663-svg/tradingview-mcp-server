@@ -32,6 +32,7 @@ export interface ChartPayload {
   candlestick?: boolean; // V129: echte Tageskerzen statt Linie
   cycles?: ChartWave[];   // V150: Zyklus-Skelett (Antrieb/Korrektur)
   phaseSub?: ChartWave[]; // V150: Binnenstruktur der laufenden Phase
+  multiWave?: ChartWave[]; // V159: 1-2-Staffelung der Gegenbewegung
 }
 
 /**

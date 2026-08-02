@@ -8,9 +8,12 @@ export interface MultiWaveRead {
   currentInvalidation: number | null; // nachziehende Marke = letztes Welle-2-Extrem
   intact: boolean;
   note: string | null;                // null = Schweigen
+  /** V159: Wellenpunkte zum Einzeichnen - Anker, dann je Einheit 1 und 2. */
+  points: { label: string; date: string; price: number }[];
 }
 
 const EMPTY: MultiWaveRead = {
+  points: [],
   active: false, legs: 0, currentInvalidation: null, intact: false, note: null,
 };
 
@@ -202,11 +205,23 @@ function assessFromAnchor(
     note = null; // gebrochene Treppe ist keine Meldung wert
   }
 
+  // Punkte fuer den Chart: Startanker, dann je Einheit das Welle-1-Ende (1)
+  // und das Welle-2-Ende (2). Damit ist die Staffelung sichtbar statt nur als
+  // Textnotiz beschrieben.
+  const points: { label: string; date: string; price: number }[] = [
+    { label: "", date: units[0].startDate, price: units[0].startPrice },
+  ];
+  for (const u of units) {
+    points.push({ label: "1", date: u.peakDate, price: u.peakPrice });
+    points.push({ label: "2", date: u.troughDate, price: u.troughPrice });
+  }
+
   return {
     active: nested && intact,
     legs: units.length,
     currentInvalidation,
     intact,
     note,
+    points,
   };
 }
