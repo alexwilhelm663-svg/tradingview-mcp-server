@@ -1,5 +1,6 @@
 import { Telegraf } from "telegraf";
 import { analyzeAsset } from "../core/engine";
+import { buildCaption, buildDetails } from "../core/reportText";
 import { addToWatchlist, removeFromWatchlist, viewWatchlist } from "../core/watchlist";
 import { listSetups } from "../core/setups";
 import db from "../core/db";
@@ -182,8 +183,10 @@ export function registerCommands(
       }
 
       // V122 (MCO-Struktur): 1) Big Picture am Chart, 2) Details separat.
-      let caption = `📊 **${symbol}** · ${isDaily ? "Daily" : "Weekly"} (${range}) · Makro-Trend \`${r.finalTrend}\``;
-      if (r.bigPicture) caption += `\n\n${r.bigPicture}`;
+      // V162: gemeinsame Textquelle mit `npm run report` und der
+      // Snapshot-Pruefung - sonst testet der Snapshot etwas anderes als das,
+      // was hier ankommt.
+      let caption = buildCaption(symbol, isDaily, range, r);
       if (caption.length > 1000) caption = caption.slice(0, 990) + "…";
 
       if (r.buffer) {
@@ -192,12 +195,7 @@ export function registerCommands(
         await ctx.reply(caption, { parse_mode: "Markdown" });
       }
 
-      let details = "🔬 **Details**\n";
-      if (r.clusterInfo) details += `${r.clusterInfo}\n`;
-      if (r.isBreakoutSetup) details += `${r.breakoutStatus}\n`;
-      if (!r.clusterInfo && !r.isBreakoutSetup) details += "⚪ Aktuell in keiner Trigger-Zone.\n";
-      if (r.analysis.analysis) details += `\n${r.analysis.analysis}`;
-      if (r.confluenceNote) details += `\n\n${r.confluenceNote}`;
+      const details = buildDetails(r);
       if (wantDetail) await ctx.reply(details, { parse_mode: "Markdown" });
       // V122: Detail-Chart standardmäßig entfernt (auf Wunsch reaktivierbar).
 
