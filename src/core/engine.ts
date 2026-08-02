@@ -817,6 +817,9 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     const contRead = measureContinuity(pivots, wc);
     if (contRead) bigPicture += `\n${continuityNote(contRead)}`;
 
+    // V159: Punkte der erkannten 1-2-Staffelung fuer den Chart.
+    let mwPoints: { label: string; date: string; price: number }[] = [];
+
     // V156: Multi-1-2 ist ein TAGESphaenomen. Gemessen ueber 20 Titel:
     // Wochenbasis 2 Treffer (0 verschachtelt), Tagesbasis 4 (1 verschachtelt).
     // Die feinen 1-2-Beine (5-15 %) verschwinden in Wochenkerzen. Bei einer
@@ -835,6 +838,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
               );
               if (dMw.note && dMw.intact) {
                 bigPicture += `\n📈 Tagesebene: ${dMw.note}`;
+                if (dMw.points.length) mwPoints = dMw.points;
               }
             }
           }
@@ -842,6 +846,14 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       } catch {
         /* best effort */
       }
+    }
+
+    // Eigene Ebene: findet sie selbst eine 1-2-Staffelung, hat die Vorrang
+    // vor der eingeblendeten Tagesebene - sie passt exakt zu den Kerzen.
+    if (w5) {
+      const ownDir: 1 | -1 = wc.trend === "bullish" ? -1 : 1;
+      const ownMw = assessMultiWave(candles, w5.date, w5.price, ownDir, threshold);
+      if (ownMw.intact && ownMw.points.length) mwPoints = ownMw.points;
     }
 
     // V155: Liegt anderswo eine deutlich klarere Zaehlung? Nur pruefen, wenn
@@ -920,6 +932,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       candlestick: interval === "1d",
       cycles: cycRead ? cycRead.points : undefined,
       phaseSub: cycRead?.structure ? cycRead.structure.points : undefined,
+      multiWave: mwPoints.length ? mwPoints : undefined,
     });
 
     // V118.1: Detail-Chart der W5-Binnenstruktur (Sub-Wellen bzw. ED-Keil).

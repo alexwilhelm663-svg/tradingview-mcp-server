@@ -233,6 +233,27 @@ def main():
         ax.grid(True, which="major", ls="-", alpha=0.2)
         ax.grid(True, which="minor", ls=":", alpha=0.1)
 
+        # V159: 1-2-Staffelung der Gegenbewegung. Kraeftiges Gruen, damit sie
+        # gegen die 0-5-Zaehlung (blau) und die A-B-C-Korrektur (rot) bestehen
+        # kann - sie ist eine eigenstaendige Lesart, keine Randnotiz.
+        mw = payload.get("multiWave", []) or []
+        if len(mw) >= 3:
+            mx = [pd.to_datetime(p["date"]) for p in mw]
+            my = [float(p["price"]) for p in mw]
+            ax.plot(mx, my, color="#059669", linewidth=1.6, linestyle="-",
+                    alpha=0.9, zorder=5)
+            for j, p in enumerate(mw):
+                lab = str(p.get("label", ""))
+                if not lab:
+                    continue
+                ax.plot(mx[j], my[j], "o", color="#059669", markersize=5,
+                        zorder=6)
+                # 1 = Wellenende oben/unten je Richtung, 2 = Ruecksetzer
+                dy = 9 if lab == "1" else -16
+                ax.annotate(lab, (mx[j], my[j]), textcoords="offset points",
+                            xytext=(0, dy), fontsize=9, fontweight="bold",
+                            color="#059669", ha="center", zorder=6)
+
         # V150: Zyklus-Skelett (Antrieb/Korrektur) - duenn, violett, im
         # Hintergrund. Bewusst zurueckhaltend, damit die 0-5-Zaehlung (blau)
         # und die A-B-C-Korrektur (rot) weiterhin dominieren.
