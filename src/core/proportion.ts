@@ -22,7 +22,12 @@ export interface ProportionCheck { ok: boolean; reason: string | null }
  */
 const MAX_TIME_RATIO = 25;
 const MAX_INNER_RATIO = 2.5;
-const MIN_W1_SHARE = 0.15;
+// V163: von 0,15 auf 0,10 gesenkt. Die 0,15 waren an den Referenzen
+// kalibriert (22,8-67,4 %), verwarfen aber Titel mit stark extendierter
+// Welle 3 - ALAB (12,3 %) ging deshalb in Enthaltung, obwohl der Verlauf
+// zaehlbar ist. Der Fehlfall ARM (8,2 %) bleibt draussen, und zwar doppelt
+// abgesichert: er scheitert ohnehin an der Zeitregel (63,5x > 25x).
+const MIN_W1_SHARE = 0.10;
 
 function pt(wc: WaveCount, label: string) {
   return wc.points.find((p) => p.label === label) ?? null;

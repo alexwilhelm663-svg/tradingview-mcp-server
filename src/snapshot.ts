@@ -43,7 +43,7 @@ function fingerprint(text: string, trend: string | null, points: number): Finger
     wellenpunkte: points,
     lesart: grab(/Korrektur-Lesart:\s*([A-Za-zÄÖÜäöü\- ]+?)(?:\s*\(|·|$)/m),
     multiWave: has(/Multi-1-2|× 1-2|1-2-Marke/),
-    kontinuitaet: grab(/Kontinuität:\s*(\w+)/),
+    kontinuitaet: grab(/Kontinuität:\s*([^\s(]+)/),
     grad: has(/📐 Grad:/),
     raster: has(/Korrektur-Raster/),
     einstiegsraster: has(/Einstiegsraster/),
