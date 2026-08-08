@@ -1,6 +1,6 @@
 {
  "_hinweis": "V162: struktureller Fingerabdruck der Reports - Marker, keine Kurse.",
- "_aktualisiert": "2026-08-06",
+ "_aktualisiert": "2026-08-08",
  "titel": {
   "MSTR 1wk/5y": {
    "enthaltung": false,
@@ -71,7 +71,7 @@
    "trend": "bearish",
    "wellenpunkte": 3,
    "lesart": "Zigzag",
-   "multiWave": false,
+   "multiWave": true,
    "kontinuitaet": "lückenhaft",
    "grad": true,
    "raster": true,
@@ -123,7 +123,7 @@
    "kontinuitaet": "durchgehend",
    "grad": true,
    "raster": true,
-   "einstiegsraster": false,
+   "einstiegsraster": true,
    "konfluenz": false,
    "kaskade": false,
    "zyklen": false,
