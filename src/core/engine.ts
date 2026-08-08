@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import db from "./db";
-import { fetchMarketData, Candle } from "./marketData";
+import { fetchMarketData, Candle, isThinHistory } from "./marketData";
 import { renderChart } from "./chart";
 import type { Pivot } from "./zigzag";
 import { longLevelCandidates, shortLevelCandidates, clusterLevels } from "./fibCluster";
@@ -238,7 +238,46 @@ const daysBetweenE = (a: string, b: string): number =>
 export async function analyzeAsset(symbol: string, range: string = "5y", interval: string = "1wk", verbose: boolean = false): Promise<AnalysisResult> {
   try {
     // 1. Marktdaten (Weekly, 5 Jahre) + deterministische Pivots
-    const { weeklyAnalysisCandles: candles } = await fetchMarketData(symbol, interval, range);
+    // V164: Auto-Fallback bei zu kurzer Historie. Ein frisches Listing
+    // (SPCX seit 12.06.2026) hat auf Wochenbasis nur 10 Kerzen - die
+    // Analyse brach ab, statt die feinere Aufloesung zu nehmen, die
+    // durchaus Daten hat (30m: 504 Kerzen).
+    let candles: Candle[];
+    let thinNote: string | null = null;
+    try {
+      candles = (await fetchMarketData(symbol, interval, range)).weeklyAnalysisCandles;
+    } catch (err: any) {
+      if (!isThinHistory(err)) throw err;
+      const finer: [string, string][] = [["1d", "2y"], ["1d", "1y"], ["30m", "60d"]];
+      let got: { c: Candle[]; iv: string; rg: string } | null = null;
+      for (const [iv, rg] of finer) {
+        if (iv === interval && rg === range) continue;
+        try {
+          const r = await fetchMarketData(symbol, iv, rg);
+          got = { c: r.weeklyAnalysisCandles, iv, rg };
+          break;
+        } catch {
+          /* naechste Stufe */
+        }
+      }
+      if (!got) {
+        return {
+          ...EMPTY,
+          abstention:
+            `⚠️ **${symbol}**: ${err.have} von mindestens ${err.need} Kerzen` +
+            (err.firstTrade ? ` (Erstnotiz ${err.firstTrade})` : "") +
+            `.\nAuch feinere Auflösungen liefern zu wenig Historie – eine Elliott-Zählung ` +
+            `braucht einen abgeschlossenen Impuls samt Korrektur.`,
+        };
+      }
+      thinNote =
+        `ℹ️ ${interval}/${range}: nur ${err.have} von ${err.need} Kerzen` +
+        (err.firstTrade ? ` (Erstnotiz ${err.firstTrade})` : "") +
+        ` – ausgewichen auf ${got.iv}/${got.rg}.`;
+      candles = got.c;
+      interval = got.iv;
+      range = got.rg;
+    }
     const currentPrice = candles[candles.length - 1].close;
 
     // 2. Deterministische Impulszaehlung (V113.1) mit Enthaltungs-Gebot (DK-7)
@@ -778,7 +817,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
             : ".")
         : "";
     const koRead = wc.trend === "bullish" ? correction : correctionS;
-    let bigPicture = `🧭 **Big Picture:** ${cyc}`;
+    let bigPicture = (thinNote ? `${thinNote}\n` : "") + `🧭 **Big Picture:** ${cyc}`;
     if (koRead && koRead.pattern === "KOMBINATION")
       bigPicture += ` Korrektur läuft als **W-X-Y** (zusammengesetzt), nicht als einfache A-B-C – erfahrungsgemäß **tiefer** (0,618–0,786 statt ~0,5), Kaufzone entsprechend riskanter.`;
     // V136: Intaktes Multi-1-2 als Frühsignal prominent - beantwortet die

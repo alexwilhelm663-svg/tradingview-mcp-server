@@ -24,7 +24,7 @@ const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const COOLDOWN_MS = 7 * 24 * 3600 * 1000; // 7 Tage pro Symbol
 
 ensureScreenerUniverse();
-console.log("🚀 EW Quant Hunter V163: EW-Engine (W1-Schwelle 10 %) startet...");
+console.log("🚀 EW Quant Hunter V164: EW-Engine (Auto-Fallback bei kurzer Historie) startet...");
 
 function getActiveChatId(): number | null {
   const row = db.prepare("SELECT value FROM config WHERE key = 'chat_id'").get() as

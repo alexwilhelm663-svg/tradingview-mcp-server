@@ -7,6 +7,19 @@ export interface Candle {
   volume?: number;
 }
 
+/** V164: Fehler bei zu kurzer Historie - vom Aufrufer auswertbar. */
+export interface ThinHistoryError extends Error {
+  thinHistory: true;
+  symbol: string;
+  have: number;
+  need: number;
+  firstTrade: string | null;
+}
+
+export function isThinHistory(e: any): e is ThinHistoryError {
+  return !!e && e.thinHistory === true;
+}
+
 export interface MarketData {
   weeklyAnalysisCandles: Candle[];
 }
@@ -49,7 +62,23 @@ export async function fetchMarketData(
   }
 
   if (candles.length < minCandles) {
-    throw new Error(`Zu wenig Kursdaten fuer ${symbol} (${candles.length} Kerzen)`);
+    // V164: strukturierter Fehler statt blosser Zahl. Bei einem frischen
+    // Listing (SPCX seit 12.06.2026) ist "zu wenig Kursdaten" die richtige
+    // Diagnose - aber ohne Erstnotiz und Mindestbedarf ist sie fuer den
+    // Nutzer nicht einzuordnen.
+    const first = result?.meta?.firstTradeDate
+      ? new Date(result.meta.firstTradeDate * 1000).toISOString().split("T")[0]
+      : candles[0]?.date ?? null;
+    const e = new Error(
+      `Zu wenig Kursdaten fuer ${symbol}: ${candles.length} von mindestens ${minCandles} Kerzen` +
+        (first ? ` (Erstnotiz ${first})` : "")
+    ) as ThinHistoryError;
+    e.thinHistory = true;
+    e.symbol = symbol;
+    e.have = candles.length;
+    e.need = minCandles;
+    e.firstTrade = first;
+    throw e;
   }
   return { weeklyAnalysisCandles: candles };
 }

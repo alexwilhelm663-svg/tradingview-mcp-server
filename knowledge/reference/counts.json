@@ -1,6 +1,6 @@
 {
  "_hinweis": "V152: Referenzzaehlungen fuer die Regressionspruefung. Verglichen werden TREND und WELLENPUNKTE (Toleranz 0,5 %), NICHT die ZigZag-Stufe. Grund: bei Punktgleichstand im Score ist die Stufenwahl willkuerlich - NET erreicht auf allen vier Stufen Score 11 mit identischer Zaehlung, die gepinnte Stufe schlug dadurch grundlos Alarm. Score wird informativ mitgefuehrt, aber nicht hart geprueft (Datendrift der laufenden Kerze verschiebt ihn).",
- "_aktualisiert": "2026-08-06",
+ "_aktualisiert": "2026-08-08",
  "titel": {
   "MSTR": {
    "trend": "bullish",
@@ -47,7 +47,7 @@
     53.88,
     260,
     160.35,
-    305
+    324.73
    ]
   },
   "SAP": {
