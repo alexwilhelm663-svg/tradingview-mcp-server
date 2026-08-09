@@ -48,13 +48,40 @@ export function registerCommands(
         "• `/scan` – manueller Radar-Durchlauf\n" +
         "• `/screener` – Unterstützungs-Status aller Titel (täglich 08:00)\n" +
         "• `/setup <SYMBOL> [30m|1h]` – 1-2-Struktur als eigener Chart\n" +
-        "• `/deep <SYMBOL>` – Analyse-Tafel mit Zielzonen und Projektion\n\n" +
+        "• `/deep <SYMBOL>` – Analyse-Tafel mit Zielzonen und Projektion\n" +
+        "• `/scan12 [1h|30m|1d]` – 1-2-Strukturen über alle Titel\n\n" +
         "✅ Chat-ID für automatische Alerts gespeichert.",
       { parse_mode: "Markdown" }
     );
   });
 
   bot.command("radar", (ctx) => ctx.reply(viewWatchlist(), { parse_mode: "Markdown" }));
+
+  // V168: 1-2-Suche ueber die Watchlist, Aufloesung waehlbar.
+  bot.command("scan12", async (ctx) => {
+    const parts = (ctx.message as any)?.text?.trim().split(/\s+/) ?? [];
+    const iv = (parts[1] || "1d").toLowerCase();
+    if (!["1h", "30m", "1d", "1wk"].includes(iv)) {
+      return ctx.reply("Nutzung: `/scan12 [1h|30m|1d|1wk]`", { parse_mode: "Markdown" });
+    }
+    if (scanInFlight) return ctx.reply("⏳ Ein Scan läuft bereits.");
+    scanInFlight = true;
+    try {
+      await ctx.reply(`🔎 Suche 1-2-Strukturen auf ${iv}…`);
+      const { scanStructures, formatScan } = await import("../core/structureScan");
+      const { getWatchlist, ensureScreenerUniverse } = await import("../core/watchlist");
+      ensureScreenerUniverse();
+      const list = getWatchlist();
+      const hits = await scanStructures(iv, list);
+      for (const part of splitMessage(formatScan(hits, iv, list.length))) {
+        await ctx.reply(part, { parse_mode: "Markdown" });
+      }
+    } catch (err: any) {
+      await ctx.reply(`❌ Scan-Fehler: ${err?.message ?? err}`);
+    } finally {
+      scanInFlight = false;
+    }
+  });
 
   // V165: Analyse-Tafel - alles in einem Bild, wenig Text darunter.
   bot.command("deep", async (ctx) => {

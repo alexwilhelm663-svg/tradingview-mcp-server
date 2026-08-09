@@ -1,4 +1,4 @@
-import { fetchMarketData } from "./marketData";
+import { fetchMarketData, Candle } from "./marketData";
 import { findImpulseAdaptive } from "./impulseFinder";
 import { checkProportion } from "./proportion";
 import { assessMultiWave } from "./multiWave";
@@ -27,10 +27,29 @@ export async function buildSetupChart(
   interval = "30m",
   range = "60d"
 ): Promise<SetupChartResult> {
-  const { weeklyAnalysisCandles: candles } = await fetchMarketData(symbol, interval, range);
-  if (!candles || candles.length < 60) {
-    return { buffer: null, caption: `❌ ${symbol}: zu wenige ${interval}-Kerzen.` };
+  // V168: Range-Fallback. Yahoo liefert 1h bis 730 Tage, aber nicht fuer
+  // jeden Titel (ALAB wirft dort 422). Statt abzubrechen wird das Fenster
+  // schrittweise verkleinert.
+  const ranges = [range, ...(interval === "1h" ? ["730d", "60d"] : ["60d", "1mo"])]
+    .filter((r, i, arr) => arr.indexOf(r) === i);
+  let candles: Candle[] | null = null;
+  let usedRange = range;
+  for (const rg of ranges) {
+    try {
+      const r = await fetchMarketData(symbol, interval, rg);
+      if (r.weeklyAnalysisCandles && r.weeklyAnalysisCandles.length >= 60) {
+        candles = r.weeklyAnalysisCandles;
+        usedRange = rg;
+        break;
+      }
+    } catch {
+      /* naechstes Fenster */
+    }
   }
+  if (!candles) {
+    return { buffer: null, caption: `❌ ${symbol}: keine ausreichenden ${interval}-Daten.` };
+  }
+  range = usedRange;
   const price = candles[candles.length - 1].close;
 
   // Anker: Extrem der jueingeren Vergangenheit. Auf 30-Minuten-Basis ist die
