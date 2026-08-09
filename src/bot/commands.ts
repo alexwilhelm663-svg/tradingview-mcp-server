@@ -72,6 +72,17 @@ export function registerCommands(
       } else {
         await ctx.reply(res.caption, { parse_mode: "Markdown" });
       }
+      // V167: Korrektur-Detail direkt darunter - Binnenzaehlung je Bein und
+      // die Frage, ob die Korrektur noch weiterlaufen kann.
+      try {
+        const { buildCorrectionChart } = await import("../core/correctionChart");
+        const cd = await buildCorrectionChart(symbol, rng, iv);
+        if (cd.buffer) {
+          await ctx.replyWithPhoto({ source: cd.buffer }, { caption: cd.caption, parse_mode: "Markdown" });
+        }
+      } catch {
+        /* Korrektur-Detail ist optional */
+      }
     } catch (err: any) {
       await ctx.reply(`❌ Tafel-Fehler: ${err?.message ?? err}`);
     }
