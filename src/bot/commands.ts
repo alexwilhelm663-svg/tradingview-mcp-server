@@ -47,13 +47,35 @@ export function registerCommands(
         "• `/setups` – Setup-Status (PENDING/CONFIRMED)\n" +
         "• `/scan` – manueller Radar-Durchlauf\n" +
         "• `/screener` – Unterstützungs-Status aller Titel (täglich 08:00)\n" +
-        "• `/setup <SYMBOL> [30m|1h]` – 1-2-Struktur als eigener Chart\n\n" +
+        "• `/setup <SYMBOL> [30m|1h]` – 1-2-Struktur als eigener Chart\n" +
+        "• `/deep <SYMBOL>` – Analyse-Tafel mit Zielzonen und Projektion\n\n" +
         "✅ Chat-ID für automatische Alerts gespeichert.",
       { parse_mode: "Markdown" }
     );
   });
 
   bot.command("radar", (ctx) => ctx.reply(viewWatchlist(), { parse_mode: "Markdown" }));
+
+  // V165: Analyse-Tafel - alles in einem Bild, wenig Text darunter.
+  bot.command("deep", async (ctx) => {
+    const parts = (ctx.message as any)?.text?.trim().split(/\s+/) ?? [];
+    const symbol = (parts[1] || "").toUpperCase();
+    if (!symbol) return ctx.reply("Nutzung: `/deep SYMBOL [5y|max|1y] [1wk|1d]`", { parse_mode: "Markdown" });
+    const rng = (parts[2] || "5y").toLowerCase();
+    const iv = (parts[3] || "1wk").toLowerCase();
+    try {
+      await ctx.reply(`📐 Analyse-Tafel ${symbol}…`);
+      const { buildDeepChart } = await import("../core/deepChart");
+      const res = await buildDeepChart(symbol, rng, iv);
+      if (res.buffer) {
+        await ctx.replyWithPhoto({ source: res.buffer }, { caption: res.caption, parse_mode: "Markdown" });
+      } else {
+        await ctx.reply(res.caption, { parse_mode: "Markdown" });
+      }
+    } catch (err: any) {
+      await ctx.reply(`❌ Tafel-Fehler: ${err?.message ?? err}`);
+    }
+  });
 
   // V161: Setup-Chart - 1-2-Struktur auf 30-Minuten-Basis, eigenes Bild.
   bot.command("setup", async (ctx) => {
