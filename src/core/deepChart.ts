@@ -6,6 +6,7 @@ import { assessMultiWave } from "./multiWave";
 import { measureContinuity } from "./continuity";
 import { readDegree } from "./degree";
 import { zigzag } from "./zigzag";
+import { classifyCorrection, CorrectionRead } from "./correction";
 import { spawn } from "child_process";
 import path from "path";
 
@@ -36,6 +37,54 @@ interface Scenario {
 }
 
 const pt = (wc: WaveCount, l: string) => wc.points.find((p) => p.label === l) ?? null;
+
+interface TradePlan {
+  art: string;
+  entry: number;
+  stop: number;
+  ziel: number;
+  risk: number;   // % vom Einstieg
+  crv: number;
+}
+
+/**
+ * Zwei handelbare Varianten aus den bereits berechneten Zonen:
+ *  - Ruecksetzer: in der naechsten Zone GEGEN den Kurs kaufen, Stop darunter
+ *  - Ausbruch: ueber der naechsten Zone MIT dem Trend, Stop unter deren Boden
+ * Ziel ist jeweils die naechste Zone in Trendrichtung dahinter.
+ */
+function buildTrades(up: boolean, price: number, clusters: FibCluster[]): TradePlan[] {
+  const out: TradePlan[] = [];
+  const asc = [...clusters].sort((a, b) => a.center - b.center);
+  const above = asc.filter((c) => c.floor > price);
+  const below = asc.filter((c) => c.ceiling < price).reverse();
+
+  const mk = (art: string, entry: number, stop: number, ziel: number) => {
+    const risk = Math.abs(entry - stop) / entry * 100;
+    const crv = Math.abs(ziel - entry) / Math.max(Math.abs(entry - stop), 1e-9);
+    if (!isFinite(crv) || risk <= 0) return;
+    out.push({ art, entry, stop, ziel, risk, crv });
+  };
+
+  if (up) {
+    // Ruecksetzer in die naechste Zone darunter
+    const z = below[0];
+    const target = above[0] ?? clusters.sort((a, b) => b.center - a.center)[0];
+    if (z && target) mk("Rücksetzer", z.ceiling, z.floor * 0.97, target.center);
+    // Ausbruch ueber die naechste Zone darueber
+    const b = above[0];
+    const t2 = above[1];
+    if (b && t2) mk("Ausbruch", b.ceiling, b.floor * 0.97, t2.center);
+  } else {
+    const z = above[0];
+    const target = below[0] ?? clusters.sort((a, b) => a.center - b.center)[0];
+    if (z && target) mk("Rücklauf", z.floor, z.ceiling * 1.03, target.center);
+    const b = below[0];
+    const t2 = below[1];
+    if (b && t2) mk("Bruch", b.floor, b.ceiling * 1.03, t2.center);
+  }
+  return out;
+}
 
 /** Schematischer Pfad zu den bereits berechneten Zielzonen. */
 function buildScenarios(
@@ -169,6 +218,39 @@ export async function buildDeepChart(
   if (trigger != null) marks.push({ price: trigger, label: "Trigger", color: "#22c55e" });
   if (invalidation != null) marks.push({ price: invalidation, label: "Invalidierung", color: "#ef4444" });
 
+  // V166: Korrektur-Lesart (A-B-C / W-X-Y) - fehlte in der Tafel komplett,
+  // obwohl der Standard-Chart sie zeichnet.
+  let corrPoints: { label: string; date: string; price: number }[] = [];
+  let corrPattern: string | null = null;
+  if (w5) {
+    const postPiv = zigzag(candles, outcome.impulse.threshold).filter((q) => q.date > w5.date);
+    const wantA: "L" | "H" = up ? "L" : "H";
+    const a = postPiv.find((q) => q.kind === wantA) ?? null;
+    const b = a ? postPiv.find((q) => q.date > a.date && q.kind !== wantA) ?? null : null;
+    if (a && b) {
+      const after = candles.filter((k) => k.date > b.date);
+      const cExt = after.length
+        ? up ? Math.min(...after.map((k) => k.low)) : Math.max(...after.map((k) => k.high))
+        : null;
+      const cDate = after.length
+        ? after.reduce((m, k) => ((up ? k.low < m.low : k.high > m.high) ? k : m), after[0]).date
+        : null;
+      const cr: CorrectionRead = classifyCorrection(
+        w5.price, a.price, b.price, cExt, price, postPiv, up ? 1 : -1,
+        {
+          candles, parentThreshold: outcome.impulse.threshold, topDate: w5.date,
+          aDate: a.date, bDate: b.date,
+          impulseOrigin: w0?.price ?? null, impulseEnd: w5.price,
+        }
+      );
+      corrPoints = cr.legPoints;
+      corrPattern = cr.pattern;
+      if (cDate && corrPoints.length === 2 && cExt != null) {
+        corrPoints.push({ label: /DOUBLE|WXY|KOMBI/.test(cr.pattern) ? "Y" : "C", date: cDate, price: cExt });
+      }
+    }
+  }
+
   let mwPoints: { label: string; date: string; price: number }[] = [];
   if (w5) {
     const mw = assessMultiWave(candles, w5.date, w5.price, up ? -1 : 1, outcome.impulse.threshold);
@@ -187,6 +269,9 @@ export async function buildDeepChart(
     candles,
     waves: wc.points.map((p) => ({ label: p.label, date: p.date, price: p.price })),
     multiWave: mwPoints,
+    correction: corrPoints,
+    corrPattern,
+    trades: buildTrades(up, price, clusters),
     clusters: clusters.map((c) => ({
       floor: c.floor, ceiling: c.ceiling, score: c.score, labels: c.labels,
     })),

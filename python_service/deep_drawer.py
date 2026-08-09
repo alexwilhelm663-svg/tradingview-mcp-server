@@ -16,6 +16,7 @@ BG, PANEL, GRID = "#0b1220", "#111a2b", "#1e293b"
 FG, MUTED = "#e2e8f0", "#94a3b8"
 UP, DOWN = "#22c55e", "#ef4444"
 WAVE, MW, ZONE = "#38bdf8", "#059669", "#7c3aed"
+CORR = "#f43f5e"
 
 
 def money(v):
@@ -97,6 +98,23 @@ def main():
                         xytext=(0, 8 if m["label"] == "1" else -14), ha="center",
                         fontsize=8, fontweight="bold", color=MW, zorder=6)
 
+    # V166: Korrektur-Lesart A-B-C bzw. W-X-Y - fehlte in der Tafel.
+    corr = p.get("correction", [])
+    if len(corr) >= 2:
+        cx = [d2n(c["date"]) for c in corr]
+        cy = [c["price"] for c in corr]
+        # Anschluss an das Welle-5-Extrem, sonst haengt die Korrektur in der Luft
+        if waves:
+            cx = [d2n(waves[-1]["date"])] + cx
+            cy = [waves[-1]["price"]] + cy
+        ax.plot(cx, cy, color=CORR, lw=2.0, ls="--", zorder=5, alpha=0.95)
+        for c in corr:
+            ax.plot(d2n(c["date"]), c["price"], "o", color=CORR, ms=7, zorder=6,
+                    markeredgecolor=BG, markeredgewidth=1.2)
+            ax.annotate(c["label"], (d2n(c["date"]), c["price"]),
+                        textcoords="offset points", xytext=(0, -18), ha="center",
+                        fontsize=10, fontweight="bold", color=CORR, zorder=7)
+
     ax.axvline(last_x, color=MUTED, ls="--", lw=1.0, alpha=0.55, zorder=3)
     ax.text(last_x, ax.get_ylim()[1], " PROJEKTION · SCHEMATISCH ",
             color=MUTED, fontsize=8.5, va="top", ha="left", zorder=7)
@@ -130,7 +148,11 @@ def main():
 
     fig.text(0.045, 0.955, f'{p["symbol"]} · ELLIOTT-WELLEN-ANALYSE',
              color=FG, fontsize=21, fontweight="bold", ha="left")
-    fig.text(0.045, 0.918, f'{p["interval"]} ({p["range"]}) · Trend {p["trend"]} · log',
+    st = p["struktur"]
+    corr_txt = f' · Korrektur {p["corrPattern"]}' if p.get("corrPattern") else ""
+    fig.text(0.045, 0.918,
+             f'{p["interval"]} ({p["range"]}) · Trend {p["trend"]} · Score {st["score"]} · '
+             f'Kontinuität {st["kontinuitaet"]} · Grad {st["grad"]}{corr_txt}',
              color=MUTED, fontsize=10.5, ha="left")
     fig.text(0.985, 0.955, money(p["price"]),
              color=UP if p["trend"] == "bullish" else DOWN,
@@ -151,26 +173,35 @@ def main():
             side.text(0.94, yy, v, transform=side.transAxes, color=FG, fontsize=8.6,
                       va="top", ha="right", zorder=2, fontweight="bold")
 
-    st = p["struktur"]
-    panel(0.72, 0.26, "STRUKTUR", [
-        ("Score", st["score"]), ("Anker", st["anker"]), ("ZigZag", st["zigzag"]),
-        ("Kontinuität", st["kontinuitaet"]), ("Grad", st["grad"]),
-        ("Korrektur-Raster", st["raster"]),
-    ], WAVE)
+    # V166: Seitenleiste nur noch handelsrelevant. Score und Kontinuitaet
+    # sind Qualitaetsmasse - die wandern in die Kopfzeile.
+    trades = p.get("trades", [])
+    if trades:
+        tl = []
+        for tr in trades:
+            tl.append((tr["art"].upper(), f'CRV {tr["crv"]:.1f}'))
+            tl.append(("  Einstieg", money(tr["entry"])))
+            tl.append(("  Stop", money(tr["stop"])))
+            tl.append(("  Ziel", money(tr["ziel"])))
+            tl.append(("  Risiko", f'{tr["risk"]:.1f} %'))
+            tl.append(("", ""))
+        panel(0.58, 0.40, "HANDELSPLAN", tl[:12], UP)
+    else:
+        panel(0.58, 0.40, "HANDELSPLAN", [("keine Zone in Reichweite", "")], UP)
 
     scen_lines = []
     for s in scen:
         scen_lines.append((s["name"], ""))
-        scen_lines.append(("  " + s["note"][:40], ""))
-    panel(0.40, 0.28, "SZENARIEN", scen_lines or [("keine Zielzonen", "")], UP)
+        scen_lines.append(("  " + s["note"][:38], ""))
+    panel(0.34, 0.21, "SZENARIEN", scen_lines or [("keine Zielzonen", "")], WAVE)
     for i, s in enumerate(scen):
-        side.plot(0.045, 0.40 + 0.28 - 0.068 - i * 0.060, "s", color=s["color"],
+        side.plot(0.045, 0.34 + 0.21 - 0.068 - i * 0.060, "s", color=s["color"],
                   ms=6, transform=side.transAxes, zorder=3, clip_on=False)
 
     mark_lines = [(m["label"], money(m["price"])) for m in p.get("marks", [])]
     for cl in p.get("clusters", [])[:4]:
         mark_lines.append((f'Zone S{cl["score"]}', f'{money(cl["floor"])}–{money(cl["ceiling"])}'))
-    panel(0.03, 0.33, "ENTSCHEIDUNGSMARKEN", mark_lines, ZONE)
+    panel(0.03, 0.28, "MARKEN", mark_lines, ZONE)
 
     fig.text(0.045, 0.028,
              f'Stand {p["stand"]} · logarithmische Preisachse · Projektion schematisch, '
