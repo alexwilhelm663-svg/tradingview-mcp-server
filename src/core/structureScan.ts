@@ -1,11 +1,13 @@
 import { fetchMarketData, Candle } from "./marketData";
 import { findImpulseAdaptive } from "./impulseFinder";
 import { checkProportion } from "./proportion";
-import { assessMultiWave } from "./multiWave";
+import { assessMultiWave, isActionableMultiWave } from "./multiWave";
 import { getWatchlist } from "./watchlist";
 
 /**
- * V168: 1-2-Suche ueber die Watchlist, auflösungsfrei.
+ * V169: 1-2-Suche ueber die Watchlist, auflösungsfrei und nur mit intakten
+ * Schlusskurs-Setups. Historisch invalidierte Counts bleiben Diagnosematerial,
+ * sind aber keine Scanner-Treffer.
  *
  * `/setup` zeigt EINEN Titel. Diese Suche laeuft ueber alle und meldet, wo
  * ueberhaupt eine 1-2-Staffelung steht. Auf Stundenbasis ist die Ausbeute
@@ -73,16 +75,22 @@ async function scanOne(symbol: string, interval: string): Promise<ScanHit | null
   }
 
   const mw = assessMultiWave(candles, anchorDate, anchorPrice, dir, th);
-  if (!mw.note) return null;
+  // /scan12 ist ein Scanner fuer AKTUELLE Setups, kein Friedhof historischer
+  // Counts. V168 liess gebrochene, ehemals verschachtelte Kandidaten durch,
+  // weil assessMultiWave fuer sie bewusst eine Diagnose-Notiz liefert.
+  // Dadurch erschien z.B. ARM trotz bereits unterschrittener 268er Marke.
+  if (!isActionableMultiWave(mw)) return null;
   return {
     symbol,
     legs: mw.legs,
-    nested: mw.active,
+    // `active` bedeutet verschachtelt UND intakt. Fuer die Darstellung der
+    // Struktur ist die neue, statusunabhaengige Eigenschaft die richtige.
+    nested: mw.nested,
     intact: mw.intact,
     marke: mw.currentInvalidation,
     price,
     distPct: mw.currentInvalidation != null ? (price / mw.currentInvalidation - 1) * 100 : null,
-    note: mw.note,
+    note: mw.note!,
   };
 }
 
@@ -102,15 +110,17 @@ export async function scanStructures(interval: string, symbols?: string[]): Prom
 }
 
 export function formatScan(hits: ScanHit[], interval: string, total: number): string {
-  const head = `🔎 **1-2-Strukturen** · ${interval} · ${hits.length}/${total} Titel`;
-  if (hits.length === 0) {
+  // Defensive zweite Schranke: Auch ein kuenftiger Aufrufer darf historische
+  // Bruchkandidaten nicht wieder als aktuelle Treffer formatieren.
+  const activeHits = hits.filter((h) => h.intact);
+  const head = `🔎 **Aktive 1-2-Strukturen** · ${interval} · ${activeHits.length}/${total} Titel`;
+  if (activeHits.length === 0) {
     return head + `\n\nKeine belastbare 1-2-Staffelung auf ${interval}.`;
   }
   const num = (n: number) =>
     Math.abs(n) >= 1e4 ? (n / 1e3).toFixed(1) + "k" : Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(2);
 
-  const rows = [...hits].sort((a, b) => {
-    if (a.intact !== b.intact) return a.intact ? -1 : 1;
+  const rows = [...activeHits].sort((a, b) => {
     if (a.nested !== b.nested) return a.nested ? -1 : 1;
     return Math.abs(a.distPct ?? 999) - Math.abs(b.distPct ?? 999);
   });
@@ -119,7 +129,7 @@ export function formatScan(hits: ScanHit[], interval: string, total: number): st
     e: String(r.legs),
     marke: r.marke != null ? num(r.marke) : "-",
     abst: r.distPct != null ? `${r.distPct >= 0 ? "+" : ""}${r.distPct.toFixed(1)}` : "-",
-    flag: (r.nested ? "V" : "·") + (r.intact ? "" : "✕"),
+    flag: r.nested ? "V" : "·",
   }));
   const w = (k: "sym" | "marke" | "abst") => Math.max(k.length, ...cells.map((c) => c[k].length));
   const wS = w("sym"), wM = Math.max(5, w("marke")), wA = Math.max(4, w("abst"));
@@ -128,5 +138,5 @@ export function formatScan(hits: ScanHit[], interval: string, total: number): st
 
   const tab = [line("SYM", "N", "MARKE", "ABST", "F"),
     ...cells.map((c) => line(c.sym, c.e, c.marke, c.abst, c.flag))];
-  return `${head}\n\n\`\`\`\n${tab.join("\n")}\n\`\`\`\n\n_N_ Einheiten · _V_ verschachtelt · _✕_ gebrochen`;
+  return `${head}\n\n\`\`\`\n${tab.join("\n")}\n\`\`\`\n\n_N_ Einheiten · _V_ verschachtelt · nur intakte Schlusskurs-Setups`;
 }
