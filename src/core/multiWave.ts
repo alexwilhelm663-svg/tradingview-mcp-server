@@ -3,10 +3,13 @@ import { Pivot, zigzag } from "./zigzag";
 import { segmentVerdict } from "./impulseFinder";
 
 export interface MultiWaveRead {
-  active: boolean;                    // echte Grad-Verschachtelung
+  active: boolean;                    // echte Grad-Verschachtelung UND intakt
+  nested: boolean;                    // strukturell verschachtelt, auch nach Bruch
   legs: number;                       // Anzahl vollstaendiger 1-2-Einheiten
   currentInvalidation: number | null; // nachziehende Marke = letztes Welle-2-Extrem
   intact: boolean;
+  breachDate: string | null;          // erster Schlusskurs-Bruch nach der letzten Welle 2
+  breachClose: number | null;
   note: string | null;                // null = Schweigen
   /** V159: Wellenpunkte zum Einzeichnen - Anker, dann je Einheit 1 und 2. */
   points: { label: string; date: string; price: number }[];
@@ -14,8 +17,56 @@ export interface MultiWaveRead {
 
 const EMPTY: MultiWaveRead = {
   points: [],
-  active: false, legs: 0, currentInvalidation: null, intact: false, note: null,
+  active: false, nested: false, legs: 0, currentInvalidation: null, intact: false,
+  breachDate: null, breachClose: null, note: null,
 };
+
+export interface CloseBreach {
+  date: string;
+  close: number;
+}
+
+/**
+ * Elliott-Hard-Rule fuer die nachziehende Welle-2-Marke: Ein spaeterer
+ * Schlusskurs auf der falschen Seite invalidiert genau diesen Count dauerhaft.
+ * Eine anschliessende Rueckkehr ueber/unter die Marke reaktiviert ihn nicht.
+ */
+export function findCloseBreach(
+  candles: Candle[],
+  afterDate: string,
+  invalidation: number,
+  dirCounter: 1 | -1
+): CloseBreach | null {
+  const hit = candles.find(
+    (k) => k.date > afterDate &&
+      (dirCounter === 1 ? k.close < invalidation : k.close > invalidation)
+  );
+  return hit ? { date: hit.date, close: hit.close } : null;
+}
+
+/**
+ * Auswahl zwischen mehreren Ankern. V168 priorisierte nur `active` und danach
+ * die Beinzahl. Dadurch konnte ein alter gebrochener Kandidat einen gleich
+ * grossen, neueren intakten Kandidaten verdraengen. Status und Aktualitaet
+ * muessen vor der historischen Laenge kommen.
+ */
+export function preferMultiWaveCandidate(
+  candidate: MultiWaveRead,
+  current: MultiWaveRead
+): boolean {
+  if (candidate.intact !== current.intact) return candidate.intact;
+  if (candidate.nested !== current.nested) return candidate.nested;
+
+  const candidateDate = candidate.points[candidate.points.length - 1]?.date ?? "";
+  const currentDate = current.points[current.points.length - 1]?.date ?? "";
+  if (candidateDate !== currentDate) return candidateDate > currentDate;
+  return candidate.legs > current.legs;
+}
+
+/** Zentrale Gate-Funktion fuer Scanner: nur ein intakter Count ist ein Setup. */
+export function isActionableMultiWave(read: MultiWaveRead): boolean {
+  return read.intact && read.note !== null;
+}
 
 // ── Belastbarkeits-Anforderungen (V144) ────────────────────────────────────
 // Vorher genuegten drei gestaffelte Pivots auf einer Schwelle, die aus der
@@ -102,11 +153,7 @@ export function assessMultiWave(
   for (const a of cands) {
     const r = assessFromAnchor(candles, a.date, a.price, dirCounter, parentThreshold);
     if (!r.note) continue;
-    if (
-      best === null ||
-      (r.active && !best.active) ||
-      (r.active === best.active && r.legs > best.legs)
-    ) {
+    if (best === null || preferMultiWaveCandidate(r, best)) {
       best = r;
     }
   }
@@ -190,11 +237,8 @@ function assessFromAnchor(
 
   const last = units[units.length - 1];
   const currentInvalidation = last.troughPrice;
-  const breached = candles.some(
-    (k) => k.date > last.troughDate &&
-      (dirCounter === 1 ? k.close < currentInvalidation : k.close > currentInvalidation)
-  );
-  const intact = !breached;
+  const breach = findCloseBreach(candles, last.troughDate, currentInvalidation, dirCounter);
+  const intact = breach === null;
 
   // Verschachtelung: materiell schrumpfende Wellen-1, hoechstens 4 Grade
   let nested = units.length >= 2 && units.length <= MAX_DEGREES;
@@ -209,7 +253,8 @@ function assessFromAnchor(
   if (nested) {
     note = intact
       ? `Multi-1-2 · ${units.length} Grade · Marke ${currentInvalidation.toFixed(2)}`
-      : `Multi-1-2 gebrochen (${invWord} ${currentInvalidation.toFixed(2)})`;
+      : `Multi-1-2 gebrochen · ${breach!.date.slice(0, 10)} Schluss ` +
+        `${breach!.close.toFixed(2)} ${invWord} Marke ${currentInvalidation.toFixed(2)}`;
   } else if (intact) {
     note = `${units.length}× 1-2 · ${dirWord} · Marke ${currentInvalidation.toFixed(2)}`;
   } else {
@@ -229,9 +274,12 @@ function assessFromAnchor(
 
   return {
     active: nested && intact,
+    nested,
     legs: units.length,
     currentInvalidation,
     intact,
+    breachDate: breach?.date ?? null,
+    breachClose: breach?.close ?? null,
     note,
     points,
   };
