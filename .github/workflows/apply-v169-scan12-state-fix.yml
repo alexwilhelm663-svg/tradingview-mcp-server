@@ -1,0 +1,448 @@
+name: "🔧 Apply V169 (Scan12 Status-Fix)"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: apply-v169-scan12-state-fix
+  cancel-in-progress: false
+
+jobs:
+  v169:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "🌿 Fix-Branch erstellen"
+        env:
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git fetch origin "$BASE_BRANCH"
+          git checkout -B fix/v169-scan12-state "origin/$BASE_BRANCH"
+
+      - name: "🩹 V169-Patch anwenden"
+        shell: bash
+        run: |
+          patch_file="$(mktemp)"
+          trap 'rm -f "$patch_file"' EXIT
+          cat > "$patch_file" <<'PATCH'
+          --- a/src/core/multiWave.ts
+          +++ b/src/core/multiWave.ts
+          @@ -3,10 +3,13 @@
+           import { segmentVerdict } from "./impulseFinder";
+           
+           export interface MultiWaveRead {
+          -  active: boolean;                    // echte Grad-Verschachtelung
+          +  active: boolean;                    // echte Grad-Verschachtelung UND intakt
+          +  nested: boolean;                    // strukturell verschachtelt, auch nach Bruch
+             legs: number;                       // Anzahl vollstaendiger 1-2-Einheiten
+             currentInvalidation: number | null; // nachziehende Marke = letztes Welle-2-Extrem
+             intact: boolean;
+          +  breachDate: string | null;          // erster Schlusskurs-Bruch nach der letzten Welle 2
+          +  breachClose: number | null;
+             note: string | null;                // null = Schweigen
+             /** V159: Wellenpunkte zum Einzeichnen - Anker, dann je Einheit 1 und 2. */
+             points: { label: string; date: string; price: number }[];
+          @@ -14,9 +17,57 @@
+           
+           const EMPTY: MultiWaveRead = {
+             points: [],
+          -  active: false, legs: 0, currentInvalidation: null, intact: false, note: null,
+          +  active: false, nested: false, legs: 0, currentInvalidation: null, intact: false,
+          +  breachDate: null, breachClose: null, note: null,
+           };
+           
+          +export interface CloseBreach {
+          +  date: string;
+          +  close: number;
+          +}
+          +
+          +/**
+          + * Elliott-Hard-Rule fuer die nachziehende Welle-2-Marke: Ein spaeterer
+          + * Schlusskurs auf der falschen Seite invalidiert genau diesen Count dauerhaft.
+          + * Eine anschliessende Rueckkehr ueber/unter die Marke reaktiviert ihn nicht.
+          + */
+          +export function findCloseBreach(
+          +  candles: Candle[],
+          +  afterDate: string,
+          +  invalidation: number,
+          +  dirCounter: 1 | -1
+          +): CloseBreach | null {
+          +  const hit = candles.find(
+          +    (k) => k.date > afterDate &&
+          +      (dirCounter === 1 ? k.close < invalidation : k.close > invalidation)
+          +  );
+          +  return hit ? { date: hit.date, close: hit.close } : null;
+          +}
+          +
+          +/**
+          + * Auswahl zwischen mehreren Ankern. V168 priorisierte nur `active` und danach
+          + * die Beinzahl. Dadurch konnte ein alter gebrochener Kandidat einen gleich
+          + * grossen, neueren intakten Kandidaten verdraengen. Status und Aktualitaet
+          + * muessen vor der historischen Laenge kommen.
+          + */
+          +export function preferMultiWaveCandidate(
+          +  candidate: MultiWaveRead,
+          +  current: MultiWaveRead
+          +): boolean {
+          +  if (candidate.intact !== current.intact) return candidate.intact;
+          +  if (candidate.nested !== current.nested) return candidate.nested;
+          +
+          +  const candidateDate = candidate.points[candidate.points.length - 1]?.date ?? "";
+          +  const currentDate = current.points[current.points.length - 1]?.date ?? "";
+          +  if (candidateDate !== currentDate) return candidateDate > currentDate;
+          +  return candidate.legs > current.legs;
+          +}
+          +
+          +/** Zentrale Gate-Funktion fuer Scanner: nur ein intakter Count ist ein Setup. */
+          +export function isActionableMultiWave(read: MultiWaveRead): boolean {
+          +  return read.intact && read.note !== null;
+          +}
+          +
+           // ── Belastbarkeits-Anforderungen (V144) ────────────────────────────────────
+           // Vorher genuegten drei gestaffelte Pivots auf einer Schwelle, die aus der
+           // Amplitude abgeleitet war - bei einer jungen Bewegung also Rauschen. Jetzt
+          @@ -102,11 +153,7 @@
+             for (const a of cands) {
+               const r = assessFromAnchor(candles, a.date, a.price, dirCounter, parentThreshold);
+               if (!r.note) continue;
+          -    if (
+          -      best === null ||
+          -      (r.active && !best.active) ||
+          -      (r.active === best.active && r.legs > best.legs)
+          -    ) {
+          +    if (best === null || preferMultiWaveCandidate(r, best)) {
+                 best = r;
+               }
+             }
+          @@ -190,11 +237,8 @@
+           
+             const last = units[units.length - 1];
+             const currentInvalidation = last.troughPrice;
+          -  const breached = candles.some(
+          -    (k) => k.date > last.troughDate &&
+          -      (dirCounter === 1 ? k.close < currentInvalidation : k.close > currentInvalidation)
+          -  );
+          -  const intact = !breached;
+          +  const breach = findCloseBreach(candles, last.troughDate, currentInvalidation, dirCounter);
+          +  const intact = breach === null;
+           
+             // Verschachtelung: materiell schrumpfende Wellen-1, hoechstens 4 Grade
+             let nested = units.length >= 2 && units.length <= MAX_DEGREES;
+          @@ -209,7 +253,8 @@
+             if (nested) {
+               note = intact
+                 ? `Multi-1-2 · ${units.length} Grade · Marke ${currentInvalidation.toFixed(2)}`
+          -      : `Multi-1-2 gebrochen (${invWord} ${currentInvalidation.toFixed(2)})`;
+          +      : `Multi-1-2 gebrochen · ${breach!.date.slice(0, 10)} Schluss ` +
+          +        `${breach!.close.toFixed(2)} ${invWord} Marke ${currentInvalidation.toFixed(2)}`;
+             } else if (intact) {
+               note = `${units.length}× 1-2 · ${dirWord} · Marke ${currentInvalidation.toFixed(2)}`;
+             } else {
+          @@ -229,9 +274,12 @@
+           
+             return {
+               active: nested && intact,
+          +    nested,
+               legs: units.length,
+               currentInvalidation,
+               intact,
+          +    breachDate: breach?.date ?? null,
+          +    breachClose: breach?.close ?? null,
+               note,
+               points,
+             };
+          --- a/src/core/structureScan.ts
+          +++ b/src/core/structureScan.ts
+          @@ -1,11 +1,13 @@
+           import { fetchMarketData, Candle } from "./marketData";
+           import { findImpulseAdaptive } from "./impulseFinder";
+           import { checkProportion } from "./proportion";
+          -import { assessMultiWave } from "./multiWave";
+          +import { assessMultiWave, isActionableMultiWave } from "./multiWave";
+           import { getWatchlist } from "./watchlist";
+           
+           /**
+          - * V168: 1-2-Suche ueber die Watchlist, auflösungsfrei.
+          + * V169: 1-2-Suche ueber die Watchlist, auflösungsfrei und nur mit intakten
+          + * Schlusskurs-Setups. Historisch invalidierte Counts bleiben Diagnosematerial,
+          + * sind aber keine Scanner-Treffer.
+            *
+            * `/setup` zeigt EINEN Titel. Diese Suche laeuft ueber alle und meldet, wo
+            * ueberhaupt eine 1-2-Staffelung steht. Auf Stundenbasis ist die Ausbeute
+          @@ -73,16 +75,22 @@
+             }
+           
+             const mw = assessMultiWave(candles, anchorDate, anchorPrice, dir, th);
+          -  if (!mw.note) return null;
+          +  // /scan12 ist ein Scanner fuer AKTUELLE Setups, kein Friedhof historischer
+          +  // Counts. V168 liess gebrochene, ehemals verschachtelte Kandidaten durch,
+          +  // weil assessMultiWave fuer sie bewusst eine Diagnose-Notiz liefert.
+          +  // Dadurch erschien z.B. ARM trotz bereits unterschrittener 268er Marke.
+          +  if (!isActionableMultiWave(mw)) return null;
+             return {
+               symbol,
+               legs: mw.legs,
+          -    nested: mw.active,
+          +    // `active` bedeutet verschachtelt UND intakt. Fuer die Darstellung der
+          +    // Struktur ist die neue, statusunabhaengige Eigenschaft die richtige.
+          +    nested: mw.nested,
+               intact: mw.intact,
+               marke: mw.currentInvalidation,
+               price,
+               distPct: mw.currentInvalidation != null ? (price / mw.currentInvalidation - 1) * 100 : null,
+          -    note: mw.note,
+          +    note: mw.note!,
+             };
+           }
+           
+          @@ -102,15 +110,17 @@
+           }
+           
+           export function formatScan(hits: ScanHit[], interval: string, total: number): string {
+          -  const head = `🔎 **1-2-Strukturen** · ${interval} · ${hits.length}/${total} Titel`;
+          -  if (hits.length === 0) {
+          +  // Defensive zweite Schranke: Auch ein kuenftiger Aufrufer darf historische
+          +  // Bruchkandidaten nicht wieder als aktuelle Treffer formatieren.
+          +  const activeHits = hits.filter((h) => h.intact);
+          +  const head = `🔎 **Aktive 1-2-Strukturen** · ${interval} · ${activeHits.length}/${total} Titel`;
+          +  if (activeHits.length === 0) {
+               return head + `\n\nKeine belastbare 1-2-Staffelung auf ${interval}.`;
+             }
+             const num = (n: number) =>
+               Math.abs(n) >= 1e4 ? (n / 1e3).toFixed(1) + "k" : Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(2);
+           
+          -  const rows = [...hits].sort((a, b) => {
+          -    if (a.intact !== b.intact) return a.intact ? -1 : 1;
+          +  const rows = [...activeHits].sort((a, b) => {
+               if (a.nested !== b.nested) return a.nested ? -1 : 1;
+               return Math.abs(a.distPct ?? 999) - Math.abs(b.distPct ?? 999);
+             });
+          @@ -119,7 +129,7 @@
+               e: String(r.legs),
+               marke: r.marke != null ? num(r.marke) : "-",
+               abst: r.distPct != null ? `${r.distPct >= 0 ? "+" : ""}${r.distPct.toFixed(1)}` : "-",
+          -    flag: (r.nested ? "V" : "·") + (r.intact ? "" : "✕"),
+          +    flag: r.nested ? "V" : "·",
+             }));
+             const w = (k: "sym" | "marke" | "abst") => Math.max(k.length, ...cells.map((c) => c[k].length));
+             const wS = w("sym"), wM = Math.max(5, w("marke")), wA = Math.max(4, w("abst"));
+          @@ -128,5 +138,5 @@
+           
+             const tab = [line("SYM", "N", "MARKE", "ABST", "F"),
+               ...cells.map((c) => line(c.sym, c.e, c.marke, c.abst, c.flag))];
+          -  return `${head}\n\n\`\`\`\n${tab.join("\n")}\n\`\`\`\n\n_N_ Einheiten · _V_ verschachtelt · _✕_ gebrochen`;
+          +  return `${head}\n\n\`\`\`\n${tab.join("\n")}\n\`\`\`\n\n_N_ Einheiten · _V_ verschachtelt · nur intakte Schlusskurs-Setups`;
+           }
+          --- a/src/index.ts
+          +++ b/src/index.ts
+          @@ -24,7 +24,7 @@
+           const COOLDOWN_MS = 7 * 24 * 3600 * 1000; // 7 Tage pro Symbol
+           
+           ensureScreenerUniverse();
+          -console.log("🚀 EW Quant Hunter V168: EW-Engine + 1-2-Suche (/scan12) startet...");
+          +console.log("🚀 EW Quant Hunter V169: EW-Engine + intakte 1-2-Suche (/scan12) startet...");
+           
+           function getActiveChatId(): number | null {
+             const row = db.prepare("SELECT value FROM config WHERE key = 'chat_id'").get() as
+          --- a/package.json
+          +++ b/package.json
+          @@ -1,6 +1,6 @@
+           {
+             "name": "ew-quant-hunter",
+          -  "version": "168.0.0",
+          +  "version": "169.0.0",
+             "description": "Elliott Wave Trading Bot (konsolidierter Composition Root)",
+             "main": "dist/index.js",
+             "scripts": {
+          @@ -9,7 +9,8 @@
+               "backtest": "node dist/backtest.js",
+               "verify": "node dist/verify.js",
+               "report": "node dist/report.js",
+          -    "snapshot": "node dist/snapshot.js"
+          +    "snapshot": "node dist/snapshot.js",
+          +    "verify:scan12": "node dist/core/scan12Regression.js"
+             },
+             "dependencies": {
+               "better-sqlite3": "^11.0.0",
+          --- a/package-lock.json
+          +++ b/package-lock.json
+          @@ -1,12 +1,12 @@
+           {
+             "name": "ew-quant-hunter",
+          -  "version": "168.0.0",
+          +  "version": "169.0.0",
+             "lockfileVersion": 3,
+             "requires": true,
+             "packages": {
+               "": {
+                 "name": "ew-quant-hunter",
+          -      "version": "168.0.0",
+          +      "version": "169.0.0",
+                 "dependencies": {
+                   "better-sqlite3": "^11.0.0",
+                   "dotenv": "^16.4.5",
+          --- /dev/null
+          +++ b/src/core/scan12Regression.ts
+          @@ -0,0 +1,67 @@
+          +import assert from "node:assert/strict";
+          +import type { Candle } from "./marketData";
+          +import {
+          +  findCloseBreach,
+          +  isActionableMultiWave,
+          +  preferMultiWaveCandidate,
+          +  type MultiWaveRead,
+          +} from "./multiWave";
+          +
+          +const candle = (date: string, close: number): Candle => ({
+          +  date,
+          +  open: close,
+          +  high: close,
+          +  low: close,
+          +  close,
+          +});
+          +
+          +// Ein spaeterer Schluss unter 268 invalidiert den alten Long-Count dauerhaft.
+          +const longBreak = findCloseBreach(
+          +  [
+          +    candle("2026-08-01", 275),
+          +    candle("2026-08-02", 267),
+          +    candle("2026-08-03", 271),
+          +  ],
+          +  "2026-08-01",
+          +  268,
+          +  1
+          +);
+          +assert.deepEqual(longBreak, { date: "2026-08-02", close: 267 });
+          +
+          +// Die Rueckkehr ueber die Marke darf den historischen Bruch nicht loeschen.
+          +assert.equal(longBreak?.date, "2026-08-02");
+          +
+          +const points = (date: string) => [
+          +  { label: "", date: "2026-01-01", price: 100 },
+          +  { label: "1", date: "2026-02-01", price: 130 },
+          +  { label: "2", date, price: 115 },
+          +];
+          +const read = (overrides: Partial<MultiWaveRead>): MultiWaveRead => ({
+          +  active: false,
+          +  nested: false,
+          +  legs: 2,
+          +  currentInvalidation: 115,
+          +  intact: true,
+          +  breachDate: null,
+          +  breachClose: null,
+          +  note: "2× 1-2",
+          +  points: points("2026-03-01"),
+          +  ...overrides,
+          +});
+          +
+          +// Ein intakter Kandidat muss immer vor einem alten gebrochenen gewinnen.
+          +const staleBroken = read({
+          +  nested: true,
+          +  intact: false,
+          +  breachDate: "2026-04-01",
+          +  breachClose: 110,
+          +  note: "gebrochen",
+          +  points: points("2026-02-15"),
+          +});
+          +const currentIntact = read({ points: points("2026-03-15") });
+          +assert.equal(preferMultiWaveCandidate(currentIntact, staleBroken), true);
+          +assert.equal(preferMultiWaveCandidate(staleBroken, currentIntact), false);
+          +assert.equal(isActionableMultiWave(currentIntact), true);
+          +assert.equal(isActionableMultiWave(staleBroken), false);
+          +
+          +console.log("✅ Scan12-Regressionspruefung bestanden");
+          PATCH
+
+          if git apply --check "$patch_file"; then
+            git apply "$patch_file"
+          elif git apply --reverse --check "$patch_file"; then
+            echo "V169 ist bereits angewendet."
+          else
+            echo "::error::V169-Patch passt nicht auf den aktuellen Stand. Erwartete Basis: V168."
+            exit 1
+          fi
+
+      - name: "🟢 Node 22"
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: "🧪 Build + deterministische Regression"
+        run: |
+          npm ci
+          npm run build
+          npm run verify:scan12
+
+      - name: "📤 Commit und Branch pushen"
+        id: publish
+        env:
+          BRANCH: fix/v169-scan12-state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/core/multiWave.ts src/core/structureScan.ts src/core/scan12Regression.ts src/index.ts package.json package-lock.json
+
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git commit -m "V169: filter invalidated scan12 candidates"
+          git push --force-with-lease --set-upstream origin "$BRANCH"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: "🔀 Pull Request erstellen oder aktualisieren"
+        if: steps.publish.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          BRANCH: fix/v169-scan12-state
+        run: |
+          existing="$(gh pr list --base "$BASE_BRANCH" --head "$BRANCH" --state open --json url --jq '.[0].url')"
+          if [ -n "$existing" ]; then
+            echo "PR aktualisiert: $existing"
+          else
+            gh pr create \
+              --base "$BASE_BRANCH" \
+              --head "$BRANCH" \
+              --title "V169: /scan12 zeigt nur intakte 1-2-Setups" \
+              --body "$(cat <<'BODY'
+          ## Ursache
+
+          V168 gab historische, bereits per Schlusskurs invalidierte Multi-1-2-Kandidaten weiterhin als Scanner-Treffer aus. Gleichzeitig wurde `nested` aus `active` abgeleitet; bei einem Bruch wurde deshalb die Verschachtelung fälschlich als `·✕` statt als ehemals verschachtelter Count dargestellt.
+
+          ## Fix
+
+          - `/scan12` zeigt ausschließlich aktuell intakte Setups.
+          - `nested` und `active` sind getrennte Zustände.
+          - Intakte und neuere Anker gewinnen gegen alte gebrochene Kandidaten.
+          - Bruchdatum und Bruchschluss werden für explizite Diagnosen gespeichert.
+          - Ein deterministischer ARM-268-Regressionsfall schützt das Verhalten.
+
+          ## Verifikation
+
+          - `npm run build`
+          - `npm run verify:scan12`
+          BODY
+          )"
+          fi
+
+      - name: "📝 Zusammenfassung"
+        run: |
+          {
+            echo "### ✅ V169 Scan12 Status-Fix"
+            echo "- Historisch gebrochene Counts werden nicht mehr als aktuelle Setups gelistet."
+            echo "- Bruchzustand und Verschachtelung sind getrennt."
+            echo "- TypeScript-Build und ARM-Regression sind Pflicht-Gates."
+          } >> "$GITHUB_STEP_SUMMARY"
