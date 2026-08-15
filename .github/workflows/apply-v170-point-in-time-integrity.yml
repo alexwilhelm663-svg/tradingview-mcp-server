@@ -1,0 +1,2778 @@
+name: "🔒 Apply V170 (Point-in-Time Forecast Integrity)"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: apply-v170-point-in-time-integrity
+  cancel-in-progress: false
+
+jobs:
+  v170:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "🌿 Fix-Branch erstellen"
+        env:
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git fetch origin "$BASE_BRANCH"
+          git checkout -B fix/v170-point-in-time-integrity "origin/$BASE_BRANCH"
+
+      - name: "🧭 Erwartete Basis prüfen"
+        shell: bash
+        run: |
+          node <<'NODE'
+          const pkg = require("./package.json");
+          if (!["169.0.0", "170.0.0"].includes(pkg.version)) {
+            console.error(`V170 erwartet V169 als Basis; gefunden: ${pkg.version}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: "🩹 V170-Patch anwenden"
+        shell: bash
+        run: |
+          patch_file="$(mktemp)"
+          trap 'rm -f "$patch_file"' EXIT
+          cat > "$patch_file" <<'V170_PATCH'
+          diff --git a/package-lock.json b/package-lock.json
+          index 94198ec..c2afc55 100644
+          --- a/package-lock.json
+          +++ b/package-lock.json
+          @@ -1,12 +1,12 @@
+           {
+             "name": "ew-quant-hunter",
+          -  "version": "169.0.0",
+          +  "version": "170.0.0",
+             "lockfileVersion": 3,
+             "requires": true,
+             "packages": {
+               "": {
+                 "name": "ew-quant-hunter",
+          -      "version": "169.0.0",
+          +      "version": "170.0.0",
+                 "dependencies": {
+                   "better-sqlite3": "^11.0.0",
+                   "dotenv": "^16.4.5",
+          diff --git a/package.json b/package.json
+          index ebe35ed..2858fc4 100644
+          --- a/package.json
+          +++ b/package.json
+          @@ -1,6 +1,6 @@
+           {
+             "name": "ew-quant-hunter",
+          -  "version": "169.0.0",
+          +  "version": "170.0.0",
+             "description": "Elliott Wave Trading Bot (konsolidierter Composition Root)",
+             "main": "dist/index.js",
+             "scripts": {
+          @@ -10,7 +10,8 @@
+               "verify": "node dist/verify.js",
+               "report": "node dist/report.js",
+               "snapshot": "node dist/snapshot.js",
+          -    "verify:scan12": "node dist/core/scan12Regression.js"
+          +    "verify:scan12": "node dist/core/scan12Regression.js",
+          +    "verify:integrity": "node dist/core/integrityRegression.js"
+             },
+             "dependencies": {
+               "better-sqlite3": "^11.0.0",
+          diff --git a/src/backtest.ts b/src/backtest.ts
+          index 149861f..47e459d 100644
+          --- a/src/backtest.ts
+          +++ b/src/backtest.ts
+          @@ -1,299 +1,221 @@
+           /**
+          - * Walk-Forward-Backtest (V119) - Standalone, kein Bot-Pfad.
+          + * V170 Point-in-Time Walk-Forward-Replay.
+            *
+          - * Prinzip: Fuer jeden Wochen-Stichtag t sieht die Engine NUR Kerzen <= t
+          - * (identischer Code-Pfad wie live: findImpulseAdaptive -> Cluster ->
+          - * PENDING-Bedingung). Wird ein Setup erkannt, simuliert der Tester
+          - * Trigger/Invalidierung/Ziel strikt gegen die Kerzen NACH t.
+          - * Kein Look-ahead: Level werden am Stichtag eingefroren.
+          - *
+          - * Aufruf: node dist/backtest.js SYMBOL1 SYMBOL2 ...   (Default-Universum sonst)
+          + * Setup-Erkennung, Proportions-Veto, unabhaengige Clusterfamilien,
+          + * Pending-Transitionen und Trade-Aufloesung stammen aus denselben reinen
+          + * Funktionen wie im Live-Pfad. Weekly bestaetigt; Daily loest Ziel/Stop auf.
+            */
+          -import { fetchMarketData, Candle } from "./core/marketData";
+          -import { findImpulseAdaptive } from "./core/impulseFinder";
+          -import { longLevelCandidates, shortLevelCandidates, clusterLevels, FibCluster } from "./core/fibCluster";
+          +import { fetchMarketData, type Candle, candleCloseTime } from "./core/marketData";
+          +import { detectForecastSetup, type ForecastDetection } from "./core/forecast";
+          +import {
+          +  evaluatePendingBar,
+          +  evaluateTradeBar,
+          +  PENDING_TIMEOUT_DAYS,
+          +  TRADE_TIMEOUT_DAYS,
+          +  type FrozenSetup,
+          +  type FrozenTrade,
+          +} from "./core/lifecycle";
+          +import { daysBetween, timeMs } from "./core/time";
+           
+           interface SimTrade {
+             symbol: string;
+             direction: "LONG" | "SHORT";
+          -  entryDate: string;
+          +  setupAsOf: string;
+          +  entryAt: string;
+          +  resolvedAt: string | null;
+             entry: number;
+             trigger: number;
+             invalidation: number;
+             target: number;
+             clusterScore: number;
+          -  timeStatus: "✓" | "~" | "n/a";
+          -  outcome: "WIN" | "LOSS" | "TIMEOUT_WIN" | "TIMEOUT_LOSS" | "OPEN";
+          +  evidenceCount: number;
+          +  outcome: "TARGET" | "INVALIDATED" | "TIMEOUT" | "OPEN";
+             pnl: number;
+          -  r: number; // Vielfache des Risikos
+          -  weeksHeld: number;
+          +  r: number;
+          +  daysHeld: number;
+           }
+           
+          -const TIMEOUT_WEEKS = 26;
+          -let degenerateCount = 0;
+          +interface Simulation {
+          +  trade: SimTrade | null;
+          +  terminalAt: string | null;
+          +}
+           
+          -const addDaysB = (iso: string, d: number): string => {
+          -  const x = new Date(iso + "T00:00:00Z");
+          -  x.setUTCDate(x.getUTCDate() + Math.round(d));
+          -  return x.toISOString().split("T")[0];
+          -};
+          -const daysBetweenB = (a: string, b: string): number =>
+          -  (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
+           const DEFAULT_UNIVERSE = [
+             "MSTR", "BTC-USD", "ETH-USD", "TSLA", "NVDA", "AMD", "AAPL", "MSFT",
+             "GOOGL", "META", "NFLX", "NET", "SAP", "PYPL", "KO", "ARM", "TEAM", "COIN",
+           ];
+           
+          -function weeklyAtrPct(c: Candle[], n = 14): number {
+          -  const s = c.slice(-(n + 1));
+          -  let sum = 0, k = 0;
+          -  for (let i = 1; i < s.length; i++) {
+          -    const tr = Math.max(
+          -      s[i].high - s[i].low,
+          -      Math.abs(s[i].high - s[i - 1].close),
+          -      Math.abs(s[i].low - s[i - 1].close)
+          -    );
+          -    sum += tr / s[i].close;
+          -    k++;
+          -  }
+          -  return k > 0 ? (sum / k) * 100 : 4;
+          -}
+          -
+          -interface CorrectionLegsLite {
+          -  aExt: number | null;
+          -  bExt: number | null;
+          -  cExt: number | null;
+          -  aDate: string | null;
+          -  bDate: string | null;
+          -}
+          -
+          -function legsAtCutoff(
+          -  pivots: { index: number; date: string; price: number; kind: "H" | "L" }[],
+          -  candles: Candle[],
+          -  topDate: string,
+          -  dir: 1 | -1
+          -): CorrectionLegsLite {
+          -  const post = pivots.filter((p) => p.date > topDate);
+          -  const impK = dir === 1 ? "L" : "H"; // Korrektur laeuft gegen den Impuls
+          -  const corK = dir === 1 ? "H" : "L";
+          -  const aPool = post.filter((p) => p.kind === impK);
+          -  if (aPool.length === 0) return { aExt: null, bExt: null, cExt: null, aDate: null, bDate: null };
+          -  const bPool = post.filter((p) => p.kind === corK);
+          -  if (bPool.length === 0) {
+          -    const run = aPool.reduce((m, p) => (dir * p.price < dir * m.price ? p : m));
+          -    return { aExt: run.price, bExt: null, cExt: null, aDate: run.date, bDate: null };
+          -  }
+          -  const b = bPool.reduce((m, p) => (dir * p.price > dir * m.price ? p : m));
+          -  const aC = aPool.filter((p) => p.date < b.date);
+          -  if (aC.length === 0) return { aExt: null, bExt: null, cExt: null, aDate: null, bDate: null };
+          -  const a = aC.reduce((m, p) => (dir * p.price < dir * m.price ? p : m));
+          -  const afterB = candles.filter((k) => k.date > b.date);
+          -  let cExt: number | null = null;
+          -  for (const k of afterB) {
+          -    const v = dir === 1 ? k.low : k.high;
+          -    if (cExt === null || dir * v < dir * cExt) cExt = v;
+          -  }
+          -  return { aExt: a.price, bExt: b.price, cExt, aDate: a.date, bDate: b.date };
+          -}
+          -
+          -/** Setup-Erkennung am Stichtag - repliziert die Engine-Bedingungen ohne DB/Chart/LLM. */
+          -function detectSetupAtCutoff(candles: Candle[]): {
+          -  direction: "LONG" | "SHORT";
+          -  cluster: FibCluster;
+          -  trigger: number | null;
+          -  cExtreme: number;
+          -  timeStatus: "✓" | "~" | "n/a";
+          -} | null {
+          -  const outcome = findImpulseAdaptive(candles);
+          -  if (!outcome.impulse) return null;
+          -  const { result, pivots } = outcome.impulse;
+          -  const wc = result.count;
+          -  const price = candles[candles.length - 1].close;
+          -  const P = (l: string) => wc.points.find((x) => x.label === l);
+          -  const w0 = P("0"), w4 = P("4"), w5 = P("5");
+          -  if (!w0 || !w5) return null;
+          -
+          -  const tolPct = Math.max(3.5, Math.min(7, weeklyAtrPct(candles)));
+          -
+          -  if (wc.trend === "bullish" && price < w5.price) {
+          -    const legs = legsAtCutoff(pivots, candles, w5.date, 1);
+          -    const cands = longLevelCandidates({
+          -      w0: w0.price, w5: w5.price, w4: w4?.price ?? null,
+          -      aLow: legs.aExt, bHigh: legs.bExt,
+          -    });
+          -    const clusters = clusterLevels(cands, tolPct);
+          -    const inZone = clusters.find(
+          -      (cl) => cl.score >= 3 && price >= cl.floor * 0.97 && price <= cl.ceiling * 1.03
+          -    );
+          -    if (inZone && legs.cExt != null) {
+          -      const trigger = cands.map((c) => c.price).filter((p) => p > price * 1.01).sort((a, b) => a - b)[0] ?? null;
+          -      return { direction: "LONG", cluster: inZone, trigger, cExtreme: legs.cExt, timeStatus: cWindowStatus(candles, w5.date, legs.aDate, legs.bDate) };
+          -    }
+          -  } else if (wc.trend === "bearish" && price > w5.price) {
+          -    const legs = legsAtCutoff(pivots, candles, w5.date, -1);
+          -    const cands = shortLevelCandidates({
+          -      w0: w0.price, w5: w5.price, w4: w4?.price ?? null,
+          -      aHigh: legs.aExt, bLow: legs.bExt,
+          -    });
+          -    const clusters = clusterLevels(cands, tolPct);
+          -    const inZone = clusters.find(
+          -      (cl) => cl.score >= 3 && price >= cl.floor * 0.97 && price <= cl.ceiling * 1.03
+          -    );
+          -    if (inZone && legs.cExt != null) {
+          -      const trigger = cands.map((c) => c.price).filter((p) => p < price * 0.99).sort((a, b) => b - a)[0] ?? null;
+          -      return { direction: "SHORT", cluster: inZone, trigger, cExtreme: legs.cExt, timeStatus: cWindowStatus(candles, w5.date, legs.aDate, legs.bDate) };
+          -    }
+          -  }
+          -  return null;
+          -}
+          -
+          -function cWindowStatus(candles: Candle[], w5Date: string, aDate: string | null, bDate: string | null): "✓" | "~" | "n/a" {
+          -  if (aDate == null || bDate == null) return "n/a";
+          -  const durA = daysBetweenB(w5Date, aDate);
+          -  if (durA <= 0) return "n/a";
+          -  const last = candles[candles.length - 1].date;
+          -  return last >= addDaysB(bDate, 0.618 * durA) && last <= addDaysB(bDate, 1.618 * durA) ? "✓" : "~";
+          -}
+          -
+          -/** Vorwaerts-Simulation: erst Trigger (Wochenschluss), dann Ziel/Invalidierung. */
+           function simulate(
+          -  future: Candle[],
+          -  direction: "LONG" | "SHORT",
+          -  cluster: FibCluster,
+          -  trigger: number,
+          -  cExtreme: number
+          -): SimTrade | null {
+          -  const s2 = direction === "LONG" ? 1 : -1;
+          -  const invalidation = direction === "LONG" ? cluster.floor * 0.97 : cluster.ceiling * 1.03;
+          -
+          -  // Phase 1: PENDING -> CONFIRMED oder INVALIDATED per Wochenschluss
+          -  let entryIdx = -1;
+          -  for (let i = 0; i < future.length; i++) {
+          -    const c = future[i];
+          -    if (s2 * (c.close - trigger) > 0) { entryIdx = i; break; }
+          -    if (s2 * (c.close - invalidation) < 0) return null; // vor Trigger invalidiert -> kein Trade
+          -  }
+          -  if (entryIdx < 0) return null; // nie getriggert
+          -
+          -  const entry = future[entryIdx].close;
+          -  const target = trigger + s2 * 1.618 * Math.abs(trigger - cExtreme);
+          -  const risk = Math.abs(entry - invalidation);
+          -  if (risk <= 0) return null;
+          -  // Degeneriertes Setup: Ziel liegt bei Bestaetigung bereits hinter dem
+          -  // Entry oder bietet < 0.25 R Restpotenzial. Live-Befund (Zielformel),
+          -  // im Backtest ausgefiltert, damit die Statistik nicht verzerrt.
+          -  const potentialR = (s2 * (target - entry)) / risk;
+          -  if (potentialR < 0.25) { degenerateCount++; return null; }
+          -
+          -  // Phase 2: CONFIRMED -> Ziel/Invalidierung/Timeout
+          -  for (let i = entryIdx + 1; i < future.length; i++) {
+          -    const c = future[i];
+          -    const invalHit = s2 === 1 ? c.low <= invalidation : c.high >= invalidation;
+          -    if (invalHit) {
+          -      const pnl = (s2 * (invalidation - entry)) / entry;
+          -      return { symbol: "", direction, entryDate: future[entryIdx].date, entry, trigger, invalidation, target, clusterScore: cluster.score, timeStatus: "n/a", outcome: "LOSS", pnl, r: (s2 * (invalidation - entry)) / risk, weeksHeld: i - entryIdx };
+          +  symbol: string,
+          +  setup: ForecastDetection,
+          +  futureWeekly: Candle[],
+          +  daily: Candle[]
+          +): Simulation {
+          +  const invalidation = setup.direction === "LONG"
+          +    ? setup.cluster.floor * 0.97
+          +    : setup.cluster.ceiling * 1.03;
+          +  const frozen: FrozenSetup = {
+          +    direction: setup.direction,
+          +    trigger: setup.trigger,
+          +    invalidation,
+          +    cExtreme: setup.cExtreme,
+          +    createdAt: setup.asOf,
+          +    asOf: setup.asOf,
+          +    lastEvaluatedBar: null,
+          +  };
+          +
+          +  for (const bar of futureWeekly) {
+          +    const pending = evaluatePendingBar(frozen, bar);
+          +    if (pending.type === "WAIT") {
+          +      if (pending.reason === "PENDING") frozen.lastEvaluatedBar = pending.effectiveAt;
+          +      continue;
+               }
+          -    const targetHit = s2 === 1 ? c.high >= target : c.low <= target;
+          -    if (targetHit) {
+          -      const pnl = (s2 * (target - entry)) / entry;
+          -      return { symbol: "", direction, entryDate: future[entryIdx].date, entry, trigger, invalidation, target, clusterScore: cluster.score, timeStatus: "n/a", outcome: "WIN", pnl, r: (s2 * (target - entry)) / risk, weeksHeld: i - entryIdx };
+          +    if (pending.type === "INVALIDATED" || pending.type === "TIMEOUT" || pending.type === "DEGENERATE") {
+          +      return { trade: null, terminalAt: pending.effectiveAt };
+               }
+          -    if (i - entryIdx >= TIMEOUT_WEEKS) {
+          -      const pnl = (s2 * (c.close - entry)) / entry;
+          -      return { symbol: "", direction, entryDate: future[entryIdx].date, entry, trigger, invalidation, target, clusterScore: cluster.score, timeStatus: "n/a", outcome: pnl > 0 ? "TIMEOUT_WIN" : "TIMEOUT_LOSS", pnl, r: (s2 * (c.close - entry)) / risk, weeksHeld: i - entryIdx };
+          +
+          +    const trade: FrozenTrade = {
+          +      direction: setup.direction,
+          +      entry: pending.entry,
+          +      invalidation,
+          +      target: pending.target,
+          +      entryAt: pending.effectiveAt,
+          +    };
+          +    const afterEntry = daily.filter(
+          +      (x) => timeMs(candleCloseTime(x)) > timeMs(trade.entryAt)
+          +    );
+          +    for (const day of afterEntry) {
+          +      const result = evaluateTradeBar(trade, day);
+          +      if (result.type === "WAIT") continue;
+          +      return {
+          +        terminalAt: result.effectiveAt,
+          +        trade: {
+          +          symbol,
+          +          direction: setup.direction,
+          +          setupAsOf: setup.asOf,
+          +          entryAt: trade.entryAt,
+          +          resolvedAt: result.effectiveAt,
+          +          entry: trade.entry,
+          +          trigger: setup.trigger,
+          +          invalidation,
+          +          target: trade.target,
+          +          clusterScore: setup.cluster.score,
+          +          evidenceCount: setup.cluster.evidenceCount,
+          +          outcome: result.type,
+          +          pnl: result.pnl,
+          +          r: result.r,
+          +          daysHeld: daysBetween(trade.entryAt, result.effectiveAt),
+          +        },
+          +      };
+               }
+          +
+          +    const last = afterEntry[afterEntry.length - 1];
+          +    const s2 = setup.direction === "LONG" ? 1 : -1;
+          +    const close = last?.close ?? trade.entry;
+          +    const risk = Math.abs(trade.entry - invalidation);
+          +    return {
+          +      terminalAt: null,
+          +      trade: {
+          +        symbol,
+          +        direction: setup.direction,
+          +        setupAsOf: setup.asOf,
+          +        entryAt: trade.entryAt,
+          +        resolvedAt: null,
+          +        entry: trade.entry,
+          +        trigger: setup.trigger,
+          +        invalidation,
+          +        target: trade.target,
+          +        clusterScore: setup.cluster.score,
+          +        evidenceCount: setup.cluster.evidenceCount,
+          +        outcome: "OPEN",
+          +        pnl: (s2 * (close - trade.entry)) / trade.entry,
+          +        r: risk > 0 ? (s2 * (close - trade.entry)) / risk : 0,
+          +        daysHeld: last ? daysBetween(trade.entryAt, candleCloseTime(last)) : 0,
+          +      },
+          +    };
+             }
+          -  const last = future[future.length - 1];
+          -  const pnl = (s2 * (last.close - entry)) / entry;
+          -  return { symbol: "", direction, entryDate: future[entryIdx].date, entry, trigger, invalidation, target, clusterScore: cluster.score, timeStatus: "n/a", outcome: "OPEN", pnl, r: (s2 * (last.close - entry)) / risk, weeksHeld: future.length - 1 - entryIdx };
+          +  return { trade: null, terminalAt: null };
+           }
+           
+           async function backtestSymbol(symbol: string, minHistory = 156): Promise<SimTrade[]> {
+          -  const { weeklyAnalysisCandles: all } = await fetchMarketData(symbol, "1wk", "10y", 200);
+          +  const [weeklyMarket, dailyMarket] = await Promise.all([
+          +    fetchMarketData(symbol, "1wk", "10y", 200),
+          +    fetchMarketData(symbol, "1d", "10y", 500),
+          +  ]);
+          +  const weekly = weeklyMarket.weeklyAnalysisCandles;
+          +  const daily = dailyMarket.weeklyAnalysisCandles;
+             const trades: SimTrade[] = [];
+          -  let cooldownUntil = -1;
+          -
+          -  for (let cut = minHistory; cut < all.length - 1; cut++) {
+          -    if (cut <= cooldownUntil) continue;
+          -    const visible = all.slice(0, cut + 1); // Kerzen bis einschl. Stichtag
+          -    let setup: ReturnType<typeof detectSetupAtCutoff>;
+          -    try {
+          -      setup = detectSetupAtCutoff(visible);
+          -    } catch {
+          -      continue;
+          -    }
+          -    if (!setup || setup.trigger == null) continue;
+          +  let occupiedUntil: string | null = null;
+          +
+          +  for (let cut = minHistory; cut < weekly.length - 1; cut++) {
+          +    const cutoff = candleCloseTime(weekly[cut]);
+          +    if (occupiedUntil && timeMs(cutoff) <= timeMs(occupiedUntil)) continue;
+          +    const visible = weekly.slice(0, cut + 1);
+          +    const setup = detectForecastSetup(visible, {
+          +      minClusterScore: 3,
+          +      interval: "1wk",
+          +      range: "expanding-10y",
+          +    });
+          +    if (!setup) continue;
+           
+          -    const sim = simulate(all.slice(cut + 1), setup.direction, setup.cluster, setup.trigger, setup.cExtreme);
+          -      if (sim) sim.timeStatus = setup.timeStatus;
+          -    if (sim && sim.outcome !== "OPEN") {
+          -      sim.symbol = symbol;
+          -      trades.push(sim);
+          -      // Cooldown: bis zum Trade-Ende, sonst zaehlt dasselbe Setup mehrfach
+          -      const endOffset = future0Offset(all, cut, sim);
+          -      cooldownUntil = endOffset;
+          -    } else if (sim && sim.outcome === "OPEN") {
+          -      cooldownUntil = all.length; // offenes Setup -> Rest ueberspringen
+          -    }
+          +    const simulation = simulate(symbol, setup, weekly.slice(cut + 1), daily);
+          +    if (simulation.trade) trades.push(simulation.trade);
+          +    if (simulation.terminalAt) occupiedUntil = simulation.terminalAt;
+          +    else if (simulation.trade?.outcome === "OPEN") break;
+          +    else occupiedUntil = candleCloseTime(weekly[weekly.length - 1]);
+             }
+             return trades;
+           }
+           
+          -function future0Offset(all: Candle[], cut: number, sim: SimTrade): number {
+          -  const entryIdx = all.findIndex((c) => c.date === sim.entryDate);
+          -  return (entryIdx >= 0 ? entryIdx : cut) + sim.weeksHeld;
+          +function pct(value: number): string {
+          +  return `${(value * 100).toFixed(1)}%`;
+           }
+           
+          -function pct(x: number): string { return (x * 100).toFixed(1) + "%"; }
+          -
+           function report(trades: SimTrade[]): void {
+          -  if (trades.length === 0) {
+          -    console.log("Keine abgeschlossenen Trades im Testzeitraum.");
+          -    return;
+          -  }
+          -  const groups: Record<string, SimTrade[]> = { ALLE: trades };
+          -  for (const t of trades) {
+          -    (groups[t.direction] ??= []).push(t);
+          -    (groups[`Score ${t.clusterScore >= 3 ? ">=3" : "=2"}`] ??= []).push(t);
+          -    (groups[`Zeit ${t.timeStatus}`] ??= []).push(t);
+          -  }
+          -  console.log("\n════ Walk-Forward-Ergebnis ════");
+          -  for (const [name, g] of Object.entries(groups)) {
+          -    const wins = g.filter((t: SimTrade) => t.outcome === "WIN" || t.outcome === "TIMEOUT_WIN");
+          -    const wr = wins.length / g.length;
+          -    const avgR = g.reduce((s, t) => s + t.r, 0) / g.length;
+          -    const avgWin = wins.length ? wins.reduce((s, t) => s + t.pnl, 0) / wins.length : 0;
+          -    const losses = g.filter((t) => !wins.includes(t));
+          -    const avgLoss = losses.length ? losses.reduce((s, t) => s + t.pnl, 0) / losses.length : 0;
+          -    const expectancy = wr * avgWin + (1 - wr) * avgLoss;
+          -    console.log(
+          -      `${name.padEnd(10)} n=${String(g.length).padStart(3)} | Trefferquote ${pct(wr).padStart(6)} | ⌀R ${avgR.toFixed(2).padStart(5)} | ⌀Win ${pct(avgWin).padStart(6)} | ⌀Loss ${pct(avgLoss).padStart(7)} | Expectancy ${pct(expectancy)}`
+          -    );
+          -  }
+          -  console.log("\nEinzeltrades:");
+          -  for (const t of trades) {
+          +  const resolved = trades.filter((x) => x.outcome !== "OPEN");
+          +  const labelled = resolved.filter((x) => x.outcome === "TARGET" || x.outcome === "INVALIDATED");
+          +  const targets = labelled.filter((x) => x.outcome === "TARGET");
+          +  const avgR = resolved.length > 0
+          +    ? resolved.reduce((sum, x) => sum + x.r, 0) / resolved.length
+          +    : 0;
+          +  const avgPnl = resolved.length > 0
+          +    ? resolved.reduce((sum, x) => sum + x.pnl, 0) / resolved.length
+          +    : 0;
+          +
+          +  console.log("\n════ V170 Point-in-Time Walk-Forward ════");
+          +  console.log(`Trades: ${trades.length} · aufgeloest: ${resolved.length} · offen: ${trades.length - resolved.length}`);
+          +  console.log(
+          +    `Target-vor-Stop: ${labelled.length > 0 ? pct(targets.length / labelled.length) : "n/a"} ` +
+          +    `(n=${labelled.length}; Timeouts nicht binaer gelabelt)`
+          +  );
+          +  console.log(`Expectancy: ${pct(avgPnl)} · durchschnittlich ${avgR.toFixed(2)}R`);
+          +  console.log(
+          +    `Identische Horizonte: Pending ${PENDING_TIMEOUT_DAYS}d · Trade ${TRADE_TIMEOUT_DAYS}d · ` +
+          +    `Weekly Trigger / Daily Ziel-Stop.`
+          +  );
+          +
+          +  for (const trade of trades) {
+               console.log(
+          -      `  ${t.symbol.padEnd(8)} ${t.direction.padEnd(5)} ${t.entryDate} Score${t.clusterScore} ` +
+          -      `${t.outcome.padEnd(12)} PnL ${pct(t.pnl).padStart(7)} R ${t.r.toFixed(2).padStart(5)} (${t.weeksHeld} Wo.)`
+          +      `  ${trade.symbol.padEnd(8)} ${trade.direction.padEnd(5)} ${trade.entryAt.slice(0, 10)} ` +
+          +      `Fam${trade.clusterScore}/Ev${trade.evidenceCount} ${trade.outcome.padEnd(11)} ` +
+          +      `PnL ${pct(trade.pnl).padStart(7)} · ${trade.r.toFixed(2)}R · ${trade.daysHeld.toFixed(0)}d`
+               );
+             }
+           }
+           
+           (async () => {
+             const symbols = process.argv.slice(2).length > 0 ? process.argv.slice(2) : DEFAULT_UNIVERSE;
+          -  console.log(`Walk-Forward über ${symbols.length} Symbole (Timeout ${TIMEOUT_WEEKS} Wo., Cooldown bis Trade-Ende)...`);
+          +  console.log(`V170 Replay ueber ${symbols.length} Symbole...`);
+             const all: SimTrade[] = [];
+          -  for (const s of symbols) {
+          +  for (const symbol of symbols) {
+               try {
+          -      const t = await backtestSymbol(s);
+          -      console.log(`  ${s.padEnd(8)} -> ${t.length} Trade(s)`);
+          -      all.push(...t);
+          -      await new Promise((r) => setTimeout(r, 400));
+          -    } catch (e: any) {
+          -      console.log(`  ${s.padEnd(8)} -> Fehler: ${e?.message ?? e}`);
+          +      const trades = await backtestSymbol(symbol);
+          +      all.push(...trades);
+          +      console.log(`  ${symbol.padEnd(8)} -> ${trades.length} Trade(s)`);
+          +      await new Promise((resolve) => setTimeout(resolve, 400));
+          +    } catch (error: any) {
+          +      console.log(`  ${symbol.padEnd(8)} -> Fehler: ${error?.message ?? error}`);
+               }
+             }
+          -  console.log(`\nDegenerierte Setups (<0.25R): ${degenerateCount}`);
+             report(all);
+          -  process.exit(0);
+           })();
+          diff --git a/src/core/completion.ts b/src/core/completion.ts
+          index dfd2bcb..ba94abc 100644
+          --- a/src/core/completion.ts
+          +++ b/src/core/completion.ts
+          @@ -1,6 +1,8 @@
+           import type { Candle } from "./marketData";
+           import { zigzag } from "./zigzag";
+          -import { WaveCount, findPartialImpulse, subThresholds } from "./impulseFinder";
+          +import { findPartialImpulse, subThresholds } from "./impulseFinder";
+          +import type { WaveCount } from "./impulseFinder";
+          +import { addDaysIso, daysBetween } from "./time";
+           
+           export interface CompletionRead {
+             status: "COMPLETE" | "IN_PROGRESS";
+          @@ -12,13 +14,7 @@ export interface CompletionRead {
+             timeWindows: { start: string; end: string; label: string }[]; // V120b: Fib-Zeit-Projektion
+           }
+           
+          -const addDays = (iso: string, d: number): string => {
+          -  const x = new Date(iso + "T00:00:00Z");
+          -  x.setUTCDate(x.getUTCDate() + Math.round(d));
+          -  return x.toISOString().split("T")[0];
+          -};
+          -const daysBetween = (a: string, b: string): number =>
+          -  (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
+          +const addDays = addDaysIso;
+           
+           /**
+            * Vollendungs-Nachweis (V118, DK-9):
+          diff --git a/src/core/confluence.ts b/src/core/confluence.ts
+          index 8f5ffeb..46c99e3 100644
+          --- a/src/core/confluence.ts
+          +++ b/src/core/confluence.ts
+          @@ -2,6 +2,7 @@ import type { Candle } from "./marketData";
+           import { fetchMarketData } from "./marketData";
+           import { findImpulseAdaptive } from "./impulseFinder";
+           import { assessCompletion } from "./completion";
+          +import { checkProportion } from "./proportion";
+           
+           export type ConfluenceVerdict = "BESTÄTIGT" | "NEUTRAL" | "FRÜHWARNUNG";
+           
+          @@ -49,7 +50,7 @@ export async function assessConfluence(
+               return { verdict: "NEUTRAL", note: "Sub-Ebene (Tag): zu wenige Kerzen für belastbare Konfluenz." };
+             }
+           
+          -  const oDeep = findImpulseAdaptive(cDeep);
+          +  const oDeep = findImpulseAdaptive(cDeep, (r) => checkProportion(cDeep, r.count).ok);
+             if (!oDeep.impulse) {
+               return {
+                 verdict: "NEUTRAL",
+          diff --git a/src/core/correction.ts b/src/core/correction.ts
+          index fad625e..8076c2b 100644
+          --- a/src/core/correction.ts
+          +++ b/src/core/correction.ts
+          @@ -1,7 +1,9 @@
+           import type { Candle } from "./marketData";
+          -import { Pivot } from "./zigzag";
+          -import { segmentVerdict, SubVerdict } from "./impulseFinder";
+          +import type { Pivot } from "./zigzag";
+          +import { segmentVerdict } from "./impulseFinder";
+          +import type { SubVerdict } from "./impulseFinder";
+           import { assessMultiWave } from "./multiWave";
+          +import { daysBetween } from "./time";
+           
+           export type CorrectionPattern =
+             | "ZIGZAG"
+          @@ -51,8 +53,7 @@ export interface CorrectionContext {
+            * Struktur-Beweis (segmentVerdict auf dem A-Bein: 5er -> Zigzag-Familie,
+            * 3er/unklar -> Flat-Familie). Extension-ZIELE logarithmisch (DK-2).
+            */
+          -const daysBetweenC = (a: string, b: string): number =>
+          -  (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
+          +const daysBetweenC = daysBetween;
+           
+           export function classifyCorrection(
+             w5Price: number,
+          diff --git a/src/core/db.ts b/src/core/db.ts
+          index e8eca5d..2663666 100644
+          --- a/src/core/db.ts
+          +++ b/src/core/db.ts
+          @@ -18,7 +18,14 @@ db.exec(`
+               target REAL,
+               timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+               outcome REAL,
+          -    is_success BOOLEAN
+          +    is_success BOOLEAN,
+          +    signal_id TEXT,
+          +    snapshot_id TEXT,
+          +    entry_at TEXT,
+          +    resolved_at TEXT,
+          +    resolution TEXT,
+          +    data_hash TEXT,
+          +    engine_version TEXT
+             );
+             CREATE TABLE IF NOT EXISTS config (
+               key TEXT PRIMARY KEY,
+          @@ -46,10 +53,60 @@ db.exec(`
+               created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+               updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+             );
+          +  CREATE TABLE IF NOT EXISTS signal_snapshots (
+          +    id TEXT PRIMARY KEY,
+          +    symbol TEXT NOT NULL,
+          +    direction TEXT NOT NULL,
+          +    as_of TEXT NOT NULL,
+          +    data_hash TEXT NOT NULL,
+          +    data_provider TEXT NOT NULL,
+          +    adjustment TEXT NOT NULL,
+          +    engine_version TEXT NOT NULL,
+          +    interval TEXT NOT NULL,
+          +    range_name TEXT NOT NULL,
+          +    count_json TEXT NOT NULL,
+          +    cluster_floor REAL NOT NULL,
+          +    cluster_ceiling REAL NOT NULL,
+          +    cluster_score INTEGER NOT NULL,
+          +    cluster_evidence_count INTEGER NOT NULL,
+          +    cluster_families TEXT NOT NULL,
+          +    levels TEXT NOT NULL,
+          +    trigger_level REAL NOT NULL,
+          +    invalidation REAL NOT NULL,
+          +    c_extreme REAL NOT NULL,
+          +    llm_confidence REAL,
+          +    llm_flags TEXT NOT NULL,
+          +    det_flags TEXT NOT NULL,
+          +    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          +    UNIQUE(symbol, direction, as_of, data_hash, engine_version)
+          +  );
+          +  CREATE TABLE IF NOT EXISTS setup_events (
+          +    id INTEGER PRIMARY KEY AUTOINCREMENT,
+          +    snapshot_id TEXT NOT NULL,
+          +    symbol TEXT NOT NULL,
+          +    event_type TEXT NOT NULL,
+          +    effective_at TEXT NOT NULL,
+          +    payload TEXT NOT NULL,
+          +    recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          +    UNIQUE(snapshot_id, event_type, effective_at)
+          +  );
+           `);
+           
+           // Migration: Spalten auf Bestands-DBs nachruesten (Fehler = Spalte existiert schon)
+          -const tradeCols = ["invalidation REAL", "target REAL", "confidence REAL", "flags TEXT", "direction TEXT DEFAULT 'LONG'"];
+          +const tradeCols = [
+          +  "invalidation REAL",
+          +  "target REAL",
+          +  "confidence REAL",
+          +  "flags TEXT",
+          +  "direction TEXT DEFAULT 'LONG'",
+          +  "signal_id TEXT",
+          +  "snapshot_id TEXT",
+          +  "entry_at TEXT",
+          +  "resolved_at TEXT",
+          +  "resolution TEXT",
+          +  "data_hash TEXT",
+          +  "engine_version TEXT",
+          +];
+           for (const col of tradeCols) {
+             try {
+               db.exec(`ALTER TABLE trade_history ADD COLUMN ${col}`);
+          @@ -57,7 +114,19 @@ for (const col of tradeCols) {
+               /* Spalte vorhanden */
+             }
+           }
+          -for (const col of ["llm_confidence REAL", "llm_flags TEXT", "det_flags TEXT"]) {
+          +for (const col of [
+          +  "llm_confidence REAL",
+          +  "llm_flags TEXT",
+          +  "det_flags TEXT",
+          +  "snapshot_id TEXT",
+          +  "as_of TEXT",
+          +  "data_hash TEXT",
+          +  "engine_version TEXT",
+          +  "count_json TEXT",
+          +  "interval_name TEXT",
+          +  "range_name TEXT",
+          +  "last_evaluated_bar TEXT",
+          +]) {
+             try {
+               db.exec(`ALTER TABLE setups ADD COLUMN ${col}`);
+             } catch {
+          @@ -65,4 +134,13 @@ for (const col of ["llm_confidence REAL", "llm_flags TEXT", "det_flags TEXT"]) {
+             }
+           }
+           
+          +db.exec(`
+          +  CREATE UNIQUE INDEX IF NOT EXISTS idx_trade_signal_id
+          +    ON trade_history(signal_id) WHERE signal_id IS NOT NULL;
+          +  CREATE INDEX IF NOT EXISTS idx_snapshot_symbol_asof
+          +    ON signal_snapshots(symbol, as_of);
+          +  CREATE INDEX IF NOT EXISTS idx_setup_events_snapshot
+          +    ON setup_events(snapshot_id, effective_at);
+          +`);
+          +
+           export default db;
+          diff --git a/src/core/engine.ts b/src/core/engine.ts
+          index ab04631..29d2a83 100644
+          --- a/src/core/engine.ts
+          +++ b/src/core/engine.ts
+          @@ -1,11 +1,12 @@
+           import fs from "fs";
+           import path from "path";
+          +import { createHash } from "node:crypto";
+           import db from "./db";
+          -import { fetchMarketData, Candle, isThinHistory } from "./marketData";
+          +import { fetchMarketData, Candle, isThinHistory, candleCloseTime, hashCandles } from "./marketData";
+           import { renderChart } from "./chart";
+           import type { Pivot } from "./zigzag";
+           import { longLevelCandidates, shortLevelCandidates, clusterLevels } from "./fibCluster";
+          -import { upsertPendingSetup, SetupMeta } from "./setups";
+          +import { upsertPendingSetup } from "./setups";
+           import { findImpulseAdaptive, WaveCount, WavePoint } from "./impulseFinder";
+           import { getCritique, Critique } from "./commentary";
+           import { classifyCorrection, CorrectionRead } from "./correction";
+          @@ -22,6 +23,8 @@ import { assessHigherFrame } from "./higherFrame";
+           import { findBestImpulse, subThresholds } from "./impulseFinder";
+           import { zigzag } from "./zigzag";
+           import { assessQuality } from "./quality";
+          +import { addDaysIso, daysBetween } from "./time";
+          +import { detectForecastSetup, ENGINE_VERSION } from "./forecast";
+           
+           export interface AnalysisResult {
+             buffer: Buffer | null;
+          @@ -227,13 +230,8 @@ function correctionLegsShort(
+             return { aHigh: aPivot.price, aDate: aPivot.date, bLow: bPivot.price, bDate: bPivot.date, cHigh, cDate };
+           }
+           
+          -const addDaysE = (iso: string, d: number): string => {
+          -  const x = new Date(iso + "T00:00:00Z");
+          -  x.setUTCDate(x.getUTCDate() + Math.round(d));
+          -  return x.toISOString().split("T")[0];
+          -};
+          -const daysBetweenE = (a: string, b: string): number =>
+          -  (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
+          +const addDaysE = addDaysIso;
+          +const daysBetweenE = daysBetween;
+           
+           export async function analyzeAsset(symbol: string, range: string = "5y", interval: string = "1wk", verbose: boolean = false): Promise<AnalysisResult> {
+             try {
+          @@ -389,7 +387,17 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
+                 console.log(`[FEEDBACK] ${symbol}: ${fb.note}`);
+                 wc.analysis += ` \u00b7 ${fb.note}`;
+               }
+          -    const minClusterScore = 3 + fb.penalty;
+          +    if (cautious) wc.analysis += " · LLM-Vorsichtshinweis (informativ, kein Signal-Gate)";
+          +    // Reproduzierbarkeit vor Modellmeinung: Live und Replay verwenden exakt
+          +    // drei unabhaengige Familien. LLM/Feedback bleiben diagnostisch, bis ihre
+          +    // historische Ausgabe versioniert und im Replay verfuegbar ist.
+          +    const minClusterScore = 3;
+          +    const canonicalSetup = detectForecastSetup(candles, {
+          +      minClusterScore,
+          +      interval,
+          +      range,
+          +      impulse: outcome.impulse,
+          +    });
+           
+               const w0 = pt(wc, "0");
+               const w1 = pt(wc, "1");
+          @@ -433,7 +441,11 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
+                       impulseOrigin: w0?.price ?? null, impulseEnd: w5.price }
+                   );
+                   if (correction.targetPrice != null && correction.targetLabel != null) {
+          -          cands.push({ price: correction.targetPrice, label: correction.targetLabel });
+          +          cands.push({
+          +            price: correction.targetPrice,
+          +            label: correction.targetLabel,
+          +            family: "CORRECTION_PATTERN",
+          +          });
+                     cands.sort((a, b) => a.price - b.price);
+                   }
+                 }
+          @@ -477,34 +489,45 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
+                 const inRange = (cl: { floor: number; ceiling: number }): boolean =>
+                   currentPrice >= cl.floor * 0.97 && currentPrice <= cl.ceiling * 1.03;
+                 const baselineZone = clusters.find((cl) => cl.score >= 2 && inRange(cl));
+          -      const inZone = clusters.find((cl) => cl.score >= minClusterScore && inRange(cl));
+          +      const canonicalLong = canonicalSetup?.direction === "LONG" ? canonicalSetup : null;
+          +      const inZone = canonicalLong?.cluster;
+           
+          -      if (inZone && legs.cLow != null) {
+          +      if (inZone && canonicalLong) {
+                   chartMarkers.push({ price: inZone.floor * 0.97, label: "Invalidierung" });
+          -        const res = upsertPendingSetup(symbol, inZone, overhead, legs.cLow, {
+          +        const res = upsertPendingSetup(symbol, inZone, canonicalLong.trigger, canonicalLong.cExtreme, {
+                     llmConfidence: critique?.confidence ?? null,
+                     llmFlags: critique?.flags ?? [],
+                     detFlags: quality.flags,
+          +          snapshot: {
+          +            asOf: canonicalLong.asOf,
+          +            dataHash: canonicalLong.dataHash,
+          +            provider: canonicalLong.provider,
+          +            adjustment: canonicalLong.adjustment,
+          +            engineVersion: canonicalLong.engineVersion,
+          +            interval: canonicalLong.interval,
+          +            range: canonicalLong.range,
+          +            count: canonicalLong.count,
+          +          },
+                   });
+                   pendingCreated = res === "created";
+                   clusterInfo =
+                     `🟡 **PENDING**: Kurs im Fib-Cluster ${inZone.floor.toFixed(2)}–${inZone.ceiling.toFixed(2)} ` +
+                     `(Score ${inZone.score}: ${inZone.labels.join(", ")}).\n` +
+          -          `Trigger: Wochenschluss > ${overhead != null ? overhead.toFixed(2) : "n/a"} · ` +
+          +          `Trigger: Wochenschluss > ${canonicalLong.trigger.toFixed(2)} · ` +
+                     `Invalidierung: Wochenschluss < ${(inZone.floor * 0.97).toFixed(2)}` +
+                     (cWinFrom != null
+                       ? ` · ⏱️ ${inTimeWindow ? "im" : "außerhalb des"} C-Zeitfensters (${cWinFrom} – ${cWinTo})`
+                       : "") +
+                     (correction ? `\n${correction.text}` : "");
+                   {
+          -          const tPrev = overhead != null ? overhead + 1.618 * (overhead - legs.cLow) : null;
+          +          const tPrev = canonicalLong.trigger + 1.618 * (canonicalLong.trigger - canonicalLong.cExtreme);
+                     scenPrimary =
+          -            `Boden-These: Wochenschluss > ${overhead != null ? overhead.toFixed(2) : "Trigger"} bestätigt das Long-Setup` +
+          -            (tPrev != null ? ` – Ziel ~${tPrev.toFixed(2)} (1.618·i)` : "") + ".";
+          +            `Boden-These: Wochenschluss > ${canonicalLong.trigger.toFixed(2)} bestätigt das Long-Setup` +
+          +            ` – Ziel ~${tPrev.toFixed(2)} (1.618·i).`;
+                     scenAlt =
+                       `Wochenschluss < ${(inZone.floor * 0.97).toFixed(2)} invalidiert – Korrektur läuft tiefer` +
+                       (correction && correction.targetPrice != null ? ` Richtung ${correction.targetPrice.toFixed(2)}` : "") + ".";
+          -          keyLine = `Zone ${inZone.floor.toFixed(2)}–${inZone.ceiling.toFixed(2)} · Trigger ${overhead != null ? overhead.toFixed(2) : "–"} · Invalidierung ${(inZone.floor * 0.97).toFixed(2)}`;
+          +          keyLine = `Zone ${inZone.floor.toFixed(2)}–${inZone.ceiling.toFixed(2)} · Trigger ${canonicalLong.trigger.toFixed(2)} · Invalidierung ${(inZone.floor * 0.97).toFixed(2)}`;
+                   }
+                 } else {
+                   const below = clusters
+          @@ -514,7 +537,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
+                   const gateNote =
+                     baselineZone && !inZone
+                       ? `🟡 WATCH: Score-2-Zone ${baselineZone.floor.toFixed(2)}–${baselineZone.ceiling.toFixed(2)} berührt – ` +
+          -              `kein Setup (Gate: Score ≥ 3, V121-Messung: 10.7% vs 2.4% Expectancy).\n`
+          +              `kein Setup (Gate: ${minClusterScore} unabhaengige Familien + Point-in-Time-Zeitfenster).\n`
+                       : "";
+                   clusterInfo = gateNote + (below
+                     ? `⚪ Kein aktives Setup. Nächster Long-Cluster darunter: ${below.floor.toFixed(2)}–${below.ceiling.toFixed(2)} ` +
+          @@ -574,7 +597,11 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
+                       impulseOrigin: w0?.price ?? null, impulseEnd: w5.price }
+                   );
+                   if (correctionS.targetPrice != null && correctionS.targetLabel != null) {
+          -          cands.push({ price: correctionS.targetPrice, label: correctionS.targetLabel });
+          +          cands.push({
+          +            price: correctionS.targetPrice,
+          +            label: correctionS.targetLabel,
+          +            family: "CORRECTION_PATTERN",
+          +          });
+                     cands.sort((a, b) => a.price - b.price);
+                   }
+                 }
+          @@ -611,34 +638,45 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
+                 const inRangeS = (cl: { floor: number; ceiling: number }): boolean =>
+                   currentPrice >= cl.floor * 0.97 && currentPrice <= cl.ceiling * 1.03;
+                 const baselineZoneS = clusters.find((cl) => cl.score >= 2 && inRangeS(cl));
+          -      const inZoneS = clusters.find((cl) => cl.score >= minClusterScore && inRangeS(cl));
+          +      const canonicalShort = canonicalSetup?.direction === "SHORT" ? canonicalSetup : null;
+          +      const inZoneS = canonicalShort?.cluster;
+           
+          -      if (inZoneS && legsS.cHigh != null) {
+          +      if (inZoneS && canonicalShort) {
+                   chartMarkers.push({ price: inZoneS.ceiling * 1.03, label: "Invalidierung" });
+          -        const res = upsertPendingSetup(symbol, inZoneS, underfoot, legsS.cHigh, {
+          +        const res = upsertPendingSetup(symbol, inZoneS, canonicalShort.trigger, canonicalShort.cExtreme, {
+                     llmConfidence: critique?.confidence ?? null,
+                     llmFlags: critique?.flags ?? [],
+                     detFlags: quality.flags,
+          +          snapshot: {
+          +            asOf: canonicalShort.asOf,
+          +            dataHash: canonicalShort.dataHash,
+          +            provider: canonicalShort.provider,
+          +            adjustment: canonicalShort.adjustment,
+          +            engineVersion: canonicalShort.engineVersion,
+          +            interval: canonicalShort.interval,
+          +            range: canonicalShort.range,
+          +            count: canonicalShort.count,
+          +          },
+                   }, "SHORT");
+                   pendingCreated = res === "created";
+                   clusterInfo =
+                     `🔴 **PENDING (SHORT)**: Kurs im Widerstands-Cluster ${inZoneS.floor.toFixed(2)}–${inZoneS.ceiling.toFixed(2)} ` +
+                     `(Score ${inZoneS.score}: ${inZoneS.labels.join(", ")}).\n` +
+          -          `Trigger: Wochenschluss < ${underfoot != null ? underfoot.toFixed(2) : "n/a"} · ` +
+          +          `Trigger: Wochenschluss < ${canonicalShort.trigger.toFixed(2)} · ` +
+                     `Invalidierung: Wochenschluss > ${(inZoneS.ceiling * 1.03).toFixed(2)}` +
+                     (cWinFromS != null
+                       ? ` · ⏱️ ${inTimeWindowS ? "im" : "außerhalb des"} C-Zeitfensters (${cWinFromS} – ${cWinToS})`
+                       : "") +
+                     (correctionS ? `\n${correctionS.text}` : "");
+                   {
+          -          const tPrev = underfoot != null ? underfoot - 1.618 * (legsS.cHigh - underfoot) : null;
+          +          const tPrev = canonicalShort.trigger - 1.618 * (canonicalShort.cExtreme - canonicalShort.trigger);
+                     scenPrimary =
+          -            `Abwärts-Fortsetzung: Wochenschluss < ${underfoot != null ? underfoot.toFixed(2) : "Trigger"} bestätigt das Short-Setup` +
+          -            (tPrev != null ? ` – Ziel ~${tPrev.toFixed(2)} (1.618·i)` : "") + ".";
+          +            `Abwärts-Fortsetzung: Wochenschluss < ${canonicalShort.trigger.toFixed(2)} bestätigt das Short-Setup` +
+          +            ` – Ziel ~${tPrev.toFixed(2)} (1.618·i).`;
+                     scenAlt =
+                       `Wochenschluss > ${(inZoneS.ceiling * 1.03).toFixed(2)} invalidiert – Boden ${w5.price.toFixed(2)} hält, Erholung` +
+                       (correctionS && correctionS.targetPrice != null ? ` Richtung ${correctionS.targetPrice.toFixed(2)}` : "") + " läuft weiter.";
+          -          keyLine = `Zone ${inZoneS.floor.toFixed(2)}–${inZoneS.ceiling.toFixed(2)} · Trigger ${underfoot != null ? underfoot.toFixed(2) : "–"} · Invalidierung ${(inZoneS.ceiling * 1.03).toFixed(2)}`;
+          +          keyLine = `Zone ${inZoneS.floor.toFixed(2)}–${inZoneS.ceiling.toFixed(2)} · Trigger ${canonicalShort.trigger.toFixed(2)} · Invalidierung ${(inZoneS.ceiling * 1.03).toFixed(2)}`;
+                   }
+                 } else {
+                   const above = clusters
+          @@ -648,7 +686,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
+                   const gateNoteS =
+                     baselineZoneS && !inZoneS
+                       ? `🟡 WATCH: Score-2-Zone ${baselineZoneS.floor.toFixed(2)}–${baselineZoneS.ceiling.toFixed(2)} berührt – ` +
+          -              `kein Setup (Gate: Score ≥ 3, V121-Messung).\n`
+          +              `kein Setup (Gate: ${minClusterScore} unabhaengige Familien + Point-in-Time-Zeitfenster).\n`
+                       : "";
+                   clusterInfo = gateNoteS + (above
+                     ? `⚪ Kein aktives Setup. Nächster Short-Cluster darüber: ${above.floor.toFixed(2)}–${above.ceiling.toFixed(2)} ` +
+          @@ -690,12 +728,22 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
+                 breakoutStatus = `🚀 AUSBRUCH ueber Welle-1-Niveau (${w1.price.toFixed(2)})!`;
+                 if (w0 && w2) {
+                   const target = w2.price + 1.618 * (w1.price - w0.price);
+          +        const entryAt = candleCloseTime(candles[candles.length - 1]);
+          +        const dataHash = hashCandles(candles);
+          +        const signalId = createHash("sha256")
+          +          .update([symbol, "BREAKOUT", entryAt, dataHash, ENGINE_VERSION].join("|"))
+          +          .digest("hex")
+          +          .slice(0, 32);
+                   db.prepare(
+          -          "INSERT INTO trade_history (symbol, signal_type, entry_price, invalidation, target, confidence, flags) VALUES (?, 'BREAKOUT', ?, ?, ?, ?, ?)"
+          +          `INSERT OR IGNORE INTO trade_history
+          +           (signal_id, symbol, signal_type, entry_price, invalidation, target,
+          +            confidence, flags, direction, entry_at, data_hash, engine_version)
+          +           VALUES (?, ?, 'BREAKOUT', ?, ?, ?, ?, ?, 'LONG', ?, ?, ?)`
+                   ).run(
+          -          symbol, currentPrice, w2.price, target,
+          +          signalId, symbol, currentPrice, w2.price, target,
+                     critique?.confidence ?? null,
+          -          JSON.stringify([...quality.flags, ...(critique?.flags ?? [])])
+          +          JSON.stringify([...quality.flags, ...(critique?.flags ?? [])]),
+          +          entryAt, dataHash, ENGINE_VERSION
+                   );
+                 }
+               }
+          diff --git a/src/core/feedback.ts b/src/core/feedback.ts
+          index ad9bd1d..a609b57 100644
+          --- a/src/core/feedback.ts
+          +++ b/src/core/feedback.ts
+          @@ -39,7 +39,8 @@ function bandTally(lo: number, hi: number): Tally | null {
+             return tally(
+               `SELECT COUNT(*) AS n, SUM(CASE WHEN is_success = 1 THEN 1 ELSE 0 END) AS w
+                FROM trade_history
+          -     WHERE confidence IS NOT NULL AND confidence >= ? AND confidence < ?`,
+          +     WHERE is_success IS NOT NULL
+          +       AND confidence IS NOT NULL AND confidence >= ? AND confidence < ?`,
+               lo, hi
+             );
+           }
+          @@ -47,7 +48,7 @@ function bandTally(lo: number, hi: number): Tally | null {
+           function flagTally(flag: string): Tally | null {
+             return tally(
+               `SELECT COUNT(*) AS n, SUM(CASE WHEN is_success = 1 THEN 1 ELSE 0 END) AS w
+          -     FROM trade_history WHERE flags LIKE ?`,
+          +     FROM trade_history WHERE is_success IS NOT NULL AND flags LIKE ?`,
+               `%${flag}%`
+             );
+           }
+          diff --git a/src/core/fibCluster.ts b/src/core/fibCluster.ts
+          index d5bdc4b..eadeb12 100644
+          --- a/src/core/fibCluster.ts
+          +++ b/src/core/fibCluster.ts
+          @@ -1,14 +1,20 @@
+           export interface LevelCandidate {
+             price: number;
+             label: string;
+          +  /** Statistisch unabhaengige Herleitungsfamilie, nicht bloss ein weiteres Ratio. */
+          +  family?: "IMPULSE_RETRACEMENT" | "PRIOR_WAVE" | "ABC_PROJECTION" | "CORRECTION_PATTERN";
+           }
+           
+           export interface FibCluster {
+             floor: number;
+             ceiling: number;
+             center: number;
+          +  /** Anzahl unabhaengiger Familien. */
+             score: number;
+          +  /** Anzahl einzelner Level; rein deskriptiv, kein Gate. */
+          +  evidenceCount: number;
+             labels: string[];
+          +  families: string[];
+           }
+           
+           /**
+          @@ -33,19 +39,19 @@ export function longLevelCandidates(p: {
+             if (imp > 0 && p.w0 > 0) {
+               const logRange = Math.log(p.w5) - Math.log(p.w0);
+               for (const f of [0.5, 0.618, 0.786, 0.886]) {
+          -      out.push({ price: p.w5 - f * imp, label: `Retr ${f}` });
+          -      out.push({ price: Math.exp(Math.log(p.w5) - f * logRange), label: `logRetr ${f}` });
+          +      out.push({ price: p.w5 - f * imp, label: `Retr ${f}`, family: "IMPULSE_RETRACEMENT" });
+          +      out.push({ price: Math.exp(Math.log(p.w5) - f * logRange), label: `logRetr ${f}`, family: "IMPULSE_RETRACEMENT" });
+               }
+             }
+          -  if (p.w4 != null && p.w4 > 0) out.push({ price: p.w4, label: "W4-Zone" });
+          +  if (p.w4 != null && p.w4 > 0) out.push({ price: p.w4, label: "W4-Zone", family: "PRIOR_WAVE" });
+             if (p.aLow != null && p.aLow > 0 && p.bHigh != null) {
+               const A = p.w5 - p.aLow;
+               const logA = Math.log(p.w5) - Math.log(p.aLow);
+               if (A > 0) {
+                 for (const k of [0.618, 1.0, 1.236, 1.618]) {
+                   const lin = p.bHigh - k * A;
+          -        if (lin > 0) out.push({ price: lin, label: `C=${k}·A` });
+          -        out.push({ price: Math.exp(Math.log(p.bHigh) - k * logA), label: `logC=${k}·A` });
+          +        if (lin > 0) out.push({ price: lin, label: `C=${k}·A`, family: "ABC_PROJECTION" });
+          +        out.push({ price: Math.exp(Math.log(p.bHigh) - k * logA), label: `logC=${k}·A`, family: "ABC_PROJECTION" });
+                 }
+               }
+             }
+          @@ -54,7 +60,8 @@ export function longLevelCandidates(p: {
+           
+           /**
+            * Gruppiert Level, die naeher als tolPct beieinanderliegen, zu Clustern.
+          - * Score = Anzahl konfluenter Herleitungen. Sortierung: Score, dann Preis.
+          + * Score = Anzahl unabhaengiger Herleitungsfamilien. Mehrere Ratios oder
+          + * linear/log derselben Familie erhoehen nur evidenceCount, nie den Gate-Score.
+            */
+           /**
+            * Spiegel von longLevelCandidates (V117): Widerstands-Level fuer die
+          @@ -72,18 +79,18 @@ export function shortLevelCandidates(p: {
+             if (imp > 0 && p.w5 > 0) {
+               const logRange = Math.log(p.w0) - Math.log(p.w5);
+               for (const f of [0.5, 0.618, 0.786, 0.886]) {
+          -      out.push({ price: p.w5 + f * imp, label: `Retr ${f}` });
+          -      out.push({ price: Math.exp(Math.log(p.w5) + f * logRange), label: `logRetr ${f}` });
+          +      out.push({ price: p.w5 + f * imp, label: `Retr ${f}`, family: "IMPULSE_RETRACEMENT" });
+          +      out.push({ price: Math.exp(Math.log(p.w5) + f * logRange), label: `logRetr ${f}`, family: "IMPULSE_RETRACEMENT" });
+               }
+             }
+          -  if (p.w4 != null && p.w4 > 0) out.push({ price: p.w4, label: "W4-Zone" });
+          +  if (p.w4 != null && p.w4 > 0) out.push({ price: p.w4, label: "W4-Zone", family: "PRIOR_WAVE" });
+             if (p.aHigh != null && p.bLow != null && p.bLow > 0) {
+               const A = p.aHigh - p.w5;
+               const logA = Math.log(p.aHigh) - Math.log(p.w5);
+               if (A > 0) {
+                 for (const k of [0.618, 1.0, 1.236, 1.618]) {
+          -        out.push({ price: p.bLow + k * A, label: `C=${k}·A` });
+          -        out.push({ price: Math.exp(Math.log(p.bLow) + k * logA), label: `logC=${k}·A` });
+          +        out.push({ price: p.bLow + k * A, label: `C=${k}·A`, family: "ABC_PROJECTION" });
+          +        out.push({ price: Math.exp(Math.log(p.bLow) + k * logA), label: `logC=${k}·A`, family: "ABC_PROJECTION" });
+                 }
+               }
+             }
+          @@ -97,12 +104,22 @@ export function clusterLevels(cands: LevelCandidate[], tolPct = 3.5): FibCluster
+             const flush = (): void => {
+               if (group.length === 0) return;
+               const prices = group.map((g) => g.price);
+          +    const familyOf = (x: LevelCandidate): string => {
+          +      if (x.family) return x.family;
+          +      if (x.label === "W4-Zone") return "PRIOR_WAVE";
+          +      if (x.label.startsWith("KO-Ziel")) return "CORRECTION_PATTERN";
+          +      if (x.label.includes("C=") || x.label.includes("·A")) return "ABC_PROJECTION";
+          +      return "IMPULSE_RETRACEMENT";
+          +    };
+          +    const families = [...new Set(group.map(familyOf))];
+               clusters.push({
+                 floor: Math.min(...prices),
+                 ceiling: Math.max(...prices),
+                 center: prices.reduce((s, x) => s + x, 0) / prices.length,
+          -      score: group.length,
+          +      score: families.length,
+          +      evidenceCount: group.length,
+                 labels: group.map((g) => g.label),
+          +      families,
+               });
+               group = [];
+             };
+          @@ -116,5 +133,7 @@ export function clusterLevels(cands: LevelCandidate[], tolPct = 3.5): FibCluster
+               }
+             }
+             flush();
+          -  return clusters.sort((a, b) => b.score - a.score || a.center - b.center);
+          +  return clusters.sort(
+          +    (a, b) => b.score - a.score || b.evidenceCount - a.evidenceCount || a.center - b.center
+          +  );
+           }
+          diff --git a/src/core/higherFrame.ts b/src/core/higherFrame.ts
+          index 28fc2c0..3d53d89 100644
+          --- a/src/core/higherFrame.ts
+          +++ b/src/core/higherFrame.ts
+          @@ -2,6 +2,7 @@ import { fetchMarketData } from "./marketData";
+           import { findImpulseAdaptive } from "./impulseFinder";
+           import { assessMultiWave } from "./multiWave";
+           import { assessCompletion } from "./completion";
+          +import { checkProportion } from "./proportion";
+           
+           export interface HigherFrameRead {
+             available: boolean;
+          @@ -46,7 +47,7 @@ export async function assessHigherFrame(
+               }
+               if (!candles || candles.length < 30) continue;
+           
+          -    const outcome = findImpulseAdaptive(candles);
+          +    const outcome = findImpulseAdaptive(candles, (r) => checkProportion(candles, r.count).ok);
+               if (!outcome.impulse) continue; // auch übergeordnet keine Zählung -> nächste Ebene
+           
+               const wc = outcome.impulse.result.count;
+          diff --git a/src/core/impulseFinder.ts b/src/core/impulseFinder.ts
+          index fd08bef..b51516d 100644
+          --- a/src/core/impulseFinder.ts
+          +++ b/src/core/impulseFinder.ts
+          @@ -1,4 +1,5 @@
+          -import { zigzag, Pivot } from "./zigzag";
+          +import { zigzag } from "./zigzag";
+          +import type { Pivot } from "./zigzag";
+           import { preferContinuous } from "./continuity";
+           import type { Candle } from "./marketData";
+           
+          @@ -206,9 +207,15 @@ function augmentEdgeExtremes(pivots: Pivot[], candles: Candle[]): Pivot[] {
+             // Nur EIN Rand-Extrem synthetisieren - das, das die Alternation zum
+             // ersten echten Pivot wahrt und ein echtes Fenster-Extrem ist.
+             if (firstKind === "L" && winHi > maxPivH) {
+          -    out.unshift({ index: hiIdx, date: head[hiIdx].date, price: winHi, kind: "H" });
+          +    out.unshift({
+          +      index: hiIdx, date: head[hiIdx].date, price: winHi, kind: "H",
+          +      status: "SYNTHETIC", confirmedAt: pivots[0].confirmedAt ?? pivots[0].date,
+          +    });
+             } else if (firstKind === "H" && winLo < minPivL) {
+          -    out.unshift({ index: loIdx, date: head[loIdx].date, price: winLo, kind: "L" });
+          +    out.unshift({
+          +      index: loIdx, date: head[loIdx].date, price: winLo, kind: "L",
+          +      status: "SYNTHETIC", confirmedAt: pivots[0].confirmedAt ?? pivots[0].date,
+          +    });
+             }
+             return out;
+           }
+          diff --git a/src/core/marketData.ts b/src/core/marketData.ts
+          index 9408a92..a946c3b 100644
+          --- a/src/core/marketData.ts
+          +++ b/src/core/marketData.ts
+          @@ -1,10 +1,32 @@
+          +import { createHash } from "node:crypto";
+          +
+           export interface Candle {
+          +  /** Kanonischer UTC-Zeitpunkt des Bar-Beginns (ISO-8601, nie nur YYYY-MM-DD). */
+             date: string;
+             open: number;
+             high: number;
+             low: number;
+             close: number;
+             volume?: number;
+          +  /** Explizite Point-in-Time-Metadaten; bei alten Test-Fixtures optional. */
+          +  openedAt?: string;
+          +  closedAt?: string;
+          +  timestamp?: number;
+          +  isClosed?: boolean;
+          +}
+          +
+          +export interface DataProvenance {
+          +  provider: "yahoo-chart";
+          +  symbol: string;
+          +  interval: string;
+          +  range: string;
+          +  fetchedAt: string;
+          +  asOf: string;
+          +  firstBarOpen: string | null;
+          +  lastBarClose: string | null;
+          +  dataHash: string;
+          +  adjustment: "RAW_PROVIDER_OHLC";
+          +  corporateActionCount: number;
+           }
+           
+           /** V164: Fehler bei zu kurzer Historie - vom Aufrufer auswertbar. */
+          @@ -22,55 +44,142 @@ export function isThinHistory(e: any): e is ThinHistoryError {
+           
+           export interface MarketData {
+             weeklyAnalysisCandles: Candle[];
+          +  provenance: DataProvenance;
+          +}
+          +
+          +const DAY_MS = 86_400_000;
+          +
+          +function intervalDurationMs(interval: string): number {
+          +  const m = /^(\d+)(m|h|d|wk|mo)$/.exec(interval);
+          +  if (!m) throw new Error(`Nicht unterstuetztes Yahoo-Intervall: ${interval}`);
+          +  const n = Number(m[1]);
+          +  const unit = m[2];
+          +  if (unit === "m") return n * 60_000;
+          +  if (unit === "h") return n * 3_600_000;
+          +  if (unit === "d") return n * DAY_MS;
+          +  if (unit === "wk") return n * 7 * DAY_MS;
+          +  return n * 31 * DAY_MS;
+          +}
+          +
+          +export function candleCloseTime(candle: Candle): string {
+          +  return candle.closedAt ?? candle.date;
+          +}
+          +
+          +export function candleCloseMs(candle: Candle): number {
+          +  const ms = Date.parse(candleCloseTime(candle));
+          +  if (!Number.isFinite(ms)) throw new Error(`Ungueltiger Kerzenzeitpunkt: ${candleCloseTime(candle)}`);
+          +  return ms;
+          +}
+          +
+          +export function hashCandles(candles: Candle[]): string {
+          +  const canonical = candles.map((c) => [
+          +    c.date,
+          +    candleCloseTime(c),
+          +    c.open,
+          +    c.high,
+          +    c.low,
+          +    c.close,
+          +    c.volume ?? 0,
+          +  ]);
+          +  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+          +}
+          +
+          +export interface ParsedYahooCandles {
+          +  candles: Candle[];
+          +  corporateActionCount: number;
+          +}
+          +
+          +/** Pure Parser-Funktion fuer Live und Regressionstests. */
+          +export function parseYahooCandles(
+          +  result: any,
+          +  interval: string,
+          +  asOfMs: number
+          +): ParsedYahooCandles {
+          +  const quote = result?.indicators?.quote?.[0] ?? {};
+          +  const timestamps: number[] = result?.timestamp ?? [];
+          +  const stepMs = intervalDurationMs(interval);
+          +  const byOpen = new Map<number, Candle>();
+          +
+          +  for (let i = 0; i < timestamps.length; i++) {
+          +    const openSec = Number(timestamps[i]);
+          +    const open = Number(quote.open?.[i] ?? quote.close?.[i]);
+          +    const high = Number(quote.high?.[i]);
+          +    const low = Number(quote.low?.[i]);
+          +    const close = Number(quote.close?.[i]);
+          +    if (![openSec, open, high, low, close].every(Number.isFinite)) continue;
+          +    if (openSec <= 0 || low <= 0 || high < low) continue;
+          +
+          +    const openedMs = openSec * 1000;
+          +    const nextMs = Number(timestamps[i + 1]) * 1000;
+          +    const closedMs = Number.isFinite(nextMs) && nextMs > openedMs
+          +      ? nextMs
+          +      : openedMs + stepMs;
+          +    if (closedMs > asOfMs) continue;
+          +
+          +    const openedAt = new Date(openedMs).toISOString();
+          +    const closedAt = new Date(closedMs).toISOString();
+          +    byOpen.set(openSec, {
+          +      date: openedAt,
+          +      openedAt,
+          +      closedAt,
+          +      timestamp: openSec,
+          +      isClosed: true,
+          +      open,
+          +      high,
+          +      low,
+          +      close,
+          +      volume: Number(quote.volume?.[i] ?? 0),
+          +    });
+          +  }
+          +
+          +  const events = result?.events ?? {};
+          +  const corporateActionCount = Object.values(events).reduce(
+          +    (sum: number, group: any) => sum + Object.keys(group ?? {}).length,
+          +    0
+          +  );
+          +  return {
+          +    candles: [...byOpen.values()].sort((a, b) => Date.parse(a.date) - Date.parse(b.date)),
+          +    corporateActionCount,
+          +  };
+           }
+           
+           /**
+          - * Holt OHLC-Kerzen von der Yahoo-Finance-Chart-API.
+          - * Default: Weekly ueber 5 Jahre (fuer die EW-Makro-Zaehlung).
+          + * Holt ausschliesslich abgeschlossene OHLC-Kerzen. `asOfMs` ist injizierbar,
+          + * damit Live und Replay denselben Point-in-Time-Cutoff verwenden. OHLC bleibt
+          + * explizit unadjustiert; Corporate Actions werden in der Provenienz erfasst.
+            */
+           export async function fetchMarketData(
+             symbol: string,
+             interval = "1wk",
+             range = "5y",
+          -  minCandles = 50
+          +  minCandles = 50,
+          +  asOfMs = Date.now()
+           ): Promise<MarketData> {
+             const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+               symbol
+          -  )}?interval=${interval}&range=${range}`;
+          +  )}?interval=${interval}&range=${range}&events=div%2Csplits&includeAdjustedClose=true`;
+           
+          +  const fetchedAt = new Date().toISOString();
+             const res = await fetch(url, {
+               headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+             });
+             if (!res.ok) throw new Error(`Yahoo-API ${res.status} fuer ${symbol}`);
+           
+             const json: any = await res.json();
+          -  const result = json.chart?.result?.[0];
+          -  const quote = result?.indicators?.quote?.[0] ?? {};
+          -  const timestamps: number[] = result?.timestamp ?? [];
+          -
+          -  const candles: Candle[] = [];
+          -  for (let i = 0; i < timestamps.length; i++) {
+          -    if (quote.close?.[i] == null || quote.high?.[i] == null || quote.low?.[i] == null) continue;
+          -    candles.push({
+          -      date: new Date(timestamps[i] * 1000).toISOString().split("T")[0],
+          -      open: Number(quote.open?.[i] ?? quote.close[i]),
+          -      high: Number(quote.high[i]),
+          -      low: Number(quote.low[i]),
+          -      close: Number(quote.close[i]),
+          -      volume: Number(quote.volume?.[i] ?? 0),
+          -    });
+          +  if (json.chart?.error) {
+          +    throw new Error(`Yahoo-API fuer ${symbol}: ${json.chart.error.description ?? "unbekannter Fehler"}`);
+             }
+          +  const result = json.chart?.result?.[0];
+          +  if (!result) throw new Error(`Yahoo-API liefert keine Daten fuer ${symbol}`);
+           
+          +  const parsed = parseYahooCandles(result, interval, asOfMs);
+          +  const candles = parsed.candles;
+             if (candles.length < minCandles) {
+          -    // V164: strukturierter Fehler statt blosser Zahl. Bei einem frischen
+          -    // Listing (SPCX seit 12.06.2026) ist "zu wenig Kursdaten" die richtige
+          -    // Diagnose - aber ohne Erstnotiz und Mindestbedarf ist sie fuer den
+          -    // Nutzer nicht einzuordnen.
+               const first = result?.meta?.firstTradeDate
+          -      ? new Date(result.meta.firstTradeDate * 1000).toISOString().split("T")[0]
+          -      : candles[0]?.date ?? null;
+          +      ? new Date(result.meta.firstTradeDate * 1000).toISOString().slice(0, 10)
+          +      : candles[0]?.date.slice(0, 10) ?? null;
+               const e = new Error(
+          -      `Zu wenig Kursdaten fuer ${symbol}: ${candles.length} von mindestens ${minCandles} Kerzen` +
+          +      `Zu wenig abgeschlossene Kursdaten fuer ${symbol}: ${candles.length} von mindestens ${minCandles} Kerzen` +
+                   (first ? ` (Erstnotiz ${first})` : "")
+               ) as ThinHistoryError;
+               e.thinHistory = true;
+          @@ -80,5 +189,22 @@ export async function fetchMarketData(
+               e.firstTrade = first;
+               throw e;
+             }
+          -  return { weeklyAnalysisCandles: candles };
+          +
+          +  const dataHash = hashCandles(candles);
+          +  return {
+          +    weeklyAnalysisCandles: candles,
+          +    provenance: {
+          +      provider: "yahoo-chart",
+          +      symbol,
+          +      interval,
+          +      range,
+          +      fetchedAt,
+          +      asOf: new Date(asOfMs).toISOString(),
+          +      firstBarOpen: candles[0]?.date ?? null,
+          +      lastBarClose: candles.length > 0 ? candleCloseTime(candles[candles.length - 1]) : null,
+          +      dataHash,
+          +      adjustment: "RAW_PROVIDER_OHLC",
+          +      corporateActionCount: parsed.corporateActionCount,
+          +    },
+          +  };
+           }
+          diff --git a/src/core/multiWave.ts b/src/core/multiWave.ts
+          index ad290b1..0375b31 100644
+          --- a/src/core/multiWave.ts
+          +++ b/src/core/multiWave.ts
+          @@ -1,5 +1,6 @@
+           import type { Candle } from "./marketData";
+          -import { Pivot, zigzag } from "./zigzag";
+          +import { zigzag } from "./zigzag";
+          +import type { Pivot } from "./zigzag";
+           import { segmentVerdict } from "./impulseFinder";
+           
+           export interface MultiWaveRead {
+          diff --git a/src/core/outcome.ts b/src/core/outcome.ts
+          index a7def44..1b3e8ab 100644
+          --- a/src/core/outcome.ts
+          +++ b/src/core/outcome.ts
+          @@ -1,11 +1,15 @@
+           import db from "./db";
+          -import { fetchMarketData, MarketData } from "./marketData";
+          +import { fetchMarketData, type MarketData, candleCloseTime } from "./marketData";
+          +import { evaluateTradeBar, TRADE_TIMEOUT_DAYS, type FrozenTrade } from "./lifecycle";
+          +import type { Direction } from "./forecast";
+          +import { timeMs } from "./time";
+           
+           export type OutcomeFetcher = (
+             symbol: string,
+             interval?: string,
+             range?: string,
+          -  minCandles?: number
+          +  minCandles?: number,
+          +  asOfMs?: number
+           ) => Promise<MarketData>;
+           
+           interface OpenTrade {
+          @@ -15,79 +19,71 @@ interface OpenTrade {
+             invalidation: number | null;
+             target: number | null;
+             timestamp: string;
+          +  entry_at: string | null;
+             direction: string | null;
+           }
+           
+          -const TIMEOUT_DAYS = 30;
+          -
+           /**
+          - * Prueft alle offenen Signale gegen die eingefrorenen Level:
+          - *   Invalidierung beruehrt -> INVALIDATED (is_success = 0)
+          - *   Target beruehrt        -> CONFIRMED   (is_success = 1)
+          - *   >30 Tage offen         -> TIMEOUT     (nach PnL bewertet)
+          - * Chronologische Pruefung Kerze fuer Kerze; bei Beruehrung beider Level
+          - * in derselben Kerze zaehlt konservativ die Invalidierung.
+          + * Wertet nur Bars aus, die nach dem tatsaechlichen Entry-Bar-Schluss liegen.
+          + * TARGET/INVALIDATED sind binaere Labels; TIMEOUT bleibt bewusst unklassiert
+          + * und kann die Trefferquote nicht mehr als impliziter Misserfolg verfaelschen.
+            */
+           export async function resolveOpenTrades(fetcher: OutcomeFetcher = fetchMarketData): Promise<void> {
+          -  const open = db
+          -    .prepare(
+          -      "SELECT id, symbol, entry_price, invalidation, target, timestamp, direction FROM trade_history WHERE is_success IS NULL"
+          -    )
+          -    .all() as OpenTrade[];
+          +  const open = db.prepare(
+          +    `SELECT id, symbol, entry_price, invalidation, target, timestamp, entry_at, direction
+          +     FROM trade_history
+          +     WHERE resolution IS NULL AND is_success IS NULL`
+          +  ).all() as OpenTrade[];
+             if (open.length === 0) return;
+           
+             const closeStmt = db.prepare(
+          -    "UPDATE trade_history SET outcome = ?, is_success = ? WHERE id = ?"
+          +    `UPDATE trade_history
+          +     SET outcome=?, is_success=?, resolution=?, resolved_at=?
+          +     WHERE id=? AND resolution IS NULL`
+             );
+             console.log(`[OUTCOME] Pruefe ${open.length} offene Signale...`);
+           
+          -  for (const t of open) {
+          +  for (const row of open) {
+          +    if (row.invalidation == null || row.target == null) continue;
+               try {
+          -      const { weeklyAnalysisCandles: candles } = await fetcher(t.symbol, "1d", "3mo");
+          -      const entryDate = t.timestamp.split(" ")[0];
+          -      const relevant = candles.filter((c) => c.date >= entryDate);
+          -
+          -      // Richtungsbewusst (V117): LONG prueft Low/Inval & High/Target,
+          -      // SHORT gespiegelt; PnL ueber Richtungsfaktor s2.
+          -      const s2 = t.direction === "SHORT" ? -1 : 1;
+          -      let resolved = false;
+          -      for (const c of relevant) {
+          -        const invalHit =
+          -          t.invalidation != null &&
+          -          (s2 === 1 ? c.low <= t.invalidation : c.high >= t.invalidation);
+          -        if (invalHit) {
+          -          const pnl = (s2 * (t.invalidation! - t.entry_price)) / t.entry_price;
+          -          closeStmt.run(pnl, 0, t.id);
+          -          console.log(`[OUTCOME] ${t.symbol} #${t.id}: INVALIDIERT am ${c.date} (${(pnl * 100).toFixed(1)}%)`);
+          -          resolved = true;
+          -          break;
+          -        }
+          -        const targetHit =
+          -          t.target != null && (s2 === 1 ? c.high >= t.target : c.low <= t.target);
+          -        if (targetHit) {
+          -          const pnl = (s2 * (t.target! - t.entry_price)) / t.entry_price;
+          -          closeStmt.run(pnl, 1, t.id);
+          -          console.log(`[OUTCOME] ${t.symbol} #${t.id}: TARGET erreicht am ${c.date} (+${(pnl * 100).toFixed(1)}%)`);
+          -          resolved = true;
+          -          break;
+          -        }
+          -      }
+          +      const market = await fetcher(row.symbol, "1d", "6mo", 20);
+          +      const entryAt = row.entry_at ?? String(row.timestamp);
+          +      const direction: Direction = row.direction === "SHORT" ? "SHORT" : "LONG";
+          +      const trade: FrozenTrade = {
+          +        direction,
+          +        entry: Number(row.entry_price),
+          +        invalidation: Number(row.invalidation),
+          +        target: Number(row.target),
+          +        entryAt,
+          +      };
+          +      const relevant = market.weeklyAnalysisCandles.filter(
+          +        (bar) => timeMs(candleCloseTime(bar)) > timeMs(entryAt)
+          +      );
+           
+          -      if (!resolved) {
+          -        const ts = new Date(t.timestamp.replace(" ", "T") + "Z").getTime();
+          -        const ageDays = (Date.now() - ts) / 86_400_000;
+          -        if (ageDays >= TIMEOUT_DAYS && relevant.length > 0) {
+          -          const last = relevant[relevant.length - 1].close;
+          -          const pnl = (s2 * (last - t.entry_price)) / t.entry_price;
+          -          closeStmt.run(pnl, pnl > 0 ? 1 : 0, t.id);
+          -          console.log(`[OUTCOME] ${t.symbol} #${t.id}: TIMEOUT nach ${TIMEOUT_DAYS}d (${(pnl * 100).toFixed(1)}%)`);
+          -        }
+          +      for (const bar of relevant) {
+          +        const decision = evaluateTradeBar(trade, bar);
+          +        if (decision.type === "WAIT") continue;
+          +        const success = decision.type === "TARGET" ? 1
+          +          : decision.type === "INVALIDATED" ? 0
+          +          : null;
+          +        closeStmt.run(
+          +          decision.pnl,
+          +          success,
+          +          decision.type,
+          +          decision.effectiveAt,
+          +          row.id
+          +        );
+          +        console.log(
+          +          `[OUTCOME] ${row.symbol} #${row.id}: ${decision.type} am ` +
+          +          `${decision.effectiveAt.slice(0, 10)} (${(decision.pnl * 100).toFixed(1)}%, ${decision.r.toFixed(2)}R)`
+          +        );
+          +        break;
+                 }
+           
+          -      // Yahoo-Drosselung
+          -      await new Promise((r) => setTimeout(r, 150));
+          +      await new Promise((resolve) => setTimeout(resolve, 150));
+               } catch (err: any) {
+          -      console.error(`[OUTCOME] Fehler bei ${t.symbol} #${t.id}:`, err?.message ?? err);
+          +      console.error(`[OUTCOME] Fehler bei ${row.symbol} #${row.id}:`, err?.message ?? err);
+               }
+             }
+          +  console.log(`[OUTCOME] Einheitlicher Timeout: ${TRADE_TIMEOUT_DAYS} Kalendertage.`);
+           }
+          diff --git a/src/core/setups.ts b/src/core/setups.ts
+          index fd4b824..c27c338 100644
+          --- a/src/core/setups.ts
+          +++ b/src/core/setups.ts
+          @@ -1,57 +1,153 @@
+          +import { createHash } from "node:crypto";
+           import db from "./db";
+          -import { fetchMarketData, MarketData } from "./marketData";
+          +import { fetchMarketData, type MarketData, candleCloseTime } from "./marketData";
+           import type { FibCluster } from "./fibCluster";
+          +import type { WaveCount } from "./impulseFinder";
+          +import { ENGINE_VERSION, type Direction } from "./forecast";
+          +import { evaluatePendingBar, PENDING_TIMEOUT_DAYS, type FrozenSetup } from "./lifecycle";
+          +import { daysBetween } from "./time";
+           
+           export type Fetcher = (
+             symbol: string,
+             interval?: string,
+             range?: string,
+          -  minCandles?: number
+          +  minCandles?: number,
+          +  asOfMs?: number
+           ) => Promise<MarketData>;
+           
+           export interface SetupEvent {
+             symbol: string;
+          -  type: "CONFIRMED" | "INVALIDATED" | "TIMEOUT";
+          +  type: "CONFIRMED" | "INVALIDATED" | "TIMEOUT" | "DEGENERATE";
+             text: string;
+           }
+           
+          -const PENDING_TIMEOUT_DAYS = 84; // 12 Wochen ohne Bestaetigung -> verwerfen
+          -const INVALIDATION_BUFFER = 0.97; // 3% unter Cluster-Boden
+          +const INVALIDATION_BUFFER = 0.97;
+          +
+          +export interface SnapshotMeta {
+          +  asOf: string;
+          +  dataHash: string;
+          +  provider: "yahoo-chart";
+          +  adjustment: "RAW_PROVIDER_OHLC";
+          +  engineVersion: string;
+          +  interval: string;
+          +  range: string;
+          +  count: WaveCount;
+          +}
+           
+          -/**
+          - * Legt ein PENDING-Setup an oder aktualisiert dessen Level.
+          - * Ein Symbol hat maximal ein aktives Setup; abgeschlossene Setups
+          - * (CONFIRMED/INVALIDATED/TIMEOUT) werden bei erneutem Cluster-Kontakt ersetzt.
+          - */
+           export interface SetupMeta {
+             llmConfidence: number | null;
+             llmFlags: string[];
+             detFlags: string[];
+          +  snapshot?: SnapshotMeta;
+          +}
+          +
+          +function snapshotId(
+          +  symbol: string,
+          +  direction: Direction,
+          +  snapshot: SnapshotMeta
+          +): string {
+          +  return createHash("sha256")
+          +    .update([symbol, direction, snapshot.asOf, snapshot.dataHash, snapshot.engineVersion].join("|"))
+          +    .digest("hex")
+          +    .slice(0, 32);
+          +}
+          +
+          +function appendEvent(
+          +  id: string,
+          +  symbol: string,
+          +  type: string,
+          +  effectiveAt: string,
+          +  payload: unknown
+          +): void {
+          +  db.prepare(
+          +    `INSERT OR IGNORE INTO setup_events
+          +     (snapshot_id, symbol, event_type, effective_at, payload)
+          +     VALUES (?, ?, ?, ?, ?)`
+          +  ).run(id, symbol, type, effectiveAt, JSON.stringify(payload));
+           }
+           
+          +/**
+          + * Erstellt einen unveraenderlichen Signal-Snapshot. Ein laufendes PENDING
+          + * wird niemals aufgefrischt; neue Scans duerfen weder Trigger noch Zone oder
+          + * Invalidierung rueckwirkend veraendern.
+          + */
+           export function upsertPendingSetup(
+             symbol: string,
+             cluster: FibCluster,
+             triggerLevel: number | null,
+          -  cExtreme: number, // LONG: Korrektur-Tief | SHORT: Korrektur-Hoch (Spalte c_low, historischer Name)
+          +  cExtreme: number,
+             meta: SetupMeta = { llmConfidence: null, llmFlags: [], detFlags: [] },
+          -  direction: "LONG" | "SHORT" = "LONG"
+          -): "created" | "refreshed" {
+          -  const invalidation =
+          -    direction === "LONG"
+          -      ? cluster.floor * INVALIDATION_BUFFER
+          -      : cluster.ceiling * (2 - INVALIDATION_BUFFER);
+          -  const row = db.prepare("SELECT status FROM setups WHERE symbol = ?").get(symbol) as
+          -    | { status: string }
+          -    | undefined;
+          -
+          -  if (row && row.status === "PENDING") {
+          +  direction: Direction = "LONG"
+          +): "created" | "unchanged" {
+          +  if (triggerLevel == null || !Number.isFinite(triggerLevel)) return "unchanged";
+          +  const invalidation = direction === "LONG"
+          +    ? cluster.floor * INVALIDATION_BUFFER
+          +    : cluster.ceiling * (2 - INVALIDATION_BUFFER);
+          +  const active = db.prepare(
+          +    "SELECT snapshot_id FROM setups WHERE symbol = ? AND status = 'PENDING'"
+          +  ).get(symbol) as { snapshot_id: string | null } | undefined;
+          +  if (active) return "unchanged";
+          +
+          +  const fallbackAsOf = new Date().toISOString();
+          +  const snapshot: SnapshotMeta = meta.snapshot ?? {
+          +    asOf: fallbackAsOf,
+          +    dataHash: "legacy-no-data-hash",
+          +    provider: "yahoo-chart",
+          +    adjustment: "RAW_PROVIDER_OHLC",
+          +    engineVersion: ENGINE_VERSION,
+          +    interval: "unknown",
+          +    range: "unknown",
+          +    count: { trend: direction === "LONG" ? "bullish" : "bearish", points: [], analysis: "legacy" },
+          +  };
+          +  const id = snapshotId(symbol, direction, snapshot);
+          +  const exists = db.prepare("SELECT 1 FROM signal_snapshots WHERE id = ?").get(id);
+          +  if (exists) return "unchanged";
+          +
+          +  const create = db.transaction(() => {
+               db.prepare(
+          -      `UPDATE setups SET cluster_floor=?, cluster_ceiling=?, cluster_score=?,
+          -       trigger_level=?, invalidation=?, c_low=?, levels=?,
+          -       llm_confidence=?, llm_flags=?, det_flags=?, direction=?, updated_at=CURRENT_TIMESTAMP
+          -       WHERE symbol=?`
+          +      `INSERT INTO signal_snapshots
+          +       (id, symbol, direction, as_of, data_hash, data_provider, adjustment,
+          +        engine_version, interval, range_name,
+          +        count_json, cluster_floor, cluster_ceiling, cluster_score,
+          +        cluster_evidence_count, cluster_families, levels, trigger_level,
+          +        invalidation, c_extreme, llm_confidence, llm_flags, det_flags)
+          +       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+               ).run(
+          +      id,
+          +      symbol,
+          +      direction,
+          +      snapshot.asOf,
+          +      snapshot.dataHash,
+          +      snapshot.provider,
+          +      snapshot.adjustment,
+          +      snapshot.engineVersion,
+          +      snapshot.interval,
+          +      snapshot.range,
+          +      JSON.stringify(snapshot.count),
+          +      cluster.floor,
+          +      cluster.ceiling,
+          +      cluster.score,
+          +      cluster.evidenceCount,
+          +      JSON.stringify(cluster.families),
+          +      JSON.stringify(cluster.labels),
+          +      triggerLevel,
+          +      invalidation,
+          +      cExtreme,
+          +      meta.llmConfidence,
+          +      JSON.stringify(meta.llmFlags),
+          +      JSON.stringify(meta.detFlags)
+          +    );
+          +
+          +    db.prepare(
+          +      `INSERT OR REPLACE INTO setups
+          +       (symbol, status, cluster_floor, cluster_ceiling, cluster_score, trigger_level,
+          +        invalidation, c_low, levels, llm_confidence, llm_flags, det_flags, direction,
+          +        snapshot_id, as_of, data_hash, engine_version, count_json, interval_name,
+          +        range_name, last_evaluated_bar, created_at, updated_at)
+          +       VALUES (?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
+          +               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+          +    ).run(
+          +      symbol,
+                 cluster.floor,
+                 cluster.ceiling,
+                 cluster.score,
+          @@ -63,120 +159,162 @@ export function upsertPendingSetup(
+                 JSON.stringify(meta.llmFlags),
+                 JSON.stringify(meta.detFlags),
+                 direction,
+          -      symbol
+          +      id,
+          +      snapshot.asOf,
+          +      snapshot.dataHash,
+          +      snapshot.engineVersion,
+          +      JSON.stringify(snapshot.count),
+          +      snapshot.interval,
+          +      snapshot.range
+               );
+          -    return "refreshed";
+          -  }
+          -
+          -  db.prepare(
+          -    `INSERT OR REPLACE INTO setups
+          -     (symbol, status, cluster_floor, cluster_ceiling, cluster_score, trigger_level,
+          -      invalidation, c_low, levels, llm_confidence, llm_flags, det_flags, direction, created_at, updated_at)
+          -     VALUES (?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+          -  ).run(
+          -    symbol,
+          -    cluster.floor,
+          -    cluster.ceiling,
+          -    cluster.score,
+          -    triggerLevel,
+          -    invalidation,
+          -    cExtreme,
+          -    JSON.stringify(cluster.labels),
+          -    meta.llmConfidence,
+          -    JSON.stringify(meta.llmFlags),
+          -    JSON.stringify(meta.detFlags),
+          -    direction
+          -  );
+          +    appendEvent(id, symbol, "CREATED", snapshot.asOf, {
+          +      direction,
+          +      triggerLevel,
+          +      invalidation,
+          +      cExtreme,
+          +      cluster,
+          +    });
+          +  });
+          +  create();
+             return "created";
+           }
+           
+          -/**
+          - * Prueft alle PENDING-Setups gegen die letzte ABGESCHLOSSENE Wochenkerze:
+          - *   Schluss > Trigger        -> CONFIRMED (Trade mit eingefrorenen Leveln)
+          - *   Schluss < Invalidierung  -> INVALIDATED
+          - *   aelter als 84 Tage       -> TIMEOUT
+          - * Target bei Bestaetigung: Trigger + 1.618 * (Trigger - C-Tief),
+          - * analog zur Screener-Konvention "Ziel = 1.618 x Subwelle i".
+          - */
+          +function parseFlags(value: unknown): string[] {
+          +  try {
+          +    const parsed = JSON.parse(String(value ?? "[]"));
+          +    return Array.isArray(parsed) ? parsed.map(String) : [];
+          +  } catch {
+          +    return [];
+          +  }
+          +}
+          +
+          +/** Wertet jede seit dem Snapshot neu geschlossene Wochenkerze chronologisch aus. */
+           export async function resolvePendingSetups(fetcher: Fetcher = fetchMarketData): Promise<SetupEvent[]> {
+             const rows = db.prepare("SELECT * FROM setups WHERE status = 'PENDING'").all() as any[];
+             const events: SetupEvent[] = [];
+           
+             for (const s of rows) {
+               try {
+          -      const { weeklyAnalysisCandles: wk } = await fetcher(s.symbol, "1wk", "1y", 10);
+          -      if (wk.length < 2) continue;
+          -      const lastComplete = wk[wk.length - 2];
+          -      const created = new Date(String(s.created_at).replace(" ", "T") + "Z").getTime();
+          -      const ageDays = (Date.now() - created) / 86_400_000;
+          -
+          -      const dir: "LONG" | "SHORT" = s.direction === "SHORT" ? "SHORT" : "LONG";
+          -      const s2 = dir === "LONG" ? 1 : -1;
+          -      const triggered =
+          -        s.trigger_level != null &&
+          -        (dir === "LONG" ? lastComplete.close > s.trigger_level : lastComplete.close < s.trigger_level);
+          -      const invalidatedNow =
+          -        dir === "LONG" ? lastComplete.close < s.invalidation : lastComplete.close > s.invalidation;
+          -
+          -      if (triggered) {
+          -        const target = s.trigger_level + s2 * 1.618 * Math.abs(s.trigger_level - s.c_low);
+          -        // V121 Ziel-Guard: Restpotenzial am Entry muss >= 0.25R sein -
+          -        // sonst degeneriertes Setup (Backtest-Befund: Ziele koennen bei
+          -        // weit laufender Bestaetigungskerze bereits hinter dem Entry liegen).
+          -        const entryPx = lastComplete.close;
+          -        const riskPx = Math.abs(entryPx - Number(s.invalidation));
+          -        const potentialR = riskPx > 0 ? (s2 * (target - entryPx)) / riskPx : -1;
+          -        if (potentialR < 0.25) {
+          -          db.prepare(
+          -            "UPDATE setups SET status='CONFIRMED', updated_at=CURRENT_TIMESTAMP WHERE symbol=?"
+          -          ).run(s.symbol);
+          +      const market = await fetcher(s.symbol, "1wk", "2y", 10);
+          +      const id = String(s.snapshot_id ?? `legacy-${s.symbol}-${s.created_at}`);
+          +      const direction: Direction = s.direction === "SHORT" ? "SHORT" : "LONG";
+          +      const asOf = String(s.as_of ?? s.created_at);
+          +      const frozen: FrozenSetup = {
+          +        direction,
+          +        trigger: Number(s.trigger_level),
+          +        invalidation: Number(s.invalidation),
+          +        cExtreme: Number(s.c_low),
+          +        createdAt: String(s.created_at),
+          +        asOf,
+          +        lastEvaluatedBar: s.last_evaluated_bar == null ? null : String(s.last_evaluated_bar),
+          +      };
+          +
+          +      const bars = market.weeklyAnalysisCandles.filter((bar) => {
+          +        const close = candleCloseTime(bar);
+          +        const lower = frozen.lastEvaluatedBar ?? frozen.asOf;
+          +        return Date.parse(close) > Date.parse(lower);
+          +      });
+          +      let terminal = false;
+          +
+          +      for (const bar of bars) {
+          +        const decision = evaluatePendingBar(frozen, bar);
+          +        if (decision.type === "WAIT") {
+          +          if (decision.reason === "PENDING") {
+          +            db.prepare(
+          +              "UPDATE setups SET last_evaluated_bar=?, updated_at=CURRENT_TIMESTAMP WHERE symbol=? AND status='PENDING'"
+          +            ).run(decision.effectiveAt, s.symbol);
+          +            frozen.lastEvaluatedBar = decision.effectiveAt;
+          +          }
+          +          continue;
+          +        }
+          +
+          +        if (decision.type === "CONFIRMED" || decision.type === "DEGENERATE") {
+          +          const status = decision.type === "CONFIRMED" ? "CONFIRMED" : "CONFIRMED_NO_TRADE";
+          +          const transition = db.transaction(() => {
+          +            if (decision.type === "CONFIRMED") {
+          +              const allFlags = [...parseFlags(s.det_flags), ...parseFlags(s.llm_flags)];
+          +              db.prepare(
+          +                `INSERT OR IGNORE INTO trade_history
+          +                 (signal_id, snapshot_id, symbol, signal_type, entry_price, invalidation,
+          +                  target, confidence, flags, direction, entry_at, data_hash, engine_version)
+          +                 VALUES (?, ?, ?, 'CLUSTER', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          +              ).run(
+          +                id,
+          +                id,
+          +                s.symbol,
+          +                decision.entry,
+          +                s.invalidation,
+          +                decision.target,
+          +                s.llm_confidence,
+          +                JSON.stringify(allFlags),
+          +                direction,
+          +                decision.effectiveAt,
+          +                s.data_hash,
+          +                s.engine_version ?? ENGINE_VERSION
+          +              );
+          +            }
+          +            db.prepare(
+          +              `UPDATE setups SET status=?, last_evaluated_bar=?, updated_at=CURRENT_TIMESTAMP
+          +               WHERE symbol=? AND status='PENDING'`
+          +            ).run(status, decision.effectiveAt, s.symbol);
+          +            appendEvent(id, s.symbol, decision.type, decision.effectiveAt, decision);
+          +          });
+          +          transition();
+          +
+                     events.push({
+                       symbol: s.symbol,
+          -            type: "CONFIRMED",
+          -            text:
+          -              `⚠️ **${s.symbol} CONFIRMED (${dir}) ohne Trade**: Wochenschluss ${entryPx.toFixed(2)} ${dir === "LONG" ? "über" : "unter"} Trigger ${Number(s.trigger_level).toFixed(2)}, ` +
+          -              `aber Restpotenzial zum Ziel ${target.toFixed(2)} nur ${potentialR.toFixed(2)}R (< 0.25R) – degeneriertes Setup, kein Trade-Log (Ziel-Guard, V121).`,
+          +            type: decision.type,
+          +            text: decision.type === "CONFIRMED"
+          +              ? `${direction === "LONG" ? "🚀" : "🔻"} **${s.symbol} CONFIRMED (${direction})**: ` +
+          +                `Wochenschluss ${decision.entry.toFixed(2)} · Entry ${decision.effectiveAt.slice(0, 10)} · ` +
+          +                `Invalidierung ${Number(s.invalidation).toFixed(2)} · Ziel ${decision.target.toFixed(2)}`
+          +              : `⚠️ **${s.symbol} CONFIRMED (${direction}) ohne Trade**: Restpotenzial ` +
+          +                `${decision.potentialR.toFixed(2)}R (< 0.25R).`,
+                     });
+          -          continue;
+          +          terminal = true;
+          +          break;
+                   }
+          -        const allFlags = [
+          -          ...JSON.parse(s.det_flags ?? "[]"),
+          -          ...JSON.parse(s.llm_flags ?? "[]"),
+          -        ];
+          -        db.prepare(
+          -          "INSERT INTO trade_history (symbol, signal_type, entry_price, invalidation, target, confidence, flags, direction) VALUES (?, 'CLUSTER', ?, ?, ?, ?, ?, ?)"
+          -        ).run(s.symbol, lastComplete.close, s.invalidation, target, s.llm_confidence, JSON.stringify(allFlags), dir);
+          -        db.prepare(
+          -          "UPDATE setups SET status='CONFIRMED', updated_at=CURRENT_TIMESTAMP WHERE symbol=?"
+          -        ).run(s.symbol);
+          -        events.push({
+          -          symbol: s.symbol,
+          -          type: "CONFIRMED",
+          -          text:
+          -            `${dir === "LONG" ? "🚀" : "🔻"} **${s.symbol} CONFIRMED (${dir})**: Wochenschluss ${lastComplete.close.toFixed(2)} ${dir === "LONG" ? "über" : "unter"} Trigger ${Number(s.trigger_level).toFixed(2)}.\n` +
+          -            `Entry ~${lastComplete.close.toFixed(2)} · Invalidierung ${Number(s.invalidation).toFixed(2)} · Ziel (1.618·i) ${target.toFixed(2)}`,
+          +
+          +        const status = decision.type;
+          +        const transition = db.transaction(() => {
+          +          db.prepare(
+          +            `UPDATE setups SET status=?, last_evaluated_bar=?, updated_at=CURRENT_TIMESTAMP
+          +             WHERE symbol=? AND status='PENDING'`
+          +          ).run(status, decision.effectiveAt, s.symbol);
+          +          appendEvent(id, s.symbol, status, decision.effectiveAt, decision);
+                   });
+          -      } else if (invalidatedNow) {
+          -        db.prepare(
+          -          "UPDATE setups SET status='INVALIDATED', updated_at=CURRENT_TIMESTAMP WHERE symbol=?"
+          -        ).run(s.symbol);
+          +        transition();
+                   events.push({
+                     symbol: s.symbol,
+          -          type: "INVALIDATED",
+          -          text: `❌ **${s.symbol} INVALIDATED**: Wochenschluss ${lastComplete.close.toFixed(2)} ${dir === "SHORT" ? "über Cluster-Decke" : "unter Cluster-Boden"} (${Number(s.invalidation).toFixed(2)}).`,
+          +          type: status,
+          +          text: status === "INVALIDATED"
+          +            ? `❌ **${s.symbol} INVALIDATED**: erster neuer Wochenschluss ` +
+          +              `${decision.effectiveAt.slice(0, 10)} jenseits ${Number(s.invalidation).toFixed(2)}.`
+          +            : `⌛ **${s.symbol} TIMEOUT**: ${PENDING_TIMEOUT_DAYS} Tage ohne Bestaetigung.`,
+          +        });
+          +        terminal = true;
+          +        break;
+          +      }
+          +
+          +      // Ein Setup kann auch ohne neue Wochenkerze ablaufen. Diese Transition
+          +      // nutzt den aktuellen UTC-Zeitpunkt und veraendert keine Preislevel.
+          +      if (!terminal && daysBetween(String(s.created_at), new Date().toISOString()) >= PENDING_TIMEOUT_DAYS) {
+          +        const effectiveAt = new Date().toISOString();
+          +        const transition = db.transaction(() => {
+          +          db.prepare(
+          +            "UPDATE setups SET status='TIMEOUT', updated_at=CURRENT_TIMESTAMP WHERE symbol=? AND status='PENDING'"
+          +          ).run(s.symbol);
+          +          appendEvent(id, s.symbol, "TIMEOUT", effectiveAt, { reason: "wall-clock" });
+                   });
+          -      } else if (ageDays >= PENDING_TIMEOUT_DAYS) {
+          -        db.prepare(
+          -          "UPDATE setups SET status='TIMEOUT', updated_at=CURRENT_TIMESTAMP WHERE symbol=?"
+          -        ).run(s.symbol);
+          +        transition();
+                   events.push({
+                     symbol: s.symbol,
+                     type: "TIMEOUT",
+          -          text: `⌛ **${s.symbol} TIMEOUT**: ${PENDING_TIMEOUT_DAYS} Tage ohne Bestätigung – Setup verworfen.`,
+          +          text: `⌛ **${s.symbol} TIMEOUT**: ${PENDING_TIMEOUT_DAYS} Tage ohne Bestaetigung.`,
+                   });
+                 }
+           
+          -      await new Promise((r) => setTimeout(r, 150));
+          +      await new Promise((resolve) => setTimeout(resolve, 150));
+               } catch (err: any) {
+                 console.error(`[SETUPS] Fehler bei ${s.symbol}:`, err?.message ?? err);
+               }
+          @@ -184,24 +322,22 @@ export async function resolvePendingSetups(fetcher: Fetcher = fetchMarketData):
+             return events;
+           }
+           
+          -/** Kompakte Uebersicht fuer den /setups-Command. */
+           export function listSetups(): string {
+          -  const rows = db
+          -    .prepare("SELECT * FROM setups ORDER BY updated_at DESC LIMIT 15")
+          -    .all() as any[];
+          +  const rows = db.prepare("SELECT * FROM setups ORDER BY updated_at DESC LIMIT 15").all() as any[];
+             if (rows.length === 0) return "📭 Keine Setups erfasst.";
+             const icon: Record<string, string> = {
+               PENDING: "🟡",
+               CONFIRMED: "🚀",
+          +    CONFIRMED_NO_TRADE: "⚠️",
+               INVALIDATED: "❌",
+               TIMEOUT: "⌛",
+             };
+             const lines = rows.map((s) => {
+          -    const dirIcon = s.direction === "SHORT" ? "⬇️" : "⬆️";
+          -    const zone = `${dirIcon} ${Number(s.cluster_floor).toFixed(2)}–${Number(s.cluster_ceiling).toFixed(2)}`;
+          -    const trig = s.trigger_level != null ? Number(s.trigger_level).toFixed(2) : "n/a";
+          +    const direction = s.direction === "SHORT" ? "⬇️" : "⬆️";
+          +    const zone = `${direction} ${Number(s.cluster_floor).toFixed(2)}–${Number(s.cluster_ceiling).toFixed(2)}`;
+          +    const trigger = s.trigger_level != null ? Number(s.trigger_level).toFixed(2) : "n/a";
+               const since = String(s.created_at).split(" ")[0];
+          -    return `${icon[s.status] ?? "•"} **${s.symbol}** · ${s.status} · Zone ${zone} · Trigger ${trig} · seit ${since}`;
+          +    return `${icon[s.status] ?? "•"} **${s.symbol}** · ${s.status} · Zone ${zone} · Trigger ${trigger} · seit ${since}`;
+             });
+          -  return `📋 **Setups (State Machine):**\n` + lines.join("\n");
+          +  return `📋 **Setups (append-only Events):**\n` + lines.join("\n");
+           }
+          diff --git a/src/core/zigzag.ts b/src/core/zigzag.ts
+          index 04ca805..26767fb 100644
+          --- a/src/core/zigzag.ts
+          +++ b/src/core/zigzag.ts
+          @@ -5,6 +5,9 @@ export interface Pivot {
+             date: string;
+             price: number;
+             kind: "H" | "L";
+          +  status: "CONFIRMED" | "PROVISIONAL" | "SYNTHETIC";
+          +  /** Bar, auf dem die Gegenbewegung den Pivot bestaetigt hat. */
+          +  confirmedAt: string | null;
+           }
+           
+           /**
+          @@ -12,7 +15,11 @@ export interface Pivot {
+            * reversalPct = minimale Gegenbewegung in Prozent, um einen Pivot zu bestaetigen.
+            * 25% auf Wochenbasis erfasst bei High-Beta-Titeln alle Makro-Beine.
+            */
+          -export function zigzag(candles: Candle[], reversalPct = 25): Pivot[] {
+          +export function zigzag(
+          +  candles: Candle[],
+          +  reversalPct = 25,
+          +  includeProvisional = false
+          +): Pivot[] {
+             if (candles.length < 3) return [];
+             const th = reversalPct / 100;
+             const pivots: Pivot[] = [];
+          @@ -28,7 +35,14 @@ export function zigzag(candles: Candle[], reversalPct = 25): Pivot[] {
+                   extPrice = c.high;
+                   extIdx = i;
+                 } else if ((extPrice - c.low) / extPrice >= th) {
+          -        pivots.push({ index: extIdx, date: candles[extIdx].date, price: extPrice, kind: "H" });
+          +        pivots.push({
+          +          index: extIdx,
+          +          date: candles[extIdx].date,
+          +          price: extPrice,
+          +          kind: "H",
+          +          status: "CONFIRMED",
+          +          confirmedAt: c.date,
+          +        });
+                   dir = -1;
+                   extPrice = c.low;
+                   extIdx = i;
+          @@ -38,19 +52,31 @@ export function zigzag(candles: Candle[], reversalPct = 25): Pivot[] {
+                   extPrice = c.low;
+                   extIdx = i;
+                 } else if ((c.high - extPrice) / extPrice >= th) {
+          -        pivots.push({ index: extIdx, date: candles[extIdx].date, price: extPrice, kind: "L" });
+          +        pivots.push({
+          +          index: extIdx,
+          +          date: candles[extIdx].date,
+          +          price: extPrice,
+          +          kind: "L",
+          +          status: "CONFIRMED",
+          +          confirmedAt: c.date,
+          +        });
+                   dir = 1;
+                   extPrice = c.high;
+                   extIdx = i;
+                 }
+               }
+             }
+          -  // letztes (noch unbestaetigtes) Extrem mit aufnehmen
+          -  pivots.push({
+          -    index: extIdx,
+          -    date: candles[extIdx].date,
+          -    price: extPrice,
+          -    kind: dir === 1 ? "H" : "L",
+          -  });
+          +  // Das laufende Extrem ist Repaint-Risiko und bleibt fuer Signalpfade
+          +  // standardmaessig draussen. Charts koennen es explizit anfordern.
+          +  if (includeProvisional) {
+          +    pivots.push({
+          +      index: extIdx,
+          +      date: candles[extIdx].date,
+          +      price: extPrice,
+          +      kind: dir === 1 ? "H" : "L",
+          +      status: "PROVISIONAL",
+          +      confirmedAt: null,
+          +    });
+          +  }
+             return pivots;
+           }
+          diff --git a/src/index.ts b/src/index.ts
+          index f1bed48..65e5817 100644
+          --- a/src/index.ts
+          +++ b/src/index.ts
+          @@ -24,7 +24,7 @@ const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
+           const COOLDOWN_MS = 7 * 24 * 3600 * 1000; // 7 Tage pro Symbol
+           
+           ensureScreenerUniverse();
+          -console.log("🚀 EW Quant Hunter V169: EW-Engine + intakte 1-2-Suche (/scan12) startet...");
+          +console.log("🚀 EW Quant Hunter V170: Point-in-Time Forecast Integrity startet...");
+           
+           function getActiveChatId(): number | null {
+             const row = db.prepare("SELECT value FROM config WHERE key = 'chat_id'").get() as
+          diff --git a/src/core/forecast.ts b/src/core/forecast.ts
+          new file mode 100644
+          index 0000000..c5ef8e6
+          --- /dev/null
+          +++ b/src/core/forecast.ts
+          @@ -0,0 +1,249 @@
+          +import type { Candle } from "./marketData";
+          +import { candleCloseTime, hashCandles } from "./marketData";
+          +import type { Pivot } from "./zigzag";
+          +import {
+          +  findImpulseAdaptive,
+          +  type AdaptiveImpulse,
+          +  type WaveCount,
+          +} from "./impulseFinder";
+          +import { checkProportion } from "./proportion";
+          +import {
+          +  clusterLevels,
+          +  longLevelCandidates,
+          +  shortLevelCandidates,
+          +  type FibCluster,
+          +  type LevelCandidate,
+          +} from "./fibCluster";
+          +import { classifyCorrection } from "./correction";
+          +import { addDaysIso, daysBetween } from "./time";
+          +
+          +export const ENGINE_VERSION = "170.0.0";
+          +export type Direction = "LONG" | "SHORT";
+          +
+          +export interface ForecastDetection {
+          +  direction: Direction;
+          +  cluster: FibCluster;
+          +  trigger: number;
+          +  cExtreme: number;
+          +  timeStatus: "IN_WINDOW" | "OUTSIDE_WINDOW" | "UNKNOWN";
+          +  timeWindow: { from: string; to: string } | null;
+          +  asOf: string;
+          +  dataHash: string;
+          +  interval: string;
+          +  range: string;
+          +  count: WaveCount;
+          +  threshold: number;
+          +  engineVersion: string;
+          +  provider: "yahoo-chart";
+          +  adjustment: "RAW_PROVIDER_OHLC";
+          +}
+          +
+          +export interface DetectOptions {
+          +  minClusterScore?: number;
+          +  interval?: string;
+          +  range?: string;
+          +  impulse?: AdaptiveImpulse;
+          +}
+          +
+          +interface Legs {
+          +  a: number | null;
+          +  aDate: string | null;
+          +  b: number | null;
+          +  bDate: string | null;
+          +  c: number | null;
+          +}
+          +
+          +function weeklyAtrPct(candles: Candle[], n = 14): number {
+          +  const s = candles.slice(-(n + 1));
+          +  let sum = 0;
+          +  let k = 0;
+          +  for (let i = 1; i < s.length; i++) {
+          +    const tr = Math.max(
+          +      s[i].high - s[i].low,
+          +      Math.abs(s[i].high - s[i - 1].close),
+          +      Math.abs(s[i].low - s[i - 1].close)
+          +    );
+          +    sum += tr / s[i].close;
+          +    k++;
+          +  }
+          +  return k > 0 ? (sum / k) * 100 : 4;
+          +}
+          +
+          +/** Exakt eine spiegelbare A-B-C-Leg-Extraktion fuer Live und Replay. */
+          +function correctionLegs(
+          +  pivots: Pivot[],
+          +  candles: Candle[],
+          +  topDate: string,
+          +  dir: 1 | -1
+          +): Legs {
+          +  const empty: Legs = { a: null, aDate: null, b: null, bDate: null, c: null };
+          +  const post = pivots.filter((p) => p.date > topDate);
+          +  const aKind = dir === 1 ? "L" : "H";
+          +  const bKind = dir === 1 ? "H" : "L";
+          +  const aPool = post.filter((p) => p.kind === aKind);
+          +  if (aPool.length === 0) return empty;
+          +
+          +  const a = aPool[0];
+          +  const b = post.find((p) => p.kind === bKind && p.date > a.date) ?? null;
+          +  if (!b) return { ...empty, a: a.price, aDate: a.date };
+          +
+          +  const cPivot = aPool.find((p) => p.date > b.date) ?? null;
+          +  let c = cPivot?.price ?? null;
+          +  let cDate = cPivot?.date ?? null;
+          +  if (c == null) {
+          +    for (const bar of candles.filter((x) => x.date > b.date)) {
+          +      const px = dir === 1 ? bar.low : bar.high;
+          +      if (c == null || dir * px < dir * c) {
+          +        c = px;
+          +        cDate = bar.date;
+          +      }
+          +    }
+          +  }
+          +
+          +  // Lange Korrekturen duerfen das erste C nur bei materieller Fortsetzung
+          +  // nachziehen; identisch zur Live-Konvention ab V142.
+          +  if (c != null && cDate != null) {
+          +    let running = c;
+          +    for (const bar of candles) {
+          +      const px = dir === 1 ? bar.low : bar.high;
+          +      if (bar.date > cDate && dir * px < dir * running) running = px;
+          +    }
+          +    const move = dir === 1
+          +      ? Math.log(c) - Math.log(running)
+          +      : Math.log(running) - Math.log(c);
+          +    if (move > 0.22) c = running;
+          +  }
+          +
+          +  return { a: a.price, aDate: a.date, b: b.price, bDate: b.date, c };
+          +}
+          +
+          +function timeWindow(
+          +  candles: Candle[],
+          +  topDate: string,
+          +  aDate: string | null,
+          +  bDate: string | null
+          +): { status: ForecastDetection["timeStatus"]; window: { from: string; to: string } | null } {
+          +  if (!aDate || !bDate) return { status: "UNKNOWN", window: null };
+          +  const durationA = daysBetween(topDate, aDate);
+          +  if (durationA <= 0) return { status: "UNKNOWN", window: null };
+          +  const from = addDaysIso(bDate, 0.618 * durationA);
+          +  const to = addDaysIso(bDate, 1.618 * durationA);
+          +  const last = candles[candles.length - 1].date;
+          +  return {
+          +    status: last >= from && last <= to ? "IN_WINDOW" : "OUTSIDE_WINDOW",
+          +    window: { from, to },
+          +  };
+          +}
+          +
+          +/**
+          + * Kanonischer, reiner Setup-Detektor. Er ist der einzige Signalpfad fuer
+          + * Live-Engine und Walk-Forward-Replay. Nur bestaetigte Pivots und geschlossene
+          + * Bars gelangen hinein; das C-Zeitfenster ist ein echtes Gate.
+          + */
+          +export function detectForecastSetup(
+          +  candles: Candle[],
+          +  options: DetectOptions = {}
+          +): ForecastDetection | null {
+          +  if (candles.length < 6) return null;
+          +  const minClusterScore = options.minClusterScore ?? 3;
+          +  const adaptive = options.impulse ?? findImpulseAdaptive(
+          +    candles,
+          +    (r) => checkProportion(candles, r.count).ok
+          +  ).impulse;
+          +  if (!adaptive) return null;
+          +
+          +  const wc = adaptive.result.count;
+          +  const point = (label: string) => wc.points.find((p) => p.label === label) ?? null;
+          +  const w0 = point("0");
+          +  const w4 = point("4");
+          +  const w5 = point("5");
+          +  if (!w0 || !w5) return null;
+          +
+          +  const dir: 1 | -1 = wc.trend === "bullish" ? 1 : -1;
+          +  const direction: Direction = dir === 1 ? "LONG" : "SHORT";
+          +  const price = candles[candles.length - 1].close;
+          +  if (dir === 1 ? price >= w5.price : price <= w5.price) return null;
+          +
+          +  const legs = correctionLegs(adaptive.pivots, candles, w5.date, dir);
+          +  if (legs.c == null) return null;
+          +
+          +  const candidates: LevelCandidate[] = dir === 1
+          +    ? longLevelCandidates({
+          +        w0: w0.price,
+          +        w5: w5.price,
+          +        w4: w4?.price ?? null,
+          +        aLow: legs.a,
+          +        bHigh: legs.b,
+          +      })
+          +    : shortLevelCandidates({
+          +        w0: w0.price,
+          +        w5: w5.price,
+          +        w4: w4?.price ?? null,
+          +        aHigh: legs.a,
+          +        bLow: legs.b,
+          +      });
+          +
+          +  if (legs.a != null && legs.b != null) {
+          +    const correction = classifyCorrection(
+          +      w5.price,
+          +      legs.a,
+          +      legs.b,
+          +      legs.c,
+          +      price,
+          +      adaptive.pivots.filter((p) => p.date > w5.date),
+          +      dir,
+          +      {
+          +        candles,
+          +        parentThreshold: adaptive.threshold,
+          +        topDate: w5.date,
+          +        aDate: legs.aDate,
+          +        bDate: legs.bDate,
+          +        impulseOrigin: w0.price,
+          +        impulseEnd: w5.price,
+          +      }
+          +    );
+          +    if (correction.targetPrice != null && correction.targetLabel != null) {
+          +      candidates.push({
+          +        price: correction.targetPrice,
+          +        label: correction.targetLabel,
+          +        family: "CORRECTION_PATTERN",
+          +      });
+          +      candidates.sort((a, b) => a.price - b.price);
+          +    }
+          +  }
+          +
+          +  const tw = timeWindow(candles, w5.date, legs.aDate, legs.bDate);
+          +  if (tw.status === "OUTSIDE_WINDOW") return null;
+          +
+          +  const tolerance = Math.max(3.5, Math.min(7, weeklyAtrPct(candles)));
+          +  const inRange = (cluster: FibCluster) =>
+          +    price >= cluster.floor * 0.97 && price <= cluster.ceiling * 1.03;
+          +  const cluster = clusterLevels(candidates, tolerance)
+          +    .find((x) => x.score >= minClusterScore && inRange(x));
+          +  if (!cluster) return null;
+          +
+          +  const trigger = candidates
+          +    .map((x) => x.price)
+          +    .filter((x) => dir === 1 ? x > price * 1.01 : x < price * 0.99)
+          +    .sort((a, b) => dir === 1 ? a - b : b - a)[0];
+          +  if (trigger == null) return null;
+          +
+          +  const last = candles[candles.length - 1];
+          +  return {
+          +    direction,
+          +    cluster,
+          +    trigger,
+          +    cExtreme: legs.c,
+          +    timeStatus: tw.status,
+          +    timeWindow: tw.window,
+          +    asOf: candleCloseTime(last),
+          +    dataHash: hashCandles(candles),
+          +    interval: options.interval ?? "1wk",
+          +    range: options.range ?? "5y",
+          +    count: wc,
+          +    threshold: adaptive.threshold,
+          +    engineVersion: ENGINE_VERSION,
+          +    provider: "yahoo-chart",
+          +    adjustment: "RAW_PROVIDER_OHLC",
+          +  };
+          +}
+          diff --git a/src/core/integrityRegression.ts b/src/core/integrityRegression.ts
+          new file mode 100644
+          index 0000000..ef5086a
+          --- /dev/null
+          +++ b/src/core/integrityRegression.ts
+          @@ -0,0 +1,106 @@
+          +import assert from "node:assert/strict";
+          +import type { Candle } from "./marketData";
+          +import { parseYahooCandles } from "./marketData";
+          +import { zigzag } from "./zigzag";
+          +import { clusterLevels } from "./fibCluster";
+          +import { evaluatePendingBar, evaluateTradeBar, type FrozenSetup, type FrozenTrade } from "./lifecycle";
+          +
+          +const t0 = 1_700_000_000;
+          +const yahoo = {
+          +  timestamp: [t0, t0 + 3600, t0 + 7200],
+          +  indicators: {
+          +    quote: [{
+          +      open: [100, 101, 102],
+          +      high: [102, 103, 104],
+          +      low: [99, 100, 101],
+          +      close: [101, 102, 103],
+          +      volume: [10, 11, 12],
+          +    }],
+          +  },
+          +  events: { splits: { a: { date: t0 } } },
+          +};
+          +
+          +// Intraday-Zeitpunkte bleiben erhalten; der noch offene dritte Bar faellt weg.
+          +const parsed = parseYahooCandles(yahoo, "1h", (t0 + 2.5 * 3600) * 1000);
+          +assert.equal(parsed.candles.length, 2);
+          +assert.match(parsed.candles[0].date, /T/);
+          +assert.equal(parsed.candles.every((x) => x.isClosed === true), true);
+          +assert.equal(parsed.corporateActionCount, 1);
+          +
+          +const bar = (i: number, high: number, low: number, close: number): Candle => {
+          +  const openedAt = new Date((t0 + i * 3600) * 1000).toISOString();
+          +  const closedAt = new Date((t0 + (i + 1) * 3600) * 1000).toISOString();
+          +  return { date: openedAt, openedAt, closedAt, isClosed: true, open: close, high, low, close };
+          +};
+          +const base = [
+          +  bar(0, 100, 99, 100),
+          +  bar(1, 111, 108, 110),
+          +  bar(2, 109, 99, 100),
+          +  bar(3, 103, 97, 98),
+          +  bar(4, 108, 99, 107),
+          +];
+          +const confirmedBefore = zigzag(base, 8);
+          +const withProvisional = zigzag(base, 8, true);
+          +const confirmedAfter = zigzag([...base, bar(5, 120, 106, 118)], 8);
+          +assert.deepEqual(confirmedAfter, confirmedBefore);
+          +assert.equal(withProvisional.at(-1)?.status, "PROVISIONAL");
+          +assert.equal(confirmedBefore.every((x) => x.status !== "PROVISIONAL"), true);
+          +
+          +// Zwei lineare/logarithmische Varianten derselben Idee sind eine Familie.
+          +const pseudo = clusterLevels([
+          +  { price: 100, label: "Retr 0.618", family: "IMPULSE_RETRACEMENT" },
+          +  { price: 101, label: "logRetr 0.618", family: "IMPULSE_RETRACEMENT" },
+          +]);
+          +assert.equal(pseudo[0].score, 1);
+          +assert.equal(pseudo[0].evidenceCount, 2);
+          +const independent = clusterLevels([
+          +  ...[
+          +    { price: 100, label: "Retr 0.618", family: "IMPULSE_RETRACEMENT" as const },
+          +    { price: 101, label: "logRetr 0.618", family: "IMPULSE_RETRACEMENT" as const },
+          +  ],
+          +  { price: 100.5, label: "W4-Zone", family: "PRIOR_WAVE" },
+          +]);
+          +assert.equal(independent[0].score, 2);
+          +
+          +const setup: FrozenSetup = {
+          +  direction: "LONG",
+          +  trigger: 105,
+          +  invalidation: 95,
+          +  cExtreme: 98,
+          +  createdAt: "2026-01-01T00:00:00.000Z",
+          +  asOf: "2026-01-08T00:00:00.000Z",
+          +};
+          +const decisionBar = (closedAt: string, close: number, high = close, low = close): Candle => ({
+          +  date: new Date(Date.parse(closedAt) - 86_400_000).toISOString(),
+          +  closedAt,
+          +  open: close,
+          +  high,
+          +  low,
+          +  close,
+          +  isClosed: true,
+          +});
+          +assert.equal(evaluatePendingBar(setup, decisionBar(setup.asOf, 110)).type, "WAIT");
+          +assert.equal(
+          +  evaluatePendingBar(setup, decisionBar("2026-01-15T00:00:00.000Z", 106)).type,
+          +  "CONFIRMED"
+          +);
+          +
+          +const trade: FrozenTrade = {
+          +  direction: "LONG",
+          +  entry: 100,
+          +  invalidation: 90,
+          +  target: 120,
+          +  entryAt: "2026-01-01T00:00:00.000Z",
+          +};
+          +// Same-Bar-Kollision: Stop zuerst.
+          +assert.equal(
+          +  evaluateTradeBar(trade, decisionBar("2026-01-02T00:00:00.000Z", 110, 121, 89)).type,
+          +  "INVALIDATED"
+          +);
+          +// Positiver Zeitablauf ist TIMEOUT, kein kuenstlicher Treffer.
+          +assert.equal(
+          +  evaluateTradeBar(trade, decisionBar("2026-02-01T00:00:00.000Z", 110, 111, 99)).type,
+          +  "TIMEOUT"
+          +);
+          +
+          +console.log("✅ V170 Point-in-Time-Regressionspruefung bestanden");
+          diff --git a/src/core/lifecycle.ts b/src/core/lifecycle.ts
+          new file mode 100644
+          index 0000000..b3339b3
+          --- /dev/null
+          +++ b/src/core/lifecycle.ts
+          @@ -0,0 +1,106 @@
+          +import type { Candle } from "./marketData";
+          +import { candleCloseTime } from "./marketData";
+          +import { daysBetween, timeMs } from "./time";
+          +import type { Direction } from "./forecast";
+          +
+          +export const PENDING_TIMEOUT_DAYS = 84;
+          +export const TRADE_TIMEOUT_DAYS = 30;
+          +
+          +export interface FrozenSetup {
+          +  direction: Direction;
+          +  trigger: number;
+          +  invalidation: number;
+          +  cExtreme: number;
+          +  createdAt: string;
+          +  asOf: string;
+          +  lastEvaluatedBar?: string | null;
+          +}
+          +
+          +export type PendingDecision =
+          +  | { type: "WAIT"; effectiveAt: string; reason: "STALE_BAR" | "PENDING" }
+          +  | { type: "INVALIDATED"; effectiveAt: string }
+          +  | { type: "TIMEOUT"; effectiveAt: string }
+          +  | {
+          +      type: "CONFIRMED" | "DEGENERATE";
+          +      effectiveAt: string;
+          +      entry: number;
+          +      target: number;
+          +      potentialR: number;
+          +    };
+          +
+          +/** Eine einzige Zustandsregel fuer produktive Aufloesung und Replay. */
+          +export function evaluatePendingBar(setup: FrozenSetup, bar: Candle): PendingDecision {
+          +  const effectiveAt = candleCloseTime(bar);
+          +  const lowerBound = setup.lastEvaluatedBar && timeMs(setup.lastEvaluatedBar) > timeMs(setup.asOf)
+          +    ? setup.lastEvaluatedBar
+          +    : setup.asOf;
+          +  if (timeMs(effectiveAt) <= timeMs(lowerBound)) {
+          +    return { type: "WAIT", effectiveAt, reason: "STALE_BAR" };
+          +  }
+          +
+          +  const s2 = setup.direction === "LONG" ? 1 : -1;
+          +  const invalidated = s2 * (bar.close - setup.invalidation) < 0;
+          +  if (invalidated) return { type: "INVALIDATED", effectiveAt };
+          +
+          +  const triggered = s2 * (bar.close - setup.trigger) > 0;
+          +  if (triggered) {
+          +    const entry = bar.close;
+          +    const target = setup.trigger + s2 * 1.618 * Math.abs(setup.trigger - setup.cExtreme);
+          +    const risk = Math.abs(entry - setup.invalidation);
+          +    const potentialR = risk > 0 ? (s2 * (target - entry)) / risk : -1;
+          +    return {
+          +      type: potentialR >= 0.25 ? "CONFIRMED" : "DEGENERATE",
+          +      effectiveAt,
+          +      entry,
+          +      target,
+          +      potentialR,
+          +    };
+          +  }
+          +
+          +  if (daysBetween(setup.createdAt, effectiveAt) >= PENDING_TIMEOUT_DAYS) {
+          +    return { type: "TIMEOUT", effectiveAt };
+          +  }
+          +  return { type: "WAIT", effectiveAt, reason: "PENDING" };
+          +}
+          +
+          +export interface FrozenTrade {
+          +  direction: Direction;
+          +  entry: number;
+          +  invalidation: number;
+          +  target: number;
+          +  entryAt: string;
+          +}
+          +
+          +export type TradeDecision =
+          +  | { type: "WAIT"; effectiveAt: string }
+          +  | {
+          +      type: "TARGET" | "INVALIDATED" | "TIMEOUT";
+          +      effectiveAt: string;
+          +      exit: number;
+          +      pnl: number;
+          +      r: number;
+          +    };
+          +
+          +/** Stop wird bei einer Same-Bar-Kollision konservativ vor dem Ziel geprueft. */
+          +export function evaluateTradeBar(trade: FrozenTrade, bar: Candle): TradeDecision {
+          +  const effectiveAt = candleCloseTime(bar);
+          +  if (timeMs(effectiveAt) <= timeMs(trade.entryAt)) return { type: "WAIT", effectiveAt };
+          +  const s2 = trade.direction === "LONG" ? 1 : -1;
+          +  const risk = Math.abs(trade.entry - trade.invalidation);
+          +  const result = (type: "TARGET" | "INVALIDATED" | "TIMEOUT", exit: number): TradeDecision => ({
+          +    type,
+          +    effectiveAt,
+          +    exit,
+          +    pnl: (s2 * (exit - trade.entry)) / trade.entry,
+          +    r: risk > 0 ? (s2 * (exit - trade.entry)) / risk : 0,
+          +  });
+          +
+          +  const stopHit = s2 === 1 ? bar.low <= trade.invalidation : bar.high >= trade.invalidation;
+          +  if (stopHit) return result("INVALIDATED", trade.invalidation);
+          +  const targetHit = s2 === 1 ? bar.high >= trade.target : bar.low <= trade.target;
+          +  if (targetHit) return result("TARGET", trade.target);
+          +  if (daysBetween(trade.entryAt, effectiveAt) >= TRADE_TIMEOUT_DAYS) {
+          +    return result("TIMEOUT", bar.close);
+          +  }
+          +  return { type: "WAIT", effectiveAt };
+          +}
+          diff --git a/src/core/time.ts b/src/core/time.ts
+          new file mode 100644
+          index 0000000..3c8dc72
+          --- /dev/null
+          +++ b/src/core/time.ts
+          @@ -0,0 +1,25 @@
+          +const DAY_MS = 86_400_000;
+          +
+          +/** Akzeptiert kanonische ISO-Zeitpunkte und alte SQLite-/YYYY-MM-DD-Werte. */
+          +export function timeMs(value: string): number {
+          +  const normalized = value.includes("T")
+          +    ? value
+          +    : value.includes(" ")
+          +      ? value.replace(" ", "T") + (/[zZ]|[+-]\d\d:\d\d$/.test(value) ? "" : "Z")
+          +      : `${value}T00:00:00.000Z`;
+          +  const ms = Date.parse(normalized);
+          +  if (!Number.isFinite(ms)) throw new Error(`Ungueltiger Zeitpunkt: ${value}`);
+          +  return ms;
+          +}
+          +
+          +export function addDaysIso(value: string, days: number): string {
+          +  return new Date(timeMs(value) + Math.round(days) * DAY_MS).toISOString();
+          +}
+          +
+          +export function daysBetween(a: string, b: string): number {
+          +  return (timeMs(b) - timeMs(a)) / DAY_MS;
+          +}
+          +
+          +export function isoDate(value: string): string {
+          +  return new Date(timeMs(value)).toISOString().slice(0, 10);
+          +}
+          
+          V170_PATCH
+
+          if git apply --check "$patch_file"; then
+            git apply "$patch_file"
+          elif git apply --reverse --check "$patch_file"; then
+            echo "V170 ist bereits angewendet."
+          else
+            echo "::error::V170-Patch passt nicht auf den aktuellen Stand. Erwartete Basis: V169."
+            exit 1
+          fi
+
+      - name: "🟢 Node 22"
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: "🧪 Build und Regressions-Gates"
+        run: |
+          npm ci
+          npm run build
+          npm run verify:integrity
+          npm run verify:scan12
+          git diff --check
+
+      - name: "🔍 Integritäts-Invarianten prüfen"
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const market = fs.readFileSync("src/core/marketData.ts", "utf8");
+          const zigzag = fs.readFileSync("src/core/zigzag.ts", "utf8");
+          const setups = fs.readFileSync("src/core/setups.ts", "utf8");
+          const backtest = fs.readFileSync("src/backtest.ts", "utf8");
+
+          const checks = [
+            [!market.includes('.toISOString().split("T")[0]'), "keine Zeitstempel-Kürzung in marketData"],
+            [zigzag.includes("includeProvisional = false"), "provisorische Pivots sind opt-in"],
+            [setups.includes("signal_snapshots") && setups.includes("setup_events"), "immutable Snapshots + Events"],
+            [backtest.includes("detectForecastSetup") && backtest.includes("evaluateTradeBar"), "gemeinsamer Live-/Replay-Pfad"],
+          ];
+          for (const [ok, label] of checks) {
+            if (!ok) {
+              console.error(`Integritäts-Gate fehlgeschlagen: ${label}`);
+              process.exit(1);
+            }
+          }
+          NODE
+
+      - name: "📤 Commit und Branch pushen"
+        id: publish
+        env:
+          BRANCH: fix/v170-point-in-time-integrity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add             package.json package-lock.json             src/index.ts src/backtest.ts             src/core/marketData.ts src/core/time.ts src/core/zigzag.ts             src/core/impulseFinder.ts src/core/fibCluster.ts src/core/forecast.ts             src/core/lifecycle.ts src/core/db.ts src/core/setups.ts             src/core/outcome.ts src/core/engine.ts src/core/feedback.ts             src/core/completion.ts src/core/correction.ts src/core/confluence.ts             src/core/higherFrame.ts src/core/multiWave.ts             src/core/integrityRegression.ts
+
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git commit -m "V170: enforce point-in-time forecast integrity"
+          git push --force-with-lease --set-upstream origin "$BRANCH"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: "🔀 Pull Request erstellen oder aktualisieren"
+        if: steps.publish.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          BRANCH: fix/v170-point-in-time-integrity
+        run: |
+          existing="$(gh pr list --base "$BASE_BRANCH" --head "$BRANCH" --state open --json url --jq '.[0].url')"
+          if [ -n "$existing" ]; then
+            echo "PR aktualisiert: $existing"
+          else
+            gh pr create               --base "$BASE_BRANCH"               --head "$BRANCH"               --title "V170: Point-in-Time Forecast Integrity"               --body "$(cat <<'BODY'
+          ## Ziel
+
+          V170 beseitigt die wichtigsten Quellen von Look-ahead, Repaint und nicht reproduzierbaren Erfolgsquoten. Die Änderung optimiert keine Elliott-Parameter; sie stellt zuerst sicher, dass Live- und Replay-Ergebnisse denselben Informationsstand verwenden.
+
+          ## Änderungen
+
+          - volle UTC-Zeitstempel, explizite Bar-Schlusszeiten und Ausschluss offener Bars
+          - Daten-Hash, Provider- und Adjustierungsstatus je Signal-Snapshot
+          - bestätigte und provisorische ZigZag-Pivots getrennt; Signalpfade nutzen nur bestätigte Pivots
+          - Cluster-Score zählt unabhängige Herleitungsfamilien statt korrelierter Ratio-Duplikate
+          - unveränderliche signal_snapshots plus append-only setup_events
+          - PENDING-Level werden nicht mehr überschrieben und ältere Bars können neue Setups nicht bestätigen
+          - identische reine Setup-/Lifecycle-Funktionen in Live und Walk-Forward-Replay
+          - Weekly-Trigger, Daily-Ziel/Stop und einheitliche Horizonte (84d/30d)
+          - Timeouts sind kein künstliches binäres Gewinn-/Verlust-Label
+          - Feedback-Statistik berücksichtigt nur tatsächlich aufgelöste binäre Outcomes
+          - Breakout-Signale werden über einen stabilen Signal-Key dedupliziert
+
+          ## Pflicht-Gates
+
+          - npm run build
+          - npm run verify:integrity
+          - npm run verify:scan12
+          - statische Point-in-Time-Invarianten
+          - git diff --check
+
+          ## Erwartete Wirkung
+
+          Historische Trefferquoten können zunächst sinken. Das ist beabsichtigt: V170 entfernt optimistische Informationslecks und schafft erst damit eine belastbare Basis für spätere Kalibrierung, Holdouts und probabilistische Prognosen.
+          BODY
+          )"
+          fi
+
+      - name: "📝 Zusammenfassung"
+        run: |
+          {
+            echo "### ✅ V170 Point-in-Time Forecast Integrity"
+            echo "- Nur abgeschlossene Bars und bestätigte Pivots im Signalpfad."
+            echo "- Immutable Signal-Snapshots und append-only Zustandsereignisse."
+            echo "- Unabhängige Konfluenzfamilien statt Pseudo-Score."
+            echo "- Live und Replay teilen Detektor, Pending- und Trade-Lifecycle."
+            echo "- Build, V170-Regression und Scan12-Regression sind Pflicht-Gates."
+          } >> "$GITHUB_STEP_SUMMARY"
+
