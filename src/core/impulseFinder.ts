@@ -1,4 +1,5 @@
-import { zigzag, Pivot } from "./zigzag";
+import { zigzag } from "./zigzag";
+import type { Pivot } from "./zigzag";
 import { preferContinuous } from "./continuity";
 import type { Candle } from "./marketData";
 
@@ -206,9 +207,15 @@ function augmentEdgeExtremes(pivots: Pivot[], candles: Candle[]): Pivot[] {
   // Nur EIN Rand-Extrem synthetisieren - das, das die Alternation zum
   // ersten echten Pivot wahrt und ein echtes Fenster-Extrem ist.
   if (firstKind === "L" && winHi > maxPivH) {
-    out.unshift({ index: hiIdx, date: head[hiIdx].date, price: winHi, kind: "H" });
+    out.unshift({
+      index: hiIdx, date: head[hiIdx].date, price: winHi, kind: "H",
+      status: "SYNTHETIC", confirmedAt: pivots[0].confirmedAt ?? pivots[0].date,
+    });
   } else if (firstKind === "H" && winLo < minPivL) {
-    out.unshift({ index: loIdx, date: head[loIdx].date, price: winLo, kind: "L" });
+    out.unshift({
+      index: loIdx, date: head[loIdx].date, price: winLo, kind: "L",
+      status: "SYNTHETIC", confirmedAt: pivots[0].confirmedAt ?? pivots[0].date,
+    });
   }
   return out;
 }

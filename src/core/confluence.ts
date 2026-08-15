@@ -2,6 +2,7 @@ import type { Candle } from "./marketData";
 import { fetchMarketData } from "./marketData";
 import { findImpulseAdaptive } from "./impulseFinder";
 import { assessCompletion } from "./completion";
+import { checkProportion } from "./proportion";
 
 export type ConfluenceVerdict = "BESTÄTIGT" | "NEUTRAL" | "FRÜHWARNUNG";
 
@@ -49,7 +50,7 @@ export async function assessConfluence(
     return { verdict: "NEUTRAL", note: "Sub-Ebene (Tag): zu wenige Kerzen für belastbare Konfluenz." };
   }
 
-  const oDeep = findImpulseAdaptive(cDeep);
+  const oDeep = findImpulseAdaptive(cDeep, (r) => checkProportion(cDeep, r.count).ok);
   if (!oDeep.impulse) {
     return {
       verdict: "NEUTRAL",

@@ -39,7 +39,8 @@ function bandTally(lo: number, hi: number): Tally | null {
   return tally(
     `SELECT COUNT(*) AS n, SUM(CASE WHEN is_success = 1 THEN 1 ELSE 0 END) AS w
      FROM trade_history
-     WHERE confidence IS NOT NULL AND confidence >= ? AND confidence < ?`,
+     WHERE is_success IS NOT NULL
+       AND confidence IS NOT NULL AND confidence >= ? AND confidence < ?`,
     lo, hi
   );
 }
@@ -47,7 +48,7 @@ function bandTally(lo: number, hi: number): Tally | null {
 function flagTally(flag: string): Tally | null {
   return tally(
     `SELECT COUNT(*) AS n, SUM(CASE WHEN is_success = 1 THEN 1 ELSE 0 END) AS w
-     FROM trade_history WHERE flags LIKE ?`,
+     FROM trade_history WHERE is_success IS NOT NULL AND flags LIKE ?`,
     `%${flag}%`
   );
 }

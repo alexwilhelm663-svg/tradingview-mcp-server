@@ -1,6 +1,8 @@
 import type { Candle } from "./marketData";
 import { zigzag } from "./zigzag";
-import { WaveCount, findPartialImpulse, subThresholds } from "./impulseFinder";
+import { findPartialImpulse, subThresholds } from "./impulseFinder";
+import type { WaveCount } from "./impulseFinder";
+import { addDaysIso, daysBetween } from "./time";
 
 export interface CompletionRead {
   status: "COMPLETE" | "IN_PROGRESS";
@@ -12,13 +14,7 @@ export interface CompletionRead {
   timeWindows: { start: string; end: string; label: string }[]; // V120b: Fib-Zeit-Projektion
 }
 
-const addDays = (iso: string, d: number): string => {
-  const x = new Date(iso + "T00:00:00Z");
-  x.setUTCDate(x.getUTCDate() + Math.round(d));
-  return x.toISOString().split("T")[0];
-};
-const daysBetween = (a: string, b: string): number =>
-  (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
+const addDays = addDaysIso;
 
 /**
  * Vollendungs-Nachweis (V118, DK-9):

@@ -1,5 +1,6 @@
 import type { Candle } from "./marketData";
-import { Pivot, zigzag } from "./zigzag";
+import { zigzag } from "./zigzag";
+import type { Pivot } from "./zigzag";
 import { segmentVerdict } from "./impulseFinder";
 
 export interface MultiWaveRead {

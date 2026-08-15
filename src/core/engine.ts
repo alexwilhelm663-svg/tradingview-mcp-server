@@ -1,11 +1,12 @@
 import fs from "fs";
 import path from "path";
+import { createHash } from "node:crypto";
 import db from "./db";
-import { fetchMarketData, Candle, isThinHistory } from "./marketData";
+import { fetchMarketData, Candle, isThinHistory, candleCloseTime, hashCandles } from "./marketData";
 import { renderChart } from "./chart";
 import type { Pivot } from "./zigzag";
 import { longLevelCandidates, shortLevelCandidates, clusterLevels } from "./fibCluster";
-import { upsertPendingSetup, SetupMeta } from "./setups";
+import { upsertPendingSetup } from "./setups";
 import { findImpulseAdaptive, WaveCount, WavePoint } from "./impulseFinder";
 import { getCritique, Critique } from "./commentary";
 import { classifyCorrection, CorrectionRead } from "./correction";
@@ -22,6 +23,8 @@ import { assessHigherFrame } from "./higherFrame";
 import { findBestImpulse, subThresholds } from "./impulseFinder";
 import { zigzag } from "./zigzag";
 import { assessQuality } from "./quality";
+import { addDaysIso, daysBetween } from "./time";
+import { detectForecastSetup, ENGINE_VERSION } from "./forecast";
 
 export interface AnalysisResult {
   buffer: Buffer | null;
@@ -227,13 +230,8 @@ function correctionLegsShort(
   return { aHigh: aPivot.price, aDate: aPivot.date, bLow: bPivot.price, bDate: bPivot.date, cHigh, cDate };
 }
 
-const addDaysE = (iso: string, d: number): string => {
-  const x = new Date(iso + "T00:00:00Z");
-  x.setUTCDate(x.getUTCDate() + Math.round(d));
-  return x.toISOString().split("T")[0];
-};
-const daysBetweenE = (a: string, b: string): number =>
-  (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
+const addDaysE = addDaysIso;
+const daysBetweenE = daysBetween;
 
 export async function analyzeAsset(symbol: string, range: string = "5y", interval: string = "1wk", verbose: boolean = false): Promise<AnalysisResult> {
   try {
@@ -389,7 +387,17 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       console.log(`[FEEDBACK] ${symbol}: ${fb.note}`);
       wc.analysis += ` \u00b7 ${fb.note}`;
     }
-    const minClusterScore = 3 + fb.penalty;
+    if (cautious) wc.analysis += " · LLM-Vorsichtshinweis (informativ, kein Signal-Gate)";
+    // Reproduzierbarkeit vor Modellmeinung: Live und Replay verwenden exakt
+    // drei unabhaengige Familien. LLM/Feedback bleiben diagnostisch, bis ihre
+    // historische Ausgabe versioniert und im Replay verfuegbar ist.
+    const minClusterScore = 3;
+    const canonicalSetup = detectForecastSetup(candles, {
+      minClusterScore,
+      interval,
+      range,
+      impulse: outcome.impulse,
+    });
 
     const w0 = pt(wc, "0");
     const w1 = pt(wc, "1");
@@ -433,7 +441,11 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
             impulseOrigin: w0?.price ?? null, impulseEnd: w5.price }
         );
         if (correction.targetPrice != null && correction.targetLabel != null) {
-          cands.push({ price: correction.targetPrice, label: correction.targetLabel });
+          cands.push({
+            price: correction.targetPrice,
+            label: correction.targetLabel,
+            family: "CORRECTION_PATTERN",
+          });
           cands.sort((a, b) => a.price - b.price);
         }
       }
@@ -477,34 +489,45 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       const inRange = (cl: { floor: number; ceiling: number }): boolean =>
         currentPrice >= cl.floor * 0.97 && currentPrice <= cl.ceiling * 1.03;
       const baselineZone = clusters.find((cl) => cl.score >= 2 && inRange(cl));
-      const inZone = clusters.find((cl) => cl.score >= minClusterScore && inRange(cl));
+      const canonicalLong = canonicalSetup?.direction === "LONG" ? canonicalSetup : null;
+      const inZone = canonicalLong?.cluster;
 
-      if (inZone && legs.cLow != null) {
+      if (inZone && canonicalLong) {
         chartMarkers.push({ price: inZone.floor * 0.97, label: "Invalidierung" });
-        const res = upsertPendingSetup(symbol, inZone, overhead, legs.cLow, {
+        const res = upsertPendingSetup(symbol, inZone, canonicalLong.trigger, canonicalLong.cExtreme, {
           llmConfidence: critique?.confidence ?? null,
           llmFlags: critique?.flags ?? [],
           detFlags: quality.flags,
+          snapshot: {
+            asOf: canonicalLong.asOf,
+            dataHash: canonicalLong.dataHash,
+            provider: canonicalLong.provider,
+            adjustment: canonicalLong.adjustment,
+            engineVersion: canonicalLong.engineVersion,
+            interval: canonicalLong.interval,
+            range: canonicalLong.range,
+            count: canonicalLong.count,
+          },
         });
         pendingCreated = res === "created";
         clusterInfo =
           `🟡 **PENDING**: Kurs im Fib-Cluster ${inZone.floor.toFixed(2)}–${inZone.ceiling.toFixed(2)} ` +
           `(Score ${inZone.score}: ${inZone.labels.join(", ")}).\n` +
-          `Trigger: Wochenschluss > ${overhead != null ? overhead.toFixed(2) : "n/a"} · ` +
+          `Trigger: Wochenschluss > ${canonicalLong.trigger.toFixed(2)} · ` +
           `Invalidierung: Wochenschluss < ${(inZone.floor * 0.97).toFixed(2)}` +
           (cWinFrom != null
             ? ` · ⏱️ ${inTimeWindow ? "im" : "außerhalb des"} C-Zeitfensters (${cWinFrom} – ${cWinTo})`
             : "") +
           (correction ? `\n${correction.text}` : "");
         {
-          const tPrev = overhead != null ? overhead + 1.618 * (overhead - legs.cLow) : null;
+          const tPrev = canonicalLong.trigger + 1.618 * (canonicalLong.trigger - canonicalLong.cExtreme);
           scenPrimary =
-            `Boden-These: Wochenschluss > ${overhead != null ? overhead.toFixed(2) : "Trigger"} bestätigt das Long-Setup` +
-            (tPrev != null ? ` – Ziel ~${tPrev.toFixed(2)} (1.618·i)` : "") + ".";
+            `Boden-These: Wochenschluss > ${canonicalLong.trigger.toFixed(2)} bestätigt das Long-Setup` +
+            ` – Ziel ~${tPrev.toFixed(2)} (1.618·i).`;
           scenAlt =
             `Wochenschluss < ${(inZone.floor * 0.97).toFixed(2)} invalidiert – Korrektur läuft tiefer` +
             (correction && correction.targetPrice != null ? ` Richtung ${correction.targetPrice.toFixed(2)}` : "") + ".";
-          keyLine = `Zone ${inZone.floor.toFixed(2)}–${inZone.ceiling.toFixed(2)} · Trigger ${overhead != null ? overhead.toFixed(2) : "–"} · Invalidierung ${(inZone.floor * 0.97).toFixed(2)}`;
+          keyLine = `Zone ${inZone.floor.toFixed(2)}–${inZone.ceiling.toFixed(2)} · Trigger ${canonicalLong.trigger.toFixed(2)} · Invalidierung ${(inZone.floor * 0.97).toFixed(2)}`;
         }
       } else {
         const below = clusters
@@ -514,7 +537,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
         const gateNote =
           baselineZone && !inZone
             ? `🟡 WATCH: Score-2-Zone ${baselineZone.floor.toFixed(2)}–${baselineZone.ceiling.toFixed(2)} berührt – ` +
-              `kein Setup (Gate: Score ≥ 3, V121-Messung: 10.7% vs 2.4% Expectancy).\n`
+              `kein Setup (Gate: ${minClusterScore} unabhaengige Familien + Point-in-Time-Zeitfenster).\n`
             : "";
         clusterInfo = gateNote + (below
           ? `⚪ Kein aktives Setup. Nächster Long-Cluster darunter: ${below.floor.toFixed(2)}–${below.ceiling.toFixed(2)} ` +
@@ -574,7 +597,11 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
             impulseOrigin: w0?.price ?? null, impulseEnd: w5.price }
         );
         if (correctionS.targetPrice != null && correctionS.targetLabel != null) {
-          cands.push({ price: correctionS.targetPrice, label: correctionS.targetLabel });
+          cands.push({
+            price: correctionS.targetPrice,
+            label: correctionS.targetLabel,
+            family: "CORRECTION_PATTERN",
+          });
           cands.sort((a, b) => a.price - b.price);
         }
       }
@@ -611,34 +638,45 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       const inRangeS = (cl: { floor: number; ceiling: number }): boolean =>
         currentPrice >= cl.floor * 0.97 && currentPrice <= cl.ceiling * 1.03;
       const baselineZoneS = clusters.find((cl) => cl.score >= 2 && inRangeS(cl));
-      const inZoneS = clusters.find((cl) => cl.score >= minClusterScore && inRangeS(cl));
+      const canonicalShort = canonicalSetup?.direction === "SHORT" ? canonicalSetup : null;
+      const inZoneS = canonicalShort?.cluster;
 
-      if (inZoneS && legsS.cHigh != null) {
+      if (inZoneS && canonicalShort) {
         chartMarkers.push({ price: inZoneS.ceiling * 1.03, label: "Invalidierung" });
-        const res = upsertPendingSetup(symbol, inZoneS, underfoot, legsS.cHigh, {
+        const res = upsertPendingSetup(symbol, inZoneS, canonicalShort.trigger, canonicalShort.cExtreme, {
           llmConfidence: critique?.confidence ?? null,
           llmFlags: critique?.flags ?? [],
           detFlags: quality.flags,
+          snapshot: {
+            asOf: canonicalShort.asOf,
+            dataHash: canonicalShort.dataHash,
+            provider: canonicalShort.provider,
+            adjustment: canonicalShort.adjustment,
+            engineVersion: canonicalShort.engineVersion,
+            interval: canonicalShort.interval,
+            range: canonicalShort.range,
+            count: canonicalShort.count,
+          },
         }, "SHORT");
         pendingCreated = res === "created";
         clusterInfo =
           `🔴 **PENDING (SHORT)**: Kurs im Widerstands-Cluster ${inZoneS.floor.toFixed(2)}–${inZoneS.ceiling.toFixed(2)} ` +
           `(Score ${inZoneS.score}: ${inZoneS.labels.join(", ")}).\n` +
-          `Trigger: Wochenschluss < ${underfoot != null ? underfoot.toFixed(2) : "n/a"} · ` +
+          `Trigger: Wochenschluss < ${canonicalShort.trigger.toFixed(2)} · ` +
           `Invalidierung: Wochenschluss > ${(inZoneS.ceiling * 1.03).toFixed(2)}` +
           (cWinFromS != null
             ? ` · ⏱️ ${inTimeWindowS ? "im" : "außerhalb des"} C-Zeitfensters (${cWinFromS} – ${cWinToS})`
             : "") +
           (correctionS ? `\n${correctionS.text}` : "");
         {
-          const tPrev = underfoot != null ? underfoot - 1.618 * (legsS.cHigh - underfoot) : null;
+          const tPrev = canonicalShort.trigger - 1.618 * (canonicalShort.cExtreme - canonicalShort.trigger);
           scenPrimary =
-            `Abwärts-Fortsetzung: Wochenschluss < ${underfoot != null ? underfoot.toFixed(2) : "Trigger"} bestätigt das Short-Setup` +
-            (tPrev != null ? ` – Ziel ~${tPrev.toFixed(2)} (1.618·i)` : "") + ".";
+            `Abwärts-Fortsetzung: Wochenschluss < ${canonicalShort.trigger.toFixed(2)} bestätigt das Short-Setup` +
+            ` – Ziel ~${tPrev.toFixed(2)} (1.618·i).`;
           scenAlt =
             `Wochenschluss > ${(inZoneS.ceiling * 1.03).toFixed(2)} invalidiert – Boden ${w5.price.toFixed(2)} hält, Erholung` +
             (correctionS && correctionS.targetPrice != null ? ` Richtung ${correctionS.targetPrice.toFixed(2)}` : "") + " läuft weiter.";
-          keyLine = `Zone ${inZoneS.floor.toFixed(2)}–${inZoneS.ceiling.toFixed(2)} · Trigger ${underfoot != null ? underfoot.toFixed(2) : "–"} · Invalidierung ${(inZoneS.ceiling * 1.03).toFixed(2)}`;
+          keyLine = `Zone ${inZoneS.floor.toFixed(2)}–${inZoneS.ceiling.toFixed(2)} · Trigger ${canonicalShort.trigger.toFixed(2)} · Invalidierung ${(inZoneS.ceiling * 1.03).toFixed(2)}`;
         }
       } else {
         const above = clusters
@@ -648,7 +686,7 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
         const gateNoteS =
           baselineZoneS && !inZoneS
             ? `🟡 WATCH: Score-2-Zone ${baselineZoneS.floor.toFixed(2)}–${baselineZoneS.ceiling.toFixed(2)} berührt – ` +
-              `kein Setup (Gate: Score ≥ 3, V121-Messung).\n`
+              `kein Setup (Gate: ${minClusterScore} unabhaengige Familien + Point-in-Time-Zeitfenster).\n`
             : "";
         clusterInfo = gateNoteS + (above
           ? `⚪ Kein aktives Setup. Nächster Short-Cluster darüber: ${above.floor.toFixed(2)}–${above.ceiling.toFixed(2)} ` +
@@ -690,12 +728,22 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
       breakoutStatus = `🚀 AUSBRUCH ueber Welle-1-Niveau (${w1.price.toFixed(2)})!`;
       if (w0 && w2) {
         const target = w2.price + 1.618 * (w1.price - w0.price);
+        const entryAt = candleCloseTime(candles[candles.length - 1]);
+        const dataHash = hashCandles(candles);
+        const signalId = createHash("sha256")
+          .update([symbol, "BREAKOUT", entryAt, dataHash, ENGINE_VERSION].join("|"))
+          .digest("hex")
+          .slice(0, 32);
         db.prepare(
-          "INSERT INTO trade_history (symbol, signal_type, entry_price, invalidation, target, confidence, flags) VALUES (?, 'BREAKOUT', ?, ?, ?, ?, ?)"
+          `INSERT OR IGNORE INTO trade_history
+           (signal_id, symbol, signal_type, entry_price, invalidation, target,
+            confidence, flags, direction, entry_at, data_hash, engine_version)
+           VALUES (?, ?, 'BREAKOUT', ?, ?, ?, ?, ?, 'LONG', ?, ?, ?)`
         ).run(
-          symbol, currentPrice, w2.price, target,
+          signalId, symbol, currentPrice, w2.price, target,
           critique?.confidence ?? null,
-          JSON.stringify([...quality.flags, ...(critique?.flags ?? [])])
+          JSON.stringify([...quality.flags, ...(critique?.flags ?? [])]),
+          entryAt, dataHash, ENGINE_VERSION
         );
       }
     }

@@ -1,11 +1,15 @@
 import db from "./db";
-import { fetchMarketData, MarketData } from "./marketData";
+import { fetchMarketData, type MarketData, candleCloseTime } from "./marketData";
+import { evaluateTradeBar, TRADE_TIMEOUT_DAYS, type FrozenTrade } from "./lifecycle";
+import type { Direction } from "./forecast";
+import { timeMs } from "./time";
 
 export type OutcomeFetcher = (
   symbol: string,
   interval?: string,
   range?: string,
-  minCandles?: number
+  minCandles?: number,
+  asOfMs?: number
 ) => Promise<MarketData>;
 
 interface OpenTrade {
@@ -15,79 +19,71 @@ interface OpenTrade {
   invalidation: number | null;
   target: number | null;
   timestamp: string;
+  entry_at: string | null;
   direction: string | null;
 }
 
-const TIMEOUT_DAYS = 30;
-
 /**
- * Prueft alle offenen Signale gegen die eingefrorenen Level:
- *   Invalidierung beruehrt -> INVALIDATED (is_success = 0)
- *   Target beruehrt        -> CONFIRMED   (is_success = 1)
- *   >30 Tage offen         -> TIMEOUT     (nach PnL bewertet)
- * Chronologische Pruefung Kerze fuer Kerze; bei Beruehrung beider Level
- * in derselben Kerze zaehlt konservativ die Invalidierung.
+ * Wertet nur Bars aus, die nach dem tatsaechlichen Entry-Bar-Schluss liegen.
+ * TARGET/INVALIDATED sind binaere Labels; TIMEOUT bleibt bewusst unklassiert
+ * und kann die Trefferquote nicht mehr als impliziter Misserfolg verfaelschen.
  */
 export async function resolveOpenTrades(fetcher: OutcomeFetcher = fetchMarketData): Promise<void> {
-  const open = db
-    .prepare(
-      "SELECT id, symbol, entry_price, invalidation, target, timestamp, direction FROM trade_history WHERE is_success IS NULL"
-    )
-    .all() as OpenTrade[];
+  const open = db.prepare(
+    `SELECT id, symbol, entry_price, invalidation, target, timestamp, entry_at, direction
+     FROM trade_history
+     WHERE resolution IS NULL AND is_success IS NULL`
+  ).all() as OpenTrade[];
   if (open.length === 0) return;
 
   const closeStmt = db.prepare(
-    "UPDATE trade_history SET outcome = ?, is_success = ? WHERE id = ?"
+    `UPDATE trade_history
+     SET outcome=?, is_success=?, resolution=?, resolved_at=?
+     WHERE id=? AND resolution IS NULL`
   );
   console.log(`[OUTCOME] Pruefe ${open.length} offene Signale...`);
 
-  for (const t of open) {
+  for (const row of open) {
+    if (row.invalidation == null || row.target == null) continue;
     try {
-      const { weeklyAnalysisCandles: candles } = await fetcher(t.symbol, "1d", "3mo");
-      const entryDate = t.timestamp.split(" ")[0];
-      const relevant = candles.filter((c) => c.date >= entryDate);
+      const market = await fetcher(row.symbol, "1d", "6mo", 20);
+      const entryAt = row.entry_at ?? String(row.timestamp);
+      const direction: Direction = row.direction === "SHORT" ? "SHORT" : "LONG";
+      const trade: FrozenTrade = {
+        direction,
+        entry: Number(row.entry_price),
+        invalidation: Number(row.invalidation),
+        target: Number(row.target),
+        entryAt,
+      };
+      const relevant = market.weeklyAnalysisCandles.filter(
+        (bar) => timeMs(candleCloseTime(bar)) > timeMs(entryAt)
+      );
 
-      // Richtungsbewusst (V117): LONG prueft Low/Inval & High/Target,
-      // SHORT gespiegelt; PnL ueber Richtungsfaktor s2.
-      const s2 = t.direction === "SHORT" ? -1 : 1;
-      let resolved = false;
-      for (const c of relevant) {
-        const invalHit =
-          t.invalidation != null &&
-          (s2 === 1 ? c.low <= t.invalidation : c.high >= t.invalidation);
-        if (invalHit) {
-          const pnl = (s2 * (t.invalidation! - t.entry_price)) / t.entry_price;
-          closeStmt.run(pnl, 0, t.id);
-          console.log(`[OUTCOME] ${t.symbol} #${t.id}: INVALIDIERT am ${c.date} (${(pnl * 100).toFixed(1)}%)`);
-          resolved = true;
-          break;
-        }
-        const targetHit =
-          t.target != null && (s2 === 1 ? c.high >= t.target : c.low <= t.target);
-        if (targetHit) {
-          const pnl = (s2 * (t.target! - t.entry_price)) / t.entry_price;
-          closeStmt.run(pnl, 1, t.id);
-          console.log(`[OUTCOME] ${t.symbol} #${t.id}: TARGET erreicht am ${c.date} (+${(pnl * 100).toFixed(1)}%)`);
-          resolved = true;
-          break;
-        }
+      for (const bar of relevant) {
+        const decision = evaluateTradeBar(trade, bar);
+        if (decision.type === "WAIT") continue;
+        const success = decision.type === "TARGET" ? 1
+          : decision.type === "INVALIDATED" ? 0
+          : null;
+        closeStmt.run(
+          decision.pnl,
+          success,
+          decision.type,
+          decision.effectiveAt,
+          row.id
+        );
+        console.log(
+          `[OUTCOME] ${row.symbol} #${row.id}: ${decision.type} am ` +
+          `${decision.effectiveAt.slice(0, 10)} (${(decision.pnl * 100).toFixed(1)}%, ${decision.r.toFixed(2)}R)`
+        );
+        break;
       }
 
-      if (!resolved) {
-        const ts = new Date(t.timestamp.replace(" ", "T") + "Z").getTime();
-        const ageDays = (Date.now() - ts) / 86_400_000;
-        if (ageDays >= TIMEOUT_DAYS && relevant.length > 0) {
-          const last = relevant[relevant.length - 1].close;
-          const pnl = (s2 * (last - t.entry_price)) / t.entry_price;
-          closeStmt.run(pnl, pnl > 0 ? 1 : 0, t.id);
-          console.log(`[OUTCOME] ${t.symbol} #${t.id}: TIMEOUT nach ${TIMEOUT_DAYS}d (${(pnl * 100).toFixed(1)}%)`);
-        }
-      }
-
-      // Yahoo-Drosselung
-      await new Promise((r) => setTimeout(r, 150));
+      await new Promise((resolve) => setTimeout(resolve, 150));
     } catch (err: any) {
-      console.error(`[OUTCOME] Fehler bei ${t.symbol} #${t.id}:`, err?.message ?? err);
+      console.error(`[OUTCOME] Fehler bei ${row.symbol} #${row.id}:`, err?.message ?? err);
     }
   }
+  console.log(`[OUTCOME] Einheitlicher Timeout: ${TRADE_TIMEOUT_DAYS} Kalendertage.`);
 }

@@ -2,6 +2,7 @@ import { fetchMarketData } from "./marketData";
 import { findImpulseAdaptive } from "./impulseFinder";
 import { assessMultiWave } from "./multiWave";
 import { assessCompletion } from "./completion";
+import { checkProportion } from "./proportion";
 
 export interface HigherFrameRead {
   available: boolean;
@@ -46,7 +47,7 @@ export async function assessHigherFrame(
     }
     if (!candles || candles.length < 30) continue;
 
-    const outcome = findImpulseAdaptive(candles);
+    const outcome = findImpulseAdaptive(candles, (r) => checkProportion(candles, r.count).ok);
     if (!outcome.impulse) continue; // auch übergeordnet keine Zählung -> nächste Ebene
 
     const wc = outcome.impulse.result.count;
