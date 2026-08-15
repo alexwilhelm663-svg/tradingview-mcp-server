@@ -1,57 +1,153 @@
+import { createHash } from "node:crypto";
 import db from "./db";
-import { fetchMarketData, MarketData } from "./marketData";
+import { fetchMarketData, type MarketData, candleCloseTime } from "./marketData";
 import type { FibCluster } from "./fibCluster";
+import type { WaveCount } from "./impulseFinder";
+import { ENGINE_VERSION, type Direction } from "./forecast";
+import { evaluatePendingBar, PENDING_TIMEOUT_DAYS, type FrozenSetup } from "./lifecycle";
+import { daysBetween } from "./time";
 
 export type Fetcher = (
   symbol: string,
   interval?: string,
   range?: string,
-  minCandles?: number
+  minCandles?: number,
+  asOfMs?: number
 ) => Promise<MarketData>;
 
 export interface SetupEvent {
   symbol: string;
-  type: "CONFIRMED" | "INVALIDATED" | "TIMEOUT";
+  type: "CONFIRMED" | "INVALIDATED" | "TIMEOUT" | "DEGENERATE";
   text: string;
 }
 
-const PENDING_TIMEOUT_DAYS = 84; // 12 Wochen ohne Bestaetigung -> verwerfen
-const INVALIDATION_BUFFER = 0.97; // 3% unter Cluster-Boden
+const INVALIDATION_BUFFER = 0.97;
 
-/**
- * Legt ein PENDING-Setup an oder aktualisiert dessen Level.
- * Ein Symbol hat maximal ein aktives Setup; abgeschlossene Setups
- * (CONFIRMED/INVALIDATED/TIMEOUT) werden bei erneutem Cluster-Kontakt ersetzt.
- */
+export interface SnapshotMeta {
+  asOf: string;
+  dataHash: string;
+  provider: "yahoo-chart";
+  adjustment: "RAW_PROVIDER_OHLC";
+  engineVersion: string;
+  interval: string;
+  range: string;
+  count: WaveCount;
+}
+
 export interface SetupMeta {
   llmConfidence: number | null;
   llmFlags: string[];
   detFlags: string[];
+  snapshot?: SnapshotMeta;
 }
 
+function snapshotId(
+  symbol: string,
+  direction: Direction,
+  snapshot: SnapshotMeta
+): string {
+  return createHash("sha256")
+    .update([symbol, direction, snapshot.asOf, snapshot.dataHash, snapshot.engineVersion].join("|"))
+    .digest("hex")
+    .slice(0, 32);
+}
+
+function appendEvent(
+  id: string,
+  symbol: string,
+  type: string,
+  effectiveAt: string,
+  payload: unknown
+): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO setup_events
+     (snapshot_id, symbol, event_type, effective_at, payload)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(id, symbol, type, effectiveAt, JSON.stringify(payload));
+}
+
+/**
+ * Erstellt einen unveraenderlichen Signal-Snapshot. Ein laufendes PENDING
+ * wird niemals aufgefrischt; neue Scans duerfen weder Trigger noch Zone oder
+ * Invalidierung rueckwirkend veraendern.
+ */
 export function upsertPendingSetup(
   symbol: string,
   cluster: FibCluster,
   triggerLevel: number | null,
-  cExtreme: number, // LONG: Korrektur-Tief | SHORT: Korrektur-Hoch (Spalte c_low, historischer Name)
+  cExtreme: number,
   meta: SetupMeta = { llmConfidence: null, llmFlags: [], detFlags: [] },
-  direction: "LONG" | "SHORT" = "LONG"
-): "created" | "refreshed" {
-  const invalidation =
-    direction === "LONG"
-      ? cluster.floor * INVALIDATION_BUFFER
-      : cluster.ceiling * (2 - INVALIDATION_BUFFER);
-  const row = db.prepare("SELECT status FROM setups WHERE symbol = ?").get(symbol) as
-    | { status: string }
-    | undefined;
+  direction: Direction = "LONG"
+): "created" | "unchanged" {
+  if (triggerLevel == null || !Number.isFinite(triggerLevel)) return "unchanged";
+  const invalidation = direction === "LONG"
+    ? cluster.floor * INVALIDATION_BUFFER
+    : cluster.ceiling * (2 - INVALIDATION_BUFFER);
+  const active = db.prepare(
+    "SELECT snapshot_id FROM setups WHERE symbol = ? AND status = 'PENDING'"
+  ).get(symbol) as { snapshot_id: string | null } | undefined;
+  if (active) return "unchanged";
 
-  if (row && row.status === "PENDING") {
+  const fallbackAsOf = new Date().toISOString();
+  const snapshot: SnapshotMeta = meta.snapshot ?? {
+    asOf: fallbackAsOf,
+    dataHash: "legacy-no-data-hash",
+    provider: "yahoo-chart",
+    adjustment: "RAW_PROVIDER_OHLC",
+    engineVersion: ENGINE_VERSION,
+    interval: "unknown",
+    range: "unknown",
+    count: { trend: direction === "LONG" ? "bullish" : "bearish", points: [], analysis: "legacy" },
+  };
+  const id = snapshotId(symbol, direction, snapshot);
+  const exists = db.prepare("SELECT 1 FROM signal_snapshots WHERE id = ?").get(id);
+  if (exists) return "unchanged";
+
+  const create = db.transaction(() => {
     db.prepare(
-      `UPDATE setups SET cluster_floor=?, cluster_ceiling=?, cluster_score=?,
-       trigger_level=?, invalidation=?, c_low=?, levels=?,
-       llm_confidence=?, llm_flags=?, det_flags=?, direction=?, updated_at=CURRENT_TIMESTAMP
-       WHERE symbol=?`
+      `INSERT INTO signal_snapshots
+       (id, symbol, direction, as_of, data_hash, data_provider, adjustment,
+        engine_version, interval, range_name,
+        count_json, cluster_floor, cluster_ceiling, cluster_score,
+        cluster_evidence_count, cluster_families, levels, trigger_level,
+        invalidation, c_extreme, llm_confidence, llm_flags, det_flags)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
+      id,
+      symbol,
+      direction,
+      snapshot.asOf,
+      snapshot.dataHash,
+      snapshot.provider,
+      snapshot.adjustment,
+      snapshot.engineVersion,
+      snapshot.interval,
+      snapshot.range,
+      JSON.stringify(snapshot.count),
+      cluster.floor,
+      cluster.ceiling,
+      cluster.score,
+      cluster.evidenceCount,
+      JSON.stringify(cluster.families),
+      JSON.stringify(cluster.labels),
+      triggerLevel,
+      invalidation,
+      cExtreme,
+      meta.llmConfidence,
+      JSON.stringify(meta.llmFlags),
+      JSON.stringify(meta.detFlags)
+    );
+
+    db.prepare(
+      `INSERT OR REPLACE INTO setups
+       (symbol, status, cluster_floor, cluster_ceiling, cluster_score, trigger_level,
+        invalidation, c_low, levels, llm_confidence, llm_flags, det_flags, direction,
+        snapshot_id, as_of, data_hash, engine_version, count_json, interval_name,
+        range_name, last_evaluated_bar, created_at, updated_at)
+       VALUES (?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
+               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+    ).run(
+      symbol,
       cluster.floor,
       cluster.ceiling,
       cluster.score,
@@ -63,120 +159,162 @@ export function upsertPendingSetup(
       JSON.stringify(meta.llmFlags),
       JSON.stringify(meta.detFlags),
       direction,
-      symbol
+      id,
+      snapshot.asOf,
+      snapshot.dataHash,
+      snapshot.engineVersion,
+      JSON.stringify(snapshot.count),
+      snapshot.interval,
+      snapshot.range
     );
-    return "refreshed";
-  }
-
-  db.prepare(
-    `INSERT OR REPLACE INTO setups
-     (symbol, status, cluster_floor, cluster_ceiling, cluster_score, trigger_level,
-      invalidation, c_low, levels, llm_confidence, llm_flags, det_flags, direction, created_at, updated_at)
-     VALUES (?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
-  ).run(
-    symbol,
-    cluster.floor,
-    cluster.ceiling,
-    cluster.score,
-    triggerLevel,
-    invalidation,
-    cExtreme,
-    JSON.stringify(cluster.labels),
-    meta.llmConfidence,
-    JSON.stringify(meta.llmFlags),
-    JSON.stringify(meta.detFlags),
-    direction
-  );
+    appendEvent(id, symbol, "CREATED", snapshot.asOf, {
+      direction,
+      triggerLevel,
+      invalidation,
+      cExtreme,
+      cluster,
+    });
+  });
+  create();
   return "created";
 }
 
-/**
- * Prueft alle PENDING-Setups gegen die letzte ABGESCHLOSSENE Wochenkerze:
- *   Schluss > Trigger        -> CONFIRMED (Trade mit eingefrorenen Leveln)
- *   Schluss < Invalidierung  -> INVALIDATED
- *   aelter als 84 Tage       -> TIMEOUT
- * Target bei Bestaetigung: Trigger + 1.618 * (Trigger - C-Tief),
- * analog zur Screener-Konvention "Ziel = 1.618 x Subwelle i".
- */
+function parseFlags(value: unknown): string[] {
+  try {
+    const parsed = JSON.parse(String(value ?? "[]"));
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Wertet jede seit dem Snapshot neu geschlossene Wochenkerze chronologisch aus. */
 export async function resolvePendingSetups(fetcher: Fetcher = fetchMarketData): Promise<SetupEvent[]> {
   const rows = db.prepare("SELECT * FROM setups WHERE status = 'PENDING'").all() as any[];
   const events: SetupEvent[] = [];
 
   for (const s of rows) {
     try {
-      const { weeklyAnalysisCandles: wk } = await fetcher(s.symbol, "1wk", "1y", 10);
-      if (wk.length < 2) continue;
-      const lastComplete = wk[wk.length - 2];
-      const created = new Date(String(s.created_at).replace(" ", "T") + "Z").getTime();
-      const ageDays = (Date.now() - created) / 86_400_000;
+      const market = await fetcher(s.symbol, "1wk", "2y", 10);
+      const id = String(s.snapshot_id ?? `legacy-${s.symbol}-${s.created_at}`);
+      const direction: Direction = s.direction === "SHORT" ? "SHORT" : "LONG";
+      const asOf = String(s.as_of ?? s.created_at);
+      const frozen: FrozenSetup = {
+        direction,
+        trigger: Number(s.trigger_level),
+        invalidation: Number(s.invalidation),
+        cExtreme: Number(s.c_low),
+        createdAt: String(s.created_at),
+        asOf,
+        lastEvaluatedBar: s.last_evaluated_bar == null ? null : String(s.last_evaluated_bar),
+      };
 
-      const dir: "LONG" | "SHORT" = s.direction === "SHORT" ? "SHORT" : "LONG";
-      const s2 = dir === "LONG" ? 1 : -1;
-      const triggered =
-        s.trigger_level != null &&
-        (dir === "LONG" ? lastComplete.close > s.trigger_level : lastComplete.close < s.trigger_level);
-      const invalidatedNow =
-        dir === "LONG" ? lastComplete.close < s.invalidation : lastComplete.close > s.invalidation;
+      const bars = market.weeklyAnalysisCandles.filter((bar) => {
+        const close = candleCloseTime(bar);
+        const lower = frozen.lastEvaluatedBar ?? frozen.asOf;
+        return Date.parse(close) > Date.parse(lower);
+      });
+      let terminal = false;
 
-      if (triggered) {
-        const target = s.trigger_level + s2 * 1.618 * Math.abs(s.trigger_level - s.c_low);
-        // V121 Ziel-Guard: Restpotenzial am Entry muss >= 0.25R sein -
-        // sonst degeneriertes Setup (Backtest-Befund: Ziele koennen bei
-        // weit laufender Bestaetigungskerze bereits hinter dem Entry liegen).
-        const entryPx = lastComplete.close;
-        const riskPx = Math.abs(entryPx - Number(s.invalidation));
-        const potentialR = riskPx > 0 ? (s2 * (target - entryPx)) / riskPx : -1;
-        if (potentialR < 0.25) {
-          db.prepare(
-            "UPDATE setups SET status='CONFIRMED', updated_at=CURRENT_TIMESTAMP WHERE symbol=?"
-          ).run(s.symbol);
-          events.push({
-            symbol: s.symbol,
-            type: "CONFIRMED",
-            text:
-              `⚠️ **${s.symbol} CONFIRMED (${dir}) ohne Trade**: Wochenschluss ${entryPx.toFixed(2)} ${dir === "LONG" ? "über" : "unter"} Trigger ${Number(s.trigger_level).toFixed(2)}, ` +
-              `aber Restpotenzial zum Ziel ${target.toFixed(2)} nur ${potentialR.toFixed(2)}R (< 0.25R) – degeneriertes Setup, kein Trade-Log (Ziel-Guard, V121).`,
-          });
+      for (const bar of bars) {
+        const decision = evaluatePendingBar(frozen, bar);
+        if (decision.type === "WAIT") {
+          if (decision.reason === "PENDING") {
+            db.prepare(
+              "UPDATE setups SET last_evaluated_bar=?, updated_at=CURRENT_TIMESTAMP WHERE symbol=? AND status='PENDING'"
+            ).run(decision.effectiveAt, s.symbol);
+            frozen.lastEvaluatedBar = decision.effectiveAt;
+          }
           continue;
         }
-        const allFlags = [
-          ...JSON.parse(s.det_flags ?? "[]"),
-          ...JSON.parse(s.llm_flags ?? "[]"),
-        ];
-        db.prepare(
-          "INSERT INTO trade_history (symbol, signal_type, entry_price, invalidation, target, confidence, flags, direction) VALUES (?, 'CLUSTER', ?, ?, ?, ?, ?, ?)"
-        ).run(s.symbol, lastComplete.close, s.invalidation, target, s.llm_confidence, JSON.stringify(allFlags), dir);
-        db.prepare(
-          "UPDATE setups SET status='CONFIRMED', updated_at=CURRENT_TIMESTAMP WHERE symbol=?"
-        ).run(s.symbol);
+
+        if (decision.type === "CONFIRMED" || decision.type === "DEGENERATE") {
+          const status = decision.type === "CONFIRMED" ? "CONFIRMED" : "CONFIRMED_NO_TRADE";
+          const transition = db.transaction(() => {
+            if (decision.type === "CONFIRMED") {
+              const allFlags = [...parseFlags(s.det_flags), ...parseFlags(s.llm_flags)];
+              db.prepare(
+                `INSERT OR IGNORE INTO trade_history
+                 (signal_id, snapshot_id, symbol, signal_type, entry_price, invalidation,
+                  target, confidence, flags, direction, entry_at, data_hash, engine_version)
+                 VALUES (?, ?, ?, 'CLUSTER', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              ).run(
+                id,
+                id,
+                s.symbol,
+                decision.entry,
+                s.invalidation,
+                decision.target,
+                s.llm_confidence,
+                JSON.stringify(allFlags),
+                direction,
+                decision.effectiveAt,
+                s.data_hash,
+                s.engine_version ?? ENGINE_VERSION
+              );
+            }
+            db.prepare(
+              `UPDATE setups SET status=?, last_evaluated_bar=?, updated_at=CURRENT_TIMESTAMP
+               WHERE symbol=? AND status='PENDING'`
+            ).run(status, decision.effectiveAt, s.symbol);
+            appendEvent(id, s.symbol, decision.type, decision.effectiveAt, decision);
+          });
+          transition();
+
+          events.push({
+            symbol: s.symbol,
+            type: decision.type,
+            text: decision.type === "CONFIRMED"
+              ? `${direction === "LONG" ? "🚀" : "🔻"} **${s.symbol} CONFIRMED (${direction})**: ` +
+                `Wochenschluss ${decision.entry.toFixed(2)} · Entry ${decision.effectiveAt.slice(0, 10)} · ` +
+                `Invalidierung ${Number(s.invalidation).toFixed(2)} · Ziel ${decision.target.toFixed(2)}`
+              : `⚠️ **${s.symbol} CONFIRMED (${direction}) ohne Trade**: Restpotenzial ` +
+                `${decision.potentialR.toFixed(2)}R (< 0.25R).`,
+          });
+          terminal = true;
+          break;
+        }
+
+        const status = decision.type;
+        const transition = db.transaction(() => {
+          db.prepare(
+            `UPDATE setups SET status=?, last_evaluated_bar=?, updated_at=CURRENT_TIMESTAMP
+             WHERE symbol=? AND status='PENDING'`
+          ).run(status, decision.effectiveAt, s.symbol);
+          appendEvent(id, s.symbol, status, decision.effectiveAt, decision);
+        });
+        transition();
         events.push({
           symbol: s.symbol,
-          type: "CONFIRMED",
-          text:
-            `${dir === "LONG" ? "🚀" : "🔻"} **${s.symbol} CONFIRMED (${dir})**: Wochenschluss ${lastComplete.close.toFixed(2)} ${dir === "LONG" ? "über" : "unter"} Trigger ${Number(s.trigger_level).toFixed(2)}.\n` +
-            `Entry ~${lastComplete.close.toFixed(2)} · Invalidierung ${Number(s.invalidation).toFixed(2)} · Ziel (1.618·i) ${target.toFixed(2)}`,
+          type: status,
+          text: status === "INVALIDATED"
+            ? `❌ **${s.symbol} INVALIDATED**: erster neuer Wochenschluss ` +
+              `${decision.effectiveAt.slice(0, 10)} jenseits ${Number(s.invalidation).toFixed(2)}.`
+            : `⌛ **${s.symbol} TIMEOUT**: ${PENDING_TIMEOUT_DAYS} Tage ohne Bestaetigung.`,
         });
-      } else if (invalidatedNow) {
-        db.prepare(
-          "UPDATE setups SET status='INVALIDATED', updated_at=CURRENT_TIMESTAMP WHERE symbol=?"
-        ).run(s.symbol);
-        events.push({
-          symbol: s.symbol,
-          type: "INVALIDATED",
-          text: `❌ **${s.symbol} INVALIDATED**: Wochenschluss ${lastComplete.close.toFixed(2)} ${dir === "SHORT" ? "über Cluster-Decke" : "unter Cluster-Boden"} (${Number(s.invalidation).toFixed(2)}).`,
+        terminal = true;
+        break;
+      }
+
+      // Ein Setup kann auch ohne neue Wochenkerze ablaufen. Diese Transition
+      // nutzt den aktuellen UTC-Zeitpunkt und veraendert keine Preislevel.
+      if (!terminal && daysBetween(String(s.created_at), new Date().toISOString()) >= PENDING_TIMEOUT_DAYS) {
+        const effectiveAt = new Date().toISOString();
+        const transition = db.transaction(() => {
+          db.prepare(
+            "UPDATE setups SET status='TIMEOUT', updated_at=CURRENT_TIMESTAMP WHERE symbol=? AND status='PENDING'"
+          ).run(s.symbol);
+          appendEvent(id, s.symbol, "TIMEOUT", effectiveAt, { reason: "wall-clock" });
         });
-      } else if (ageDays >= PENDING_TIMEOUT_DAYS) {
-        db.prepare(
-          "UPDATE setups SET status='TIMEOUT', updated_at=CURRENT_TIMESTAMP WHERE symbol=?"
-        ).run(s.symbol);
+        transition();
         events.push({
           symbol: s.symbol,
           type: "TIMEOUT",
-          text: `⌛ **${s.symbol} TIMEOUT**: ${PENDING_TIMEOUT_DAYS} Tage ohne Bestätigung – Setup verworfen.`,
+          text: `⌛ **${s.symbol} TIMEOUT**: ${PENDING_TIMEOUT_DAYS} Tage ohne Bestaetigung.`,
         });
       }
 
-      await new Promise((r) => setTimeout(r, 150));
+      await new Promise((resolve) => setTimeout(resolve, 150));
     } catch (err: any) {
       console.error(`[SETUPS] Fehler bei ${s.symbol}:`, err?.message ?? err);
     }
@@ -184,24 +322,22 @@ export async function resolvePendingSetups(fetcher: Fetcher = fetchMarketData): 
   return events;
 }
 
-/** Kompakte Uebersicht fuer den /setups-Command. */
 export function listSetups(): string {
-  const rows = db
-    .prepare("SELECT * FROM setups ORDER BY updated_at DESC LIMIT 15")
-    .all() as any[];
+  const rows = db.prepare("SELECT * FROM setups ORDER BY updated_at DESC LIMIT 15").all() as any[];
   if (rows.length === 0) return "📭 Keine Setups erfasst.";
   const icon: Record<string, string> = {
     PENDING: "🟡",
     CONFIRMED: "🚀",
+    CONFIRMED_NO_TRADE: "⚠️",
     INVALIDATED: "❌",
     TIMEOUT: "⌛",
   };
   const lines = rows.map((s) => {
-    const dirIcon = s.direction === "SHORT" ? "⬇️" : "⬆️";
-    const zone = `${dirIcon} ${Number(s.cluster_floor).toFixed(2)}–${Number(s.cluster_ceiling).toFixed(2)}`;
-    const trig = s.trigger_level != null ? Number(s.trigger_level).toFixed(2) : "n/a";
+    const direction = s.direction === "SHORT" ? "⬇️" : "⬆️";
+    const zone = `${direction} ${Number(s.cluster_floor).toFixed(2)}–${Number(s.cluster_ceiling).toFixed(2)}`;
+    const trigger = s.trigger_level != null ? Number(s.trigger_level).toFixed(2) : "n/a";
     const since = String(s.created_at).split(" ")[0];
-    return `${icon[s.status] ?? "•"} **${s.symbol}** · ${s.status} · Zone ${zone} · Trigger ${trig} · seit ${since}`;
+    return `${icon[s.status] ?? "•"} **${s.symbol}** · ${s.status} · Zone ${zone} · Trigger ${trigger} · seit ${since}`;
   });
-  return `📋 **Setups (State Machine):**\n` + lines.join("\n");
+  return `📋 **Setups (append-only Events):**\n` + lines.join("\n");
 }

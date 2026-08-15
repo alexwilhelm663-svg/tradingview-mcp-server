@@ -1,7 +1,9 @@
 import type { Candle } from "./marketData";
-import { Pivot } from "./zigzag";
-import { segmentVerdict, SubVerdict } from "./impulseFinder";
+import type { Pivot } from "./zigzag";
+import { segmentVerdict } from "./impulseFinder";
+import type { SubVerdict } from "./impulseFinder";
 import { assessMultiWave } from "./multiWave";
+import { daysBetween } from "./time";
 
 export type CorrectionPattern =
   | "ZIGZAG"
@@ -51,8 +53,7 @@ export interface CorrectionContext {
  * Struktur-Beweis (segmentVerdict auf dem A-Bein: 5er -> Zigzag-Familie,
  * 3er/unklar -> Flat-Familie). Extension-ZIELE logarithmisch (DK-2).
  */
-const daysBetweenC = (a: string, b: string): number =>
-  (new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000;
+const daysBetweenC = daysBetween;
 
 export function classifyCorrection(
   w5Price: number,
