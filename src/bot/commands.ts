@@ -48,7 +48,7 @@ export function registerCommands(
         "• `/scan` – manueller Radar-Durchlauf\n" +
         "• `/screener` – Unterstützungs-Status aller Titel (täglich 08:00)\n" +
         "• `/setup <SYMBOL> [30m|1h]` – 1-2-Struktur als eigener Chart\n" +
-        "• `/deep <SYMBOL>` – Analyse-Tafel mit Zielzonen und Projektion\n" +
+        "• `/deep <SYMBOL>` – Decision Board mit Makrostruktur, Setup-Zoom und Frozen Levels\n" +
         "• `/scan12 [1h|30m|1d]` – 1-2-Strukturen über alle Titel\n\n" +
         "✅ Chat-ID für automatische Alerts gespeichert.",
       { parse_mode: "Markdown" }
@@ -83,7 +83,7 @@ export function registerCommands(
     }
   });
 
-  // V165: Analyse-Tafel - alles in einem Bild, wenig Text darunter.
+  // V171: kanonisches Decision Board - keine zweite Forecast-Logik.
   bot.command("deep", async (ctx) => {
     const parts = (ctx.message as any)?.text?.trim().split(/\s+/) ?? [];
     const symbol = (parts[1] || "").toUpperCase();
@@ -91,11 +91,16 @@ export function registerCommands(
     const rng = (parts[2] || "5y").toLowerCase();
     const iv = (parts[3] || "1wk").toLowerCase();
     try {
-      await ctx.reply(`📐 Analyse-Tafel ${symbol}…`);
+      await ctx.reply(`📐 Decision Board ${symbol}…`);
       const { buildDeepChart } = await import("../core/deepChart");
       const res = await buildDeepChart(symbol, rng, iv);
       if (res.buffer) {
-        await ctx.replyWithPhoto({ source: res.buffer }, { caption: res.caption, parse_mode: "Markdown" });
+        const safe = symbol.replace(/[^A-Z0-9._-]/g, "_");
+        // V171: als Dokument bleibt die 155-DPI-Tafel auf Telegram unveraendert.
+        await ctx.replyWithDocument(
+          { source: res.buffer, filename: `${safe}-${iv}-${rng}-deep-v171.png` },
+          { caption: res.caption, parse_mode: "Markdown" }
+        );
       } else {
         await ctx.reply(res.caption, { parse_mode: "Markdown" });
       }
