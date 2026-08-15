@@ -1,0 +1,2087 @@
+name: "📐 Apply V171 (Deep Decision Board)"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: apply-v171-deep-decision-board
+  cancel-in-progress: false
+
+jobs:
+  v171:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "🌿 Fix-Branch erstellen"
+        env:
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git fetch origin "$BASE_BRANCH"
+          git checkout -B fix/v171-deep-decision-board "origin/$BASE_BRANCH"
+
+      - name: "🧭 Erwartete Basis prüfen"
+        shell: bash
+        run: |
+          node <<'NODE'
+          const pkg = require("./package.json");
+          if (!["170.0.0", "171.0.0"].includes(pkg.version)) {
+            console.error(`V171 erwartet V170 als Basis; gefunden: ${pkg.version}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: "🩹 V171-Patch anwenden"
+        shell: bash
+        run: |
+          patch_file="$(mktemp)"
+          trap 'rm -f "$patch_file"' EXIT
+          cat > "$patch_file" <<'V171_PATCH'
+          diff --git a/package-lock.json b/package-lock.json
+          index c2afc55..2eababa 100644
+          --- a/package-lock.json
+          +++ b/package-lock.json
+          @@ -1,12 +1,12 @@
+           {
+             "name": "ew-quant-hunter",
+          -  "version": "170.0.0",
+          +  "version": "171.0.0",
+             "lockfileVersion": 3,
+             "requires": true,
+             "packages": {
+               "": {
+                 "name": "ew-quant-hunter",
+          -      "version": "170.0.0",
+          +      "version": "171.0.0",
+                 "dependencies": {
+                   "better-sqlite3": "^11.0.0",
+                   "dotenv": "^16.4.5",
+          diff --git a/package.json b/package.json
+          index 2858fc4..5b22b14 100644
+          --- a/package.json
+          +++ b/package.json
+          @@ -1,6 +1,6 @@
+           {
+             "name": "ew-quant-hunter",
+          -  "version": "170.0.0",
+          +  "version": "171.0.0",
+             "description": "Elliott Wave Trading Bot (konsolidierter Composition Root)",
+             "main": "dist/index.js",
+             "scripts": {
+          @@ -11,7 +11,8 @@
+               "report": "node dist/report.js",
+               "snapshot": "node dist/snapshot.js",
+               "verify:scan12": "node dist/core/scan12Regression.js",
+          -    "verify:integrity": "node dist/core/integrityRegression.js"
+          +    "verify:integrity": "node dist/core/integrityRegression.js",
+          +    "verify:deep": "node dist/core/deepChartRegression.js"
+             },
+             "dependencies": {
+               "better-sqlite3": "^11.0.0",
+          diff --git a/python_service/deep_drawer.py b/python_service/deep_drawer.py
+          index e5a82bb..3d06185 100644
+          --- a/python_service/deep_drawer.py
+          +++ b/python_service/deep_drawer.py
+          @@ -1,214 +1,387 @@
+           #!/usr/bin/env python3
+          -"""V165: Analyse-Tafel. Chart links, Seitenleiste rechts, Projektion.
+          +"""V171: `/deep` Decision Board mit Makrostruktur und Setup-Zoom.
+           
+          -Bewusst ein EIGENER Drawer: drawer.py laeuft bei jeder Analyse und bleibt
+          -schlank. Diese Tafel wird nur auf /deep erzeugt.
+          +Der Drawer visualisiert ausschliesslich vom TypeScript-Core gelieferte Levels.
+          +Er erzeugt weder Kursziele noch Wahrscheinlichkeiten oder eine Zeitprojektion.
+           """
+          -import sys, json
+          +import json
+          +import sys
+          +
+           import matplotlib
+           matplotlib.use("Agg")
+          -import matplotlib.pyplot as plt
+           import matplotlib.dates as mdates
+          +import matplotlib.pyplot as plt
+           import numpy as np
+           import pandas as pd
+           
+          -BG, PANEL, GRID = "#0b1220", "#111a2b", "#1e293b"
+          -FG, MUTED = "#e2e8f0", "#94a3b8"
+          +BG, PANEL, GRID = "#08111f", "#101b2d", "#243247"
+          +FG, MUTED = "#e5edf7", "#93a4ba"
+           UP, DOWN = "#22c55e", "#ef4444"
+          -WAVE, MW, ZONE = "#38bdf8", "#059669", "#7c3aed"
+          -CORR = "#f43f5e"
+          +WAVE, MW, CORR = "#38bdf8", "#10b981", "#f43f5e"
+          +ACTIVE, STRONG, WATCH = "#8b5cf6", "#6366f1", "#64748b"
+           
+           
+          -def money(v):
+          +def money(value):
+          +    v = float(value)
+               a = abs(v)
+          -    if a >= 1e6: return f"{v/1e6:.2f}M"
+          -    if a >= 1e4: return f"{v/1e3:.1f}k"
+          -    if a >= 100: return f"{v:.0f}"
+          -    if a >= 1:   return f"{v:.2f}"
+          -    return f"{v:.4f}"
+          +    decimals = 4 if a < 1 else 2 if a < 1000 else 0
+          +    raw = f"{v:,.{decimals}f}"
+          +    return raw.replace(",", "X").replace(".", ",").replace("X", ".")
+           
+           
+          -def main():
+          -    p = json.load(sys.stdin)
+          -    candles = p["candles"]
+          -    if len(candles) < 10:
+          -        sys.exit(1)
+          +def day(value):
+          +    return str(value or "-")[:10]
+          +
+           
+          +def family_name(value):
+          +    return {
+          +        "IMPULSE_RETRACEMENT": "Retrace",
+          +        "PRIOR_WAVE": "W4",
+          +        "ABC_PROJECTION": "ABC",
+          +        "CORRECTION_PATTERN": "Muster",
+          +    }.get(value, str(value))
+          +
+          +
+          +def status_color(status):
+          +    return {
+          +        "PENDING": "#f59e0b",
+          +        "CONFIRMED": UP,
+          +        "CANDIDATE": "#22d3ee",
+          +        "WATCH": "#f59e0b",
+          +        "WAIT_C": MUTED,
+          +        "OUTSIDE_WINDOW": "#f97316",
+          +        "IMPULSE_ACTIVE": WAVE,
+          +        "NO_SETUP": MUTED,
+          +    }.get(status, MUTED)
+          +
+          +
+          +def prep_frame(candles):
+               df = pd.DataFrame(candles)
+          -    df["date"] = pd.to_datetime(df["date"])
+          -    df = df.set_index("date")
+          -    for c in ("open", "high", "low", "close"):
+          -        df[c] = df[c].astype(float)
+          -
+          -    fig = plt.figure(figsize=(19, 10.5), facecolor=BG)
+          -    gs = fig.add_gridspec(1, 2, width_ratios=[3.05, 1], wspace=0.02,
+          -                          left=0.045, right=0.985, top=0.885, bottom=0.075)
+          -    ax = fig.add_subplot(gs[0, 0], facecolor=BG)
+          -    side = fig.add_subplot(gs[0, 1], facecolor=BG)
+          -    side.axis("off")
+          +    df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_convert(None)
+          +    df = df.set_index("date").sort_index()
+          +    for col in ("open", "high", "low", "close"):
+          +        df[col] = df[col].astype(float)
+          +    return df
+          +
+           
+          +def candle_width(xs):
+          +    if len(xs) < 2:
+          +        return 0.62, 1.0
+          +    dx = float(np.median(np.diff(xs)))
+          +    return dx * 0.62, dx
+          +
+          +
+          +def draw_candles(ax, df, body_alpha=0.94):
+               xs = mdates.date2num(df.index.to_pydatetime())
+          -    dx = np.median(np.diff(xs)) if len(xs) > 1 else 1.0
+          -    bw = dx * 0.62
+          -    for xi, (_, r) in zip(xs, df.iterrows()):
+          -        col = UP if r["close"] >= r["open"] else DOWN
+          -        ax.plot([xi, xi], [r["low"], r["high"]], color=col, lw=0.65, zorder=2, alpha=0.95)
+          -        lo, hi = min(r["open"], r["close"]), max(r["open"], r["close"])
+          -        ax.add_patch(plt.Rectangle((xi - bw / 2, lo), bw, max(hi - lo, hi * 1e-3),
+          -                                   facecolor=col, edgecolor=col, lw=0.4, zorder=2, alpha=0.95))
+          +    bw, dx = candle_width(xs)
+          +    for xi, (_, row) in zip(xs, df.iterrows()):
+          +        color = UP if row["close"] >= row["open"] else DOWN
+          +        ax.plot([xi, xi], [row["low"], row["high"]], color=color,
+          +                lw=0.65, zorder=2, alpha=body_alpha)
+          +        lo, hi = min(row["open"], row["close"]), max(row["open"], row["close"])
+          +        height = max(hi - lo, max(abs(hi), 1.0) * 1e-4)
+          +        ax.add_patch(plt.Rectangle(
+          +            (xi - bw / 2, lo), bw, height,
+          +            facecolor=color, edgecolor=color, lw=0.35,
+          +            zorder=2, alpha=body_alpha,
+          +        ))
+               ax.xaxis_date()
+               ax.set_yscale("log")
+          +    return xs, dx
+           
+          -    d2n = lambda s: mdates.date2num(pd.to_datetime(s).to_pydatetime())
+          -    last_x, span = xs[-1], xs[-1] - xs[0]
+          -    # Projektionsbereich begrenzen: 42 % der Historie waeren bei 5-Jahres-Daten
+          -    # zwei Jahre Leerraum, der das Bild dominiert.
+          -    future = last_x + min(span * 0.22, dx * 90)
+          -
+          -    for cl in p.get("clusters", []):
+          -        ax.axhspan(cl["floor"], cl["ceiling"], facecolor=ZONE,
+          -                   alpha=0.10 + 0.03 * min(cl["score"], 4), zorder=1)
+          -        # Label nach INNEN, sonst ragt es in die Seitenleiste.
+          -        ax.text(future, cl["ceiling"], f'{money(cl["floor"])}–{money(cl["ceiling"])} · S{cl["score"]}  ',
+          -                color="#c4b5fd", fontsize=7.8, va="bottom", ha="right", zorder=6)
+          -
+          -    waves = p.get("waves", [])
+          -    if len(waves) >= 2:
+          -        wx = [d2n(w["date"]) for w in waves]
+          -        wy = [w["price"] for w in waves]
+          -        ax.plot(wx, wy, color=WAVE, lw=2.4, zorder=5, solid_capstyle="round")
+          -        for x, y, w in zip(wx, wy, waves):
+          -            ax.plot(x, y, "o", color=WAVE, ms=8, zorder=6,
+          -                    markeredgecolor=BG, markeredgewidth=1.4)
+          -            ax.annotate(f'{w["label"]}\n{money(y)}', (x, y), textcoords="offset points",
+          -                        xytext=(0, 15), ha="center", fontsize=9, fontweight="bold",
+          -                        color=FG, zorder=7,
+          -                        bbox=dict(boxstyle="round,pad=0.32", facecolor=PANEL,
+          -                                  edgecolor=WAVE, lw=1.1, alpha=0.95))
+          -
+          -    mw = p.get("multiWave", [])
+          -    if len(mw) >= 3:
+          -        ax.plot([d2n(m["date"]) for m in mw], [m["price"] for m in mw],
+          -                color=MW, lw=1.7, zorder=4, alpha=0.95)
+          -        for m in mw:
+          -            if not m["label"]:
+          -                continue
+          -            ax.plot(d2n(m["date"]), m["price"], "o", color=MW, ms=4.5, zorder=5)
+          -            ax.annotate(m["label"], (d2n(m["date"]), m["price"]), textcoords="offset points",
+          -                        xytext=(0, 8 if m["label"] == "1" else -14), ha="center",
+          -                        fontsize=8, fontweight="bold", color=MW, zorder=6)
+          -
+          -    # V166: Korrektur-Lesart A-B-C bzw. W-X-Y - fehlte in der Tafel.
+          -    corr = p.get("correction", [])
+          -    if len(corr) >= 2:
+          -        cx = [d2n(c["date"]) for c in corr]
+          -        cy = [c["price"] for c in corr]
+          -        # Anschluss an das Welle-5-Extrem, sonst haengt die Korrektur in der Luft
+          -        if waves:
+          -            cx = [d2n(waves[-1]["date"])] + cx
+          -            cy = [waves[-1]["price"]] + cy
+          -        ax.plot(cx, cy, color=CORR, lw=2.0, ls="--", zorder=5, alpha=0.95)
+          -        for c in corr:
+          -            ax.plot(d2n(c["date"]), c["price"], "o", color=CORR, ms=7, zorder=6,
+          -                    markeredgecolor=BG, markeredgewidth=1.2)
+          -            ax.annotate(c["label"], (d2n(c["date"]), c["price"]),
+          -                        textcoords="offset points", xytext=(0, -18), ha="center",
+          -                        fontsize=10, fontweight="bold", color=CORR, zorder=7)
+          -
+          -    ax.axvline(last_x, color=MUTED, ls="--", lw=1.0, alpha=0.55, zorder=3)
+          -    ax.text(last_x, ax.get_ylim()[1], " PROJEKTION · SCHEMATISCH ",
+          -            color=MUTED, fontsize=8.5, va="top", ha="left", zorder=7)
+          -
+          -    scen = p.get("scenarios", [])
+          -    for s in scen:
+          -        pts = s["path"]
+          -        n = len(pts)
+          -        px_ = [last_x + (future - last_x) * (i / max(n - 1, 1)) for i in range(n)]
+          -        ax.plot(px_, [q["price"] for q in pts], color=s["color"], lw=2.0,
+          -                ls="--", zorder=5, alpha=0.95)
+          -        for x, q in zip(px_, pts):
+          -            if not q["label"]:
+          -                continue
+          -            ax.plot(x, q["price"], "o", color=s["color"], ms=5, zorder=6)
+          -            ax.annotate(q["label"], (x, q["price"]), textcoords="offset points",
+          -                        xytext=(0, 10), ha="center", fontsize=7.5, color=s["color"], zorder=6)
+          -
+          -    for m in p.get("marks", []):
+          -        ax.axhline(m["price"], color=m["color"], ls=":", lw=1.2, alpha=0.85, zorder=4)
+          -        ax.text(xs[0], m["price"], f' {m["label"]} {money(m["price"])}',
+          -                color=m["color"], fontsize=8.5, va="bottom", ha="left", zorder=7)
+          -
+          -    ax.set_xlim(xs[0] - dx * 3, future + dx * 6)
+          -    ax.grid(color=GRID, alpha=0.5, lw=0.6)
+          -    ax.tick_params(colors=MUTED, labelsize=9)
+          -    for sp in ax.spines.values():
+          -        sp.set_color(GRID)
+          +
+          +def style_axis(ax, title):
+          +    ax.grid(color=GRID, alpha=0.48, lw=0.55)
+          +    ax.tick_params(colors=MUTED, labelsize=8.2)
+          +    for spine in ax.spines.values():
+          +        spine.set_color(GRID)
+          +    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda value, _: money(value)))
+               ax.xaxis.set_major_formatter(mdates.DateFormatter("%b\n%Y"))
+          -    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: money(v)))
+          +    ax.text(0.012, 0.975, title, transform=ax.transAxes, color=FG,
+          +            fontsize=9.5, fontweight="bold", ha="left", va="top",
+          +            bbox=dict(boxstyle="round,pad=0.28", facecolor=PANEL,
+          +                      edgecolor=GRID, alpha=0.94), zorder=12)
+          +
+          +
+          +def cluster_style(role):
+          +    if role == "ACTIVE":
+          +        return ACTIVE, 0.23, 1.4
+          +    if role == "STRONG":
+          +        return STRONG, 0.12, 0.9
+          +    return WATCH, 0.08, 0.7
+          +
+          +
+          +def draw_clusters(ax, clusters, label_x=None):
+          +    for cluster in reversed(clusters):
+          +        color, alpha, width = cluster_style(cluster.get("role"))
+          +        ax.axhspan(cluster["floor"], cluster["ceiling"], facecolor=color,
+          +                   edgecolor=color, lw=width, alpha=alpha, zorder=1)
+          +        if label_x is not None and cluster.get("role") in ("ACTIVE", "STRONG"):
+          +            label = (
+          +                f'{money(cluster["floor"])}–{money(cluster["ceiling"])}  '
+          +                f'{cluster["score"]}F/{cluster["evidenceCount"]}E'
+          +            )
+          +            ax.text(label_x, cluster["ceiling"], label, color="#d8ccff",
+          +                    fontsize=7.4, ha="right", va="bottom", zorder=10,
+          +                    bbox=dict(boxstyle="round,pad=0.2", facecolor=BG,
+          +                              edgecolor=color, alpha=0.88))
+          +
+          +
+          +def wave_offset(label, trend):
+          +    try:
+          +        n = int(label)
+          +    except (TypeError, ValueError):
+          +        return 13
+          +    high = (n % 2 == 1) if trend == "bullish" else (n % 2 == 0)
+          +    return 14 if high else -26
+          +
+          +
+          +def draw_waves(ax, waves, trend, date_to_num, labels=True):
+          +    if len(waves) < 2:
+          +        return
+          +    wx = [date_to_num(w["date"]) for w in waves]
+          +    wy = [w["price"] for w in waves]
+          +    ax.plot(wx, wy, color=WAVE, lw=2.2, zorder=5, solid_capstyle="round")
+          +    for x, y, wave in zip(wx, wy, waves):
+          +        ax.plot(x, y, "o", color=WAVE, ms=6.6, zorder=6,
+          +                markeredgecolor=BG, markeredgewidth=1.2)
+          +        if not labels:
+          +            continue
+          +        offset = wave_offset(wave.get("label"), trend)
+          +        ax.annotate(
+          +            f'{wave["label"]}  {money(y)}', (x, y), textcoords="offset points",
+          +            xytext=(0, offset), ha="center", va="bottom" if offset > 0 else "top",
+          +            fontsize=7.8, fontweight="bold", color=FG, zorder=8,
+          +            bbox=dict(boxstyle="round,pad=0.25", facecolor=PANEL,
+          +                      edgecolor=WAVE, lw=0.9, alpha=0.94),
+          +        )
+          +
+          +
+          +def draw_correction(ax, correction, waves, trend, date_to_num):
+          +    if len(correction) < 2:
+          +        return
+          +    cx = [date_to_num(c["date"]) for c in correction]
+          +    cy = [c["price"] for c in correction]
+          +    if waves:
+          +        cx = [date_to_num(waves[-1]["date"])] + cx
+          +        cy = [waves[-1]["price"]] + cy
+          +    ax.plot(cx, cy, color=CORR, lw=1.9, ls="--", zorder=5, alpha=0.96)
+          +    for index, point in enumerate(correction):
+          +        x, y = date_to_num(point["date"]), point["price"]
+          +        ax.plot(x, y, "o", color=CORR, ms=6.2, zorder=6,
+          +                markeredgecolor=BG, markeredgewidth=1.0)
+          +        high = (index % 2 == 1) if trend == "bullish" else (index % 2 == 0)
+          +        offset = 12 if high else -20
+          +        ax.annotate(point["label"], (x, y), textcoords="offset points",
+          +                    xytext=(0, offset), ha="center",
+          +                    va="bottom" if offset > 0 else "top",
+          +                    fontsize=8.8, fontweight="bold", color=CORR, zorder=8)
+           
+          -    fig.text(0.045, 0.955, f'{p["symbol"]} · ELLIOTT-WELLEN-ANALYSE',
+          +
+          +def draw_provisional(ax, provisional, anchors, date_to_num):
+          +    if not provisional:
+          +        return
+          +    x = date_to_num(provisional["date"])
+          +    y = provisional["price"]
+          +    prior = [a for a in anchors if str(a.get("date", "")) < str(provisional["date"])]
+          +    if prior:
+          +        anchor = max(prior, key=lambda item: str(item.get("date", "")))
+          +        ax.plot([date_to_num(anchor["date"]), x], [anchor["price"], y],
+          +                color=MUTED, lw=1.2, ls=(0, (3, 3)), alpha=0.75, zorder=4)
+          +    ax.plot(x, y, marker="D", ms=7, markerfacecolor=BG,
+          +            markeredgecolor=MUTED, markeredgewidth=1.4, zorder=7)
+          +    ax.annotate(f'{provisional["label"]} · vorläufig', (x, y),
+          +                textcoords="offset points", xytext=(8, 9), ha="left",
+          +                fontsize=7.4, color=MUTED, zorder=8,
+          +                bbox=dict(boxstyle="round,pad=0.2", facecolor=BG,
+          +                          edgecolor=MUTED, alpha=0.9))
+          +
+          +
+          +def draw_multi_wave(ax, points, date_to_num):
+          +    if len(points) < 3:
+          +        return
+          +    xx = [date_to_num(point["date"]) for point in points]
+          +    yy = [point["price"] for point in points]
+          +    ax.plot(xx, yy, color=MW, lw=1.5, zorder=4, alpha=0.9)
+          +    for point in points:
+          +        if not point.get("label"):
+          +            continue
+          +        ax.plot(date_to_num(point["date"]), point["price"], "o",
+          +                color=MW, ms=4.2, zorder=5)
+          +
+          +
+          +def draw_marks(ax, marks, right_x):
+          +    styles = {"solid": "-", "dash": "--", "dot": ":"}
+          +    for mark in marks:
+          +        style = styles.get(mark.get("style"), ":")
+          +        ax.axhline(mark["price"], color=mark["color"], ls=style,
+          +                   lw=1.15, alpha=0.88, zorder=4)
+          +        ax.text(right_x, mark["price"],
+          +                f' {mark["label"]}  {money(mark["price"])} ',
+          +                color=mark["color"], fontsize=7.3, va="bottom", ha="right",
+          +                zorder=11, bbox=dict(boxstyle="round,pad=0.18", facecolor=BG,
+          +                                    edgecolor=mark["color"], alpha=0.9))
+          +
+          +
+          +def panel(side, y0, height, title, lines, accent=FG):
+          +    side.add_patch(plt.Rectangle(
+          +        (0.02, y0), 0.96, height, transform=side.transAxes,
+          +        facecolor=PANEL, edgecolor=GRID, lw=1.0, clip_on=False, zorder=1,
+          +    ))
+          +    side.text(0.055, y0 + height - 0.027, title, transform=side.transAxes,
+          +              color=accent, fontsize=9.6, fontweight="bold", va="top", zorder=2)
+          +    usable = max(height - 0.072, 0.04)
+          +    step = usable / max(len(lines), 1)
+          +    for index, (key, value, color) in enumerate(lines):
+          +        yy = y0 + height - 0.064 - index * step
+          +        side.text(0.055, yy, key, transform=side.transAxes, color=MUTED,
+          +                  fontsize=7.6, va="top", zorder=2)
+          +        side.text(0.945, yy, value, transform=side.transAxes,
+          +                  color=color or FG, fontsize=7.6, va="top", ha="right",
+          +                  fontweight="bold", zorder=2)
+          +
+          +
+          +def main():
+          +    payload = json.load(sys.stdin)
+          +    candles = payload.get("candles", [])
+          +    if len(candles) < 10:
+          +        sys.exit(1)
+          +
+          +    df = prep_frame(candles)
+          +    zoom_from = pd.to_datetime(payload.get("zoomFrom"), utc=True).tz_convert(None)
+          +    zoom_df = df[df.index >= zoom_from]
+          +    if len(zoom_df) < 20:
+          +        zoom_df = df.tail(min(52, len(df)))
+          +
+          +    fig = plt.figure(figsize=(20, 12), facecolor=BG)
+          +    grid = fig.add_gridspec(
+          +        2, 2, width_ratios=[3.28, 1], height_ratios=[1.0, 1.16],
+          +        hspace=0.085, wspace=0.025,
+          +        left=0.045, right=0.985, top=0.86, bottom=0.072,
+          +    )
+          +    macro = fig.add_subplot(grid[0, 0], facecolor=BG)
+          +    zoom = fig.add_subplot(grid[1, 0], facecolor=BG)
+          +    side = fig.add_subplot(grid[:, 1], facecolor=BG)
+          +    side.axis("off")
+          +
+          +    date_to_num = lambda value: mdates.date2num(pd.to_datetime(value, utc=True).tz_convert(None).to_pydatetime())
+          +    waves = payload.get("waves", [])
+          +    correction = payload.get("correction", [])
+          +    clusters = payload.get("clusters", [])
+          +
+          +    macro_x, macro_dx = draw_candles(macro, df, 0.88)
+          +    draw_clusters(macro, clusters)
+          +    draw_waves(macro, waves, payload.get("trend"), date_to_num, labels=True)
+          +    draw_correction(macro, correction, waves, payload.get("trend"), date_to_num)
+          +    draw_provisional(macro, payload.get("provisional"), waves + correction, date_to_num)
+          +    macro.set_xlim(macro_x[0] - 2 * macro_dx, macro_x[-1] + 10 * macro_dx)
+          +    style_axis(macro, "1 · MAKROSTRUKTUR · BESTÄTIGTE ZÄHLUNG")
+          +    macro.text(0.988, 0.975, "● bestätigt   ◇ vorläufig",
+          +               transform=macro.transAxes, color=MUTED, fontsize=7.4,
+          +               ha="right", va="top", zorder=12)
+          +
+          +    zoom_x, zoom_dx = draw_candles(zoom, zoom_df, 0.98)
+          +    right_x = zoom_x[-1] + 9.5 * zoom_dx
+          +    draw_clusters(zoom, clusters, right_x)
+          +    visible_waves = [w for w in waves if str(w["date"]) >= str(payload.get("zoomFrom"))]
+          +    draw_waves(zoom, visible_waves, payload.get("trend"), date_to_num, labels=True)
+          +    draw_correction(zoom, correction, waves, payload.get("trend"), date_to_num)
+          +    draw_multi_wave(zoom, payload.get("multiWave", []), date_to_num)
+          +    draw_provisional(zoom, payload.get("provisional"), waves + correction, date_to_num)
+          +    draw_marks(zoom, payload.get("marks", []), right_x)
+          +    zoom.set_xlim(zoom_x[0] - 2 * zoom_dx, zoom_x[-1] + 12 * zoom_dx)
+          +    style_axis(zoom, "2 · SETUP-ZOOM · KEINE ZEITPROJEKTION")
+          +
+          +    decision = payload["decision"]
+          +    evidence = payload["evidence"]
+          +    provenance = payload["provenance"]
+          +    accent = status_color(decision["status"])
+          +    price_color = UP if payload.get("trend") == "bullish" else DOWN
+          +
+          +    fig.text(0.045, 0.954, f'{payload["symbol"]} · DEEP DECISION BOARD',
+                        color=FG, fontsize=21, fontweight="bold", ha="left")
+          -    st = p["struktur"]
+          -    corr_txt = f' · Korrektur {p["corrPattern"]}' if p.get("corrPattern") else ""
+               fig.text(0.045, 0.918,
+          -             f'{p["interval"]} ({p["range"]}) · Trend {p["trend"]} · Score {st["score"]} · '
+          -             f'Kontinuität {st["kontinuitaet"]} · Grad {st["grad"]}{corr_txt}',
+          -             color=MUTED, fontsize=10.5, ha="left")
+          -    fig.text(0.985, 0.955, money(p["price"]),
+          -             color=UP if p["trend"] == "bullish" else DOWN,
+          -             fontsize=21, fontweight="bold", ha="right")
+          -
+          -    def panel(y0, h, title, lines, accent=FG):
+          -        side.add_patch(plt.Rectangle((0.02, y0), 0.96, h, transform=side.transAxes,
+          -                                     facecolor=PANEL, edgecolor=GRID, lw=1.0,
+          -                                     clip_on=False, zorder=1))
+          -        side.text(0.06, y0 + h - 0.028, title, transform=side.transAxes, color=accent,
+          -                  fontsize=10.5, fontweight="bold", va="top", zorder=2)
+          -        for i, (k, v) in enumerate(lines):
+          -            yy = y0 + h - 0.062 - i * 0.030
+          -            if yy < y0 + 0.012:
+          -                break
+          -            side.text(0.06, yy, k, transform=side.transAxes, color=MUTED,
+          -                      fontsize=8.6, va="top", zorder=2)
+          -            side.text(0.94, yy, v, transform=side.transAxes, color=FG, fontsize=8.6,
+          -                      va="top", ha="right", zorder=2, fontweight="bold")
+          -
+          -    # V166: Seitenleiste nur noch handelsrelevant. Score und Kontinuitaet
+          -    # sind Qualitaetsmasse - die wandern in die Kopfzeile.
+          -    trades = p.get("trades", [])
+          -    if trades:
+          -        tl = []
+          -        for tr in trades:
+          -            tl.append((tr["art"].upper(), f'CRV {tr["crv"]:.1f}'))
+          -            tl.append(("  Einstieg", money(tr["entry"])))
+          -            tl.append(("  Stop", money(tr["stop"])))
+          -            tl.append(("  Ziel", money(tr["ziel"])))
+          -            tl.append(("  Risiko", f'{tr["risk"]:.1f} %'))
+          -            tl.append(("", ""))
+          -        panel(0.58, 0.40, "HANDELSPLAN", tl[:12], UP)
+          -    else:
+          -        panel(0.58, 0.40, "HANDELSPLAN", [("keine Zone in Reichweite", "")], UP)
+          -
+          -    scen_lines = []
+          -    for s in scen:
+          -        scen_lines.append((s["name"], ""))
+          -        scen_lines.append(("  " + s["note"][:38], ""))
+          -    panel(0.34, 0.21, "SZENARIEN", scen_lines or [("keine Zielzonen", "")], WAVE)
+          -    for i, s in enumerate(scen):
+          -        side.plot(0.045, 0.34 + 0.21 - 0.068 - i * 0.060, "s", color=s["color"],
+          -                  ms=6, transform=side.transAxes, zorder=3, clip_on=False)
+          -
+          -    mark_lines = [(m["label"], money(m["price"])) for m in p.get("marks", [])]
+          -    for cl in p.get("clusters", [])[:4]:
+          -        mark_lines.append((f'Zone S{cl["score"]}', f'{money(cl["floor"])}–{money(cl["ceiling"])}'))
+          -    panel(0.03, 0.28, "MARKEN", mark_lines, ZONE)
+          -
+          -    fig.text(0.045, 0.028,
+          -             f'Stand {p["stand"]} · logarithmische Preisachse · Projektion schematisch, '
+          -             f'keine Kursprognose · keine Anlageberatung',
+          -             color=MUTED, fontsize=8, ha="left")
+          -
+          -    fig.savefig(sys.stdout.buffer, format="png", dpi=115, facecolor=BG)
+          +             f'{payload["interval"]} ({payload["range"]}) · Makrotrend {payload["trend"]} · '
+          +             f'Zählung {evidence["countScore"]} · Grad {evidence["degree"]}',
+          +             color=MUTED, fontsize=10.2, ha="left")
+          +    fig.text(0.57, 0.951, decision["statusLabel"], color=accent,
+          +             fontsize=10.0, fontweight="bold", ha="center", va="center",
+          +             bbox=dict(boxstyle="round,pad=0.45", facecolor=PANEL,
+          +                       edgecolor=accent, lw=1.2, alpha=0.98))
+          +    fig.text(0.985, 0.954, money(payload["price"]),
+          +             color=price_color, fontsize=21, fontweight="bold", ha="right")
+          +
+          +    status_lines = [
+          +        ("Status", decision["status"], accent),
+          +        ("Richtung", decision["direction"], FG),
+          +        ("Modus", "FROZEN" if decision["frozen"] else "AKTUELL", accent),
+          +        ("Datenstand", day(provenance["dataAsOf"]), FG),
+          +        ("Snapshot", str(decision.get("snapshotId") or "-")[:12], FG),
+          +    ]
+          +    panel(side, 0.79, 0.19, "STATUS", status_lines, accent)
+          +
+          +    zone = decision.get("zone")
+          +    decision_lines = []
+          +    if zone:
+          +        decision_lines.append(("Zone", f'{money(zone["floor"])}–{money(zone["ceiling"])}', ACTIVE))
+          +    if decision.get("entry") is not None:
+          +        decision_lines.append(("Entry", money(decision["entry"]), FG))
+          +    if decision.get("trigger") is not None:
+          +        op = ">" if decision["direction"] == "LONG" else "<"
+          +        decision_lines.append(("Trigger Schluss", f'{op} {money(decision["trigger"])}', UP))
+          +    if decision.get("invalidation") is not None:
+          +        op = "<" if decision["direction"] == "LONG" else ">"
+          +        decision_lines.append(("Invalidierung", f'{op} {money(decision["invalidation"])}', DOWN))
+          +    if decision.get("target") is not None:
+          +        decision_lines.append(("Modellziel", money(decision["target"]), WAVE))
+          +    if decision.get("potentialR") is not None:
+          +        decision_lines.append(("Potenzial", f'{decision["potentialR"]:.2f} R', FG))
+          +    for rule in payload.get("rules", [])[:2]:
+          +        decision_lines.append((rule["name"], f'{rule["condition"]} → {rule["result"]}', rule["color"]))
+          +    if not decision_lines:
+          +        decision_lines = [("Aktion", "NO TRADE", MUTED)]
+          +    panel(side, 0.49, 0.28, "ENTSCHEIDUNGSLEVEL", decision_lines[:8], UP)
+          +
+          +    families = ", ".join(family_name(x) for x in (zone or {}).get("families", [])) or "-"
+          +    strength = (
+          +        f'{zone["score"]} Familien / {zone["evidenceCount"]} Evidenzen'
+          +        if zone else "keine aktive Zone"
+          +    )
+          +    time_window = evidence.get("timeWindow")
+          +    time_value = evidence.get("timeStatus", "UNKNOWN")
+          +    if time_window:
+          +        time_value += f' · {day(time_window["from"])}–{day(time_window["to"])}'
+          +    evidence_lines = [
+          +        ("Zonenstärke", strength, FG),
+          +        ("Familien", families, FG),
+          +        ("Count-Stabilität", evidence["countStability"], FG),
+          +        ("Kontinuität", evidence["continuity"], FG),
+          +        ("Qualität", evidence["quality"], FG),
+          +        ("C-Zeit", time_value, FG),
+          +    ]
+          +    panel(side, 0.255, 0.215, "EVIDENZ · KEINE WAHRSCHEINLICHKEIT", evidence_lines, WAVE)
+          +
+          +    provisional = payload.get("provisional")
+          +    flags = evidence.get("qualityFlags", [])
+          +    risk_lines = [
+          +        ("Korrektur", evidence.get("correctionPattern") or "n/a", FG),
+          +        ("Umschlagrisiko", evidence.get("reversalRisk") or "NONE", FG),
+          +        ("Letzter Pivot bestätigt", day(evidence.get("lastConfirmedPivot")), FG),
+          +        ("Vorläufiges Extrem", money(provisional["price"]) if provisional else "keins", MUTED),
+          +        ("Qualitätsflags", ", ".join(flags[:2]) if flags else "keine", DOWN if flags else FG),
+          +        ("Datenhash", str(provenance.get("dataHash", "-"))[:12], FG),
+          +    ]
+          +    panel(side, 0.03, 0.205, "RISIKO & PROVENIENZ", risk_lines, DOWN)
+          +
+          +    fig.text(
+          +        0.045, 0.027,
+          +        f'Datenstand {day(provenance["dataAsOf"])} · {provenance["provider"]} · '
+          +        f'{"nur geschlossene Bars" if provenance["closedBarsOnly"] else "offene Bars enthalten"} · '
+          +        f'Engine {decision["engineVersion"]} · keine Zeitprojektion · keine Anlageberatung',
+          +        color=MUTED, fontsize=7.8, ha="left",
+          +    )
+          +    fig.savefig(sys.stdout.buffer, format="png", dpi=155, facecolor=BG,
+          +                bbox_inches=None, metadata={"Software": "EW Quant Hunter V171"})
+           
+           
+           if __name__ == "__main__":
+          diff --git a/python_service/deep_render_smoke.py b/python_service/deep_render_smoke.py
+          new file mode 100644
+          index 0000000..fba53f3
+          --- /dev/null
+          +++ b/python_service/deep_render_smoke.py
+          @@ -0,0 +1,120 @@
+          +#!/usr/bin/env python3
+          +"""Offline-Smoke-Test fuer den V171-Deep-Drawer."""
+          +import datetime as dt
+          +import json
+          +import math
+          +import os
+          +import struct
+          +import subprocess
+          +import sys
+          +import tempfile
+          +from pathlib import Path
+          +
+          +
+          +def iso(start, weeks):
+          +    return (start + dt.timedelta(days=7 * weeks)).isoformat().replace("+00:00", "Z")
+          +
+          +
+          +def fixture():
+          +    start = dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc)
+          +    candles = []
+          +    for index in range(100):
+          +        base = 100 * math.exp(index * 0.005) * (1 + 0.08 * math.sin(index / 6))
+          +        opn = base * (1 + 0.012 * math.sin(index))
+          +        close = base * (1 + 0.012 * math.cos(index * 0.8))
+          +        candles.append({
+          +            "date": iso(start, index),
+          +            "closedAt": iso(start, index + 1),
+          +            "isClosed": True,
+          +            "open": opn,
+          +            "high": max(opn, close) * 1.03,
+          +            "low": min(opn, close) * 0.97,
+          +            "close": close,
+          +            "volume": 1_000_000 + index * 1_000,
+          +        })
+          +    date = lambda index: candles[index]["date"]
+          +    zone = {
+          +        "floor": 142, "ceiling": 150, "center": 146,
+          +        "score": 3, "evidenceCount": 7,
+          +        "labels": ["Retr 0.618", "W4-Zone", "C=1.0·A"],
+          +        "families": ["IMPULSE_RETRACEMENT", "PRIOR_WAVE", "ABC_PROJECTION"],
+          +    }
+          +    return {
+          +        "version": "V171", "symbol": "SMOKE", "interval": "WEEKLY", "range": "5y",
+          +        "price": 158, "trend": "bullish", "candles": candles, "zoomFrom": date(52),
+          +        "waves": [
+          +            {"label": "0", "date": date(0), "price": 100, "status": "CONFIRMED"},
+          +            {"label": "1", "date": date(14), "price": 132, "status": "CONFIRMED"},
+          +            {"label": "2", "date": date(27), "price": 116, "status": "CONFIRMED"},
+          +            {"label": "3", "date": date(48), "price": 181, "status": "CONFIRMED"},
+          +            {"label": "4", "date": date(61), "price": 148, "status": "CONFIRMED"},
+          +            {"label": "5", "date": date(75), "price": 205, "status": "CONFIRMED"},
+          +        ],
+          +        "correction": [
+          +            {"label": "A", "date": date(82), "price": 160},
+          +            {"label": "B", "date": date(88), "price": 184},
+          +            {"label": "C", "date": date(95), "price": 145},
+          +        ],
+          +        "provisional": {"date": date(99), "price": 160, "kind": "H", "label": "? Hoch"},
+          +        "multiWave": [],
+          +        "clusters": [{**zone, "role": "ACTIVE"}],
+          +        "marks": [
+          +            {"price": 166, "label": "TRIGGER · SCHLUSSKURS", "color": "#22c55e", "style": "solid"},
+          +            {"price": 137.74, "label": "INVALIDIERUNG · SCHLUSSKURS", "color": "#ef4444", "style": "solid"},
+          +            {"price": 200, "label": "MODELLZIEL 1.618·i", "color": "#38bdf8", "style": "dash"},
+          +            {"price": 158, "label": "LETZTER SCHLUSS", "color": "#e2e8f0", "style": "dot"},
+          +        ],
+          +        "rules": [
+          +            {"name": "PRIMÄR", "condition": "Schluss > 166,00", "result": "Ziel 200,00", "color": "#22c55e"},
+          +            {"name": "ALTERNATIVE", "condition": "Schluss < 137,74", "result": "These invalidiert", "color": "#f97316"},
+          +        ],
+          +        "decision": {
+          +            "status": "PENDING", "statusLabel": "PENDING · LEVEL EINGEFROREN",
+          +            "direction": "LONG", "frozen": True, "zone": zone,
+          +            "trigger": 166, "invalidation": 137.74, "cExtreme": 145,
+          +            "target": 200, "entry": None, "potentialR": 1.2,
+          +            "snapshotId": "0123456789abcdef", "asOf": date(95),
+          +            "dataHash": "abcdef0123456789", "engineVersion": "171.0.0",
+          +            "createdAt": date(95),
+          +        },
+          +        "evidence": {
+          +            "countScore": "12/14", "countStability": "4/5 gleicher W0/W5-Anker",
+          +            "continuity": "hoch · 18 % Pivot-Lücken", "quality": "5/7",
+          +            "qualityFlags": [], "threshold": "18 %", "degree": "Primary",
+          +            "lastConfirmedPivot": date(92), "correctionPattern": "ZIGZAG",
+          +            "reversalRisk": "WATCH", "timeStatus": "IN_WINDOW",
+          +            "timeWindow": {"from": date(84), "to": date(99)},
+          +        },
+          +        "provenance": {
+          +            "provider": "yahoo-chart", "adjustment": "RAW_PROVIDER_OHLC",
+          +            "fetchedAt": candles[-1]["closedAt"], "dataAsOf": candles[-1]["closedAt"],
+          +            "dataHash": "abcdef0123456789", "corporateActionCount": 0,
+          +            "closedBarsOnly": True,
+          +        },
+          +    }
+          +
+          +
+          +def main():
+          +    drawer = Path(__file__).with_name("deep_drawer.py")
+          +    with tempfile.TemporaryDirectory(prefix="deep-v171-") as cache:
+          +        env = {**os.environ, "MPLCONFIGDIR": cache}
+          +        run = subprocess.run(
+          +            [sys.executable, str(drawer)],
+          +            input=json.dumps(fixture()).encode(),
+          +            stdout=subprocess.PIPE,
+          +            stderr=subprocess.PIPE,
+          +            env=env,
+          +            check=False,
+          +        )
+          +    if run.returncode != 0:
+          +        raise RuntimeError(run.stderr.decode(errors="replace"))
+          +    image = run.stdout
+          +    assert image[:8] == b"\x89PNG\r\n\x1a\n", "keine PNG-Ausgabe"
+          +    width, height = struct.unpack(">II", image[16:24])
+          +    assert width >= 2800 and height >= 1600, (width, height)
+          +    assert len(image) >= 100_000, len(image)
+          +    print(f"✅ V171 Deep-Render-Smoke bestanden · {width}×{height} · {len(image)} Bytes")
+          +
+          +
+          +if __name__ == "__main__":
+          +    main()
+          diff --git a/src/bot/commands.ts b/src/bot/commands.ts
+          index 124671a..6826c93 100644
+          --- a/src/bot/commands.ts
+          +++ b/src/bot/commands.ts
+          @@ -48,7 +48,7 @@ export function registerCommands(
+                   "• `/scan` – manueller Radar-Durchlauf\n" +
+                   "• `/screener` – Unterstützungs-Status aller Titel (täglich 08:00)\n" +
+                   "• `/setup <SYMBOL> [30m|1h]` – 1-2-Struktur als eigener Chart\n" +
+          -        "• `/deep <SYMBOL>` – Analyse-Tafel mit Zielzonen und Projektion\n" +
+          +        "• `/deep <SYMBOL>` – Decision Board mit Makrostruktur, Setup-Zoom und Frozen Levels\n" +
+                   "• `/scan12 [1h|30m|1d]` – 1-2-Strukturen über alle Titel\n\n" +
+                   "✅ Chat-ID für automatische Alerts gespeichert.",
+                 { parse_mode: "Markdown" }
+          @@ -83,7 +83,7 @@ export function registerCommands(
+               }
+             });
+           
+          -  // V165: Analyse-Tafel - alles in einem Bild, wenig Text darunter.
+          +  // V171: kanonisches Decision Board - keine zweite Forecast-Logik.
+             bot.command("deep", async (ctx) => {
+               const parts = (ctx.message as any)?.text?.trim().split(/\s+/) ?? [];
+               const symbol = (parts[1] || "").toUpperCase();
+          @@ -91,11 +91,16 @@ export function registerCommands(
+               const rng = (parts[2] || "5y").toLowerCase();
+               const iv = (parts[3] || "1wk").toLowerCase();
+               try {
+          -      await ctx.reply(`📐 Analyse-Tafel ${symbol}…`);
+          +      await ctx.reply(`📐 Decision Board ${symbol}…`);
+                 const { buildDeepChart } = await import("../core/deepChart");
+                 const res = await buildDeepChart(symbol, rng, iv);
+                 if (res.buffer) {
+          -        await ctx.replyWithPhoto({ source: res.buffer }, { caption: res.caption, parse_mode: "Markdown" });
+          +        const safe = symbol.replace(/[^A-Z0-9._-]/g, "_");
+          +        // V171: als Dokument bleibt die 155-DPI-Tafel auf Telegram unveraendert.
+          +        await ctx.replyWithDocument(
+          +          { source: res.buffer, filename: `${safe}-${iv}-${rng}-deep-v171.png` },
+          +          { caption: res.caption, parse_mode: "Markdown" }
+          +        );
+                 } else {
+                   await ctx.reply(res.caption, { parse_mode: "Markdown" });
+                 }
+          diff --git a/src/core/deepChart.ts b/src/core/deepChart.ts
+          index 51fcf1c..e696ceb 100644
+          --- a/src/core/deepChart.ts
+          +++ b/src/core/deepChart.ts
+          @@ -1,27 +1,38 @@
+          -import { fetchMarketData, Candle, isThinHistory } from "./marketData";
+          -import { findImpulseAdaptive, WaveCount } from "./impulseFinder";
+          +import { spawn } from "child_process";
+          +import path from "path";
+          +import db from "./db";
+          +import { fetchMarketData, type Candle, isThinHistory } from "./marketData";
+          +import {
+          +  findImpulseAdaptive,
+          +  findRankedImpulses,
+          +  type AdaptiveImpulse,
+          +  type WaveCount,
+          +} from "./impulseFinder";
+           import { checkProportion } from "./proportion";
+          -import { longLevelCandidates, shortLevelCandidates, clusterLevels, FibCluster } from "./fibCluster";
+          +import type { FibCluster } from "./fibCluster";
+           import { assessMultiWave } from "./multiWave";
+           import { measureContinuity } from "./continuity";
+           import { readDegree } from "./degree";
+           import { zigzag } from "./zigzag";
+          -import { classifyCorrection, CorrectionRead } from "./correction";
+          -import { spawn } from "child_process";
+          -import path from "path";
+          +import { assessQuality } from "./quality";
+          +import {
+          +  forecastTarget,
+          +  inspectForecastSetup,
+          +  type Direction,
+          +} from "./forecast";
+          +import {
+          +  selectDeepDecision,
+          +  type DeepStatus,
+          +  type PersistedDecision,
+          +} from "./deepDecision";
+           
+           /**
+          - * V165: Analyse-Tafel (`/deep`).
+          + * V171: `/deep` ist ein Decision Board, keine zweite Forecast-Engine.
+            *
+          - * Der Standard-Chart bleibt schlank - er laeuft bei jeder Analyse. Diese Tafel
+          - * buendelt auf Abruf alles, was die Engine ohnehin berechnet, in EIN Bild:
+          - * Zaehlung mit beschrifteten Punkten, Zielzonen, Entscheidungsmarken,
+          - * Seitenleiste und einen schematischen Projektionspfad.
+          - *
+          - * Die Projektion zeichnet den Weg zu den BEREITS BERECHNETEN Zielzonen - sie
+          - * ist keine Kursprognose. Kein RSI (die Engine ist rein strukturell) und keine
+          - * frei gesetzte Wahrscheinlichkeit: statt einer Zahl wie "55/45" zeigt die
+          - * Tafel Zaehlungs-Score und Kontinuitaet, die beide aus den Daten stammen.
+          + * Alle handelbaren Level kommen entweder aus dem unveraenderlichen Snapshot
+          + * eines laufenden Setups oder aus `inspectForecastSetup`, das exakt denselben
+          + * kanonischen Pfad wie Live und Replay benutzt. Es gibt keine frei erfundenen
+          + * Szenario-Punkte und keine handelbaren Score-1-Fallback-Zonen.
+            */
+           
+           export interface DeepResult {
+          @@ -29,143 +40,161 @@ export interface DeepResult {
+             caption: string;
+           }
+           
+          -interface Scenario {
+          -  name: string;
+          -  color: string;
+          -  path: { price: number; label: string }[];
+          -  note: string;
+          -}
+          -
+          -const pt = (wc: WaveCount, l: string) => wc.points.find((p) => p.label === l) ?? null;
+          +const pt = (wc: WaveCount, label: string) =>
+          +  wc.points.find((p) => p.label === label) ?? null;
+           
+          -interface TradePlan {
+          -  art: string;
+          -  entry: number;
+          -  stop: number;
+          -  ziel: number;
+          -  risk: number;   // % vom Einstieg
+          -  crv: number;
+          +function parseStringArray(value: unknown): string[] {
+          +  try {
+          +    const parsed = JSON.parse(String(value ?? "[]"));
+          +    return Array.isArray(parsed) ? parsed.map(String) : [];
+          +  } catch {
+          +    return [];
+          +  }
+           }
+           
+          -/**
+          - * Zwei handelbare Varianten aus den bereits berechneten Zonen:
+          - *  - Ruecksetzer: in der naechsten Zone GEGEN den Kurs kaufen, Stop darunter
+          - *  - Ausbruch: ueber der naechsten Zone MIT dem Trend, Stop unter deren Boden
+          - * Ziel ist jeweils die naechste Zone in Trendrichtung dahinter.
+          - */
+          -function buildTrades(up: boolean, price: number, clusters: FibCluster[]): TradePlan[] {
+          -  const out: TradePlan[] = [];
+          -  const asc = [...clusters].sort((a, b) => a.center - b.center);
+          -  const above = asc.filter((c) => c.floor > price);
+          -  const below = asc.filter((c) => c.ceiling < price).reverse();
+          +/** Nur ein noch laufender, zum angeforderten Rahmen passender Snapshot gewinnt. */
+          +function loadPersistedDecision(
+          +  symbol: string,
+          +  interval: string,
+          +  range: string
+          +): PersistedDecision | null {
+          +  const row = db.prepare(
+          +    `SELECT s.status, s.direction, s.cluster_floor, s.cluster_ceiling,
+          +            s.cluster_score, s.trigger_level, s.invalidation, s.c_low,
+          +            s.snapshot_id, s.as_of, s.data_hash, s.engine_version,
+          +            s.created_at, s.levels,
+          +            ss.cluster_evidence_count, ss.cluster_families,
+          +            t.entry_price, t.target
+          +       FROM setups s
+          +       LEFT JOIN signal_snapshots ss ON ss.id = s.snapshot_id
+          +       LEFT JOIN trade_history t
+          +         ON t.snapshot_id = s.snapshot_id
+          +        AND t.resolution IS NULL
+          +        AND t.is_success IS NULL
+          +      WHERE UPPER(s.symbol) = UPPER(?)
+          +        AND COALESCE(s.interval_name, ?) = ?
+          +        AND COALESCE(s.range_name, ?) = ?
+          +        AND s.status IN ('PENDING', 'CONFIRMED')
+          +      ORDER BY CASE s.status WHEN 'PENDING' THEN 0 ELSE 1 END,
+          +               s.updated_at DESC
+          +      LIMIT 1`
+          +  ).get(symbol, interval, interval, range, range) as any;
+           
+          -  const mk = (art: string, entry: number, stop: number, ziel: number) => {
+          -    const risk = Math.abs(entry - stop) / entry * 100;
+          -    const crv = Math.abs(ziel - entry) / Math.max(Math.abs(entry - stop), 1e-9);
+          -    if (!isFinite(crv) || risk <= 0) return;
+          -    out.push({ art, entry, stop, ziel, risk, crv });
+          +  if (!row) return null;
+          +  if (row.status === "CONFIRMED" && row.entry_price == null) return null;
+          +  const direction: Direction = row.direction === "SHORT" ? "SHORT" : "LONG";
+          +  const zone: FibCluster = {
+          +    floor: Number(row.cluster_floor),
+          +    ceiling: Number(row.cluster_ceiling),
+          +    center: (Number(row.cluster_floor) + Number(row.cluster_ceiling)) / 2,
+          +    score: Number(row.cluster_score),
+          +    evidenceCount: Number(row.cluster_evidence_count ?? parseStringArray(row.levels).length),
+          +    labels: parseStringArray(row.levels),
+          +    families: parseStringArray(row.cluster_families),
+          +  };
+          +  const trigger = Number(row.trigger_level);
+          +  const cExtreme = Number(row.c_low);
+          +  const target = row.target != null
+          +    ? Number(row.target)
+          +    : forecastTarget({ direction, trigger, cExtreme });
+          +  return {
+          +    status: row.status === "CONFIRMED" ? "CONFIRMED" : "PENDING",
+          +    direction,
+          +    zone,
+          +    trigger,
+          +    invalidation: Number(row.invalidation),
+          +    cExtreme,
+          +    target,
+          +    entry: row.entry_price == null ? null : Number(row.entry_price),
+          +    snapshotId: String(row.snapshot_id ?? "legacy"),
+          +    asOf: String(row.as_of ?? row.created_at),
+          +    dataHash: String(row.data_hash ?? "legacy-no-data-hash"),
+          +    engineVersion: String(row.engine_version ?? "legacy"),
+          +    createdAt: String(row.created_at),
+             };
+          +}
+           
+          -  if (up) {
+          -    // Ruecksetzer in die naechste Zone darunter
+          -    const z = below[0];
+          -    const target = above[0] ?? clusters.sort((a, b) => b.center - a.center)[0];
+          -    if (z && target) mk("Rücksetzer", z.ceiling, z.floor * 0.97, target.center);
+          -    // Ausbruch ueber die naechste Zone darueber
+          -    const b = above[0];
+          -    const t2 = above[1];
+          -    if (b && t2) mk("Ausbruch", b.ceiling, b.floor * 0.97, t2.center);
+          -  } else {
+          -    const z = above[0];
+          -    const target = below[0] ?? clusters.sort((a, b) => a.center - b.center)[0];
+          -    if (z && target) mk("Rücklauf", z.floor, z.ceiling * 1.03, target.center);
+          -    const b = below[0];
+          -    const t2 = below[1];
+          -    if (b && t2) mk("Bruch", b.floor, b.ceiling * 1.03, t2.center);
+          -  }
+          -  return out;
+          +interface CountStability {
+          +  agreeing: number;
+          +  total: number;
+           }
+           
+          -/** Schematischer Pfad zu den bereits berechneten Zielzonen. */
+          -function buildScenarios(
+          -  wc: WaveCount,
+          -  price: number,
+          -  clusters: FibCluster[],
+          -  trigger: number | null,
+          -  invalidation: number | null
+          -): Scenario[] {
+          -  const above = clusters.filter((c) => c.center > price).sort((a, b) => a.center - b.center);
+          -  const below = clusters.filter((c) => c.center < price).sort((a, b) => b.center - a.center);
+          -  const up = wc.trend === "bullish";
+          -  const out: Scenario[] = [];
+          +function countStability(candles: Candle[], adaptive: AdaptiveImpulse): CountStability {
+          +  const chosen0 = pt(adaptive.result.count, "0");
+          +  const chosen5 = pt(adaptive.result.count, "5");
+          +  const ranked = findRankedImpulses(adaptive.pivots, 5)
+          +    .filter((r) => checkProportion(candles, r.count).ok);
+          +  if (!chosen0 || !chosen5 || ranked.length === 0) return { agreeing: 1, total: 1 };
+          +  const agreeing = ranked.filter((r) => {
+          +    const a0 = pt(r.count, "0");
+          +    const a5 = pt(r.count, "5");
+          +    return r.count.trend === adaptive.result.count.trend &&
+          +      a0?.date === chosen0.date && a5?.date === chosen5.date;
+          +  }).length;
+          +  return { agreeing: Math.max(1, agreeing), total: ranked.length };
+          +}
+           
+          -  const primTargets = up ? above : below;
+          -  if (primTargets.length > 0) {
+          -    const t1 = primTargets[0].center;
+          -    const t2 = primTargets[1]?.center ?? t1 * (up ? 1.12 : 0.9);
+          -    const back = t1 + (price - t1) * 0.38; // schematischer Ruecksetzer
+          -    out.push({
+          -      name: "PRIMÄR",
+          -      color: "#22c55e",
+          -      path: [
+          -        { price, label: "" },
+          -        { price: trigger ?? (price + t1) / 2, label: "Trigger" },
+          -        { price: t1, label: "Ziel 1" },
+          -        { price: back, label: "" },
+          -        { price: t2, label: "Ziel 2" },
+          -      ],
+          -      note: `${up ? "Aufwärts" : "Abwärts"} zu ${t1.toFixed(2)}, dann ${t2.toFixed(2)}`,
+          -    });
+          -  }
+          +function sameZone(a: FibCluster | null, b: FibCluster): boolean {
+          +  if (!a) return false;
+          +  const scale = Math.max(Math.abs(a.center), Math.abs(b.center), 1);
+          +  return Math.abs(a.center - b.center) / scale < 0.001;
+          +}
+           
+          -  // Gegenrichtung. Steht der Kurs in keiner Zone, gibt es keine berechnete
+          -  // Invalidierung - dann dient die naechste Zone in Gegenrichtung als Auslöser.
+          -  const altTargets = up ? below : above;
+          -  if (altTargets.length > 0) {
+          -    const gate = invalidation ?? altTargets[0].ceiling;
+          -    const a1 = altTargets[0].center;
+          -    const a2 = altTargets[1]?.center ?? a1 * (up ? 0.88 : 1.12);
+          -    out.push({
+          -      name: "ALTERNATIVE",
+          -      color: "#f97316",
+          -      path: [
+          -        { price, label: "" },
+          -        { price: gate, label: invalidation != null ? "Invalidierung" : "Bruch" },
+          -        { price: a1, label: "Ziel A" },
+          -        { price: a2, label: "Ziel B" },
+          -      ],
+          -      note: `Unter ${gate.toFixed(2)} → ${a1.toFixed(2)} / ${a2.toFixed(2)}`,
+          -    });
+          +function lastMatching<T>(items: T[], predicate: (item: T) => boolean): T | null {
+          +  for (let i = items.length - 1; i >= 0; i--) {
+          +    if (predicate(items[i])) return items[i];
+             }
+          -  return out;
+          +  return null;
+           }
+           
+           function renderDeep(payload: unknown): Promise<Buffer | null> {
+             return new Promise((resolve) => {
+               const script = path.join(process.cwd(), "python_service", "deep_drawer.py");
+          -    const py = spawn("python3", [script]);
+          +    const py = spawn("python3", [script], {
+          +      env: {
+          +        ...process.env,
+          +        MPLCONFIGDIR: process.env.MPLCONFIGDIR ?? "/tmp/ew-matplotlib-cache",
+          +      },
+          +    });
+               const chunks: Buffer[] = [];
+               py.stdout.on("data", (d) => chunks.push(d));
+          -    py.stderr.on("data", (d) => console.error("[DEEP]", d.toString().slice(0, 300)));
+          +    py.stderr.on("data", (d) => console.error("[DEEP]", d.toString().slice(0, 500)));
+               py.on("close", (code) => resolve(code === 0 && chunks.length ? Buffer.concat(chunks) : null));
+               py.stdin.write(JSON.stringify(payload));
+               py.stdin.end();
+             });
+           }
+           
+          +function statusText(status: DeepStatus): string {
+          +  const labels: Record<DeepStatus, string> = {
+          +    PENDING: "PENDING · LEVEL EINGEFROREN",
+          +    CONFIRMED: "CONFIRMED · TRADE AKTIV",
+          +    CANDIDATE: "KANONISCHER KANDIDAT",
+          +    WATCH: "WATCH · ZU WENIG FAMILIEN",
+          +    WAIT_C: "WARTET AUF C-EXTREM",
+          +    OUTSIDE_WINDOW: "AUSSERHALB ZEITFENSTER",
+          +    IMPULSE_ACTIVE: "IMPULS NOCH AKTIV",
+          +    NO_SETUP: "KEIN AKTIVES SETUP",
+          +  };
+          +  return labels[status];
+          +}
+          +
+           export async function buildDeepChart(
+             symbol: string,
+             range = "5y",
+             interval = "1wk"
+           ): Promise<DeepResult> {
+             let candles: Candle[];
+          +  let provenance: Awaited<ReturnType<typeof fetchMarketData>>["provenance"];
+             try {
+          -    candles = (await fetchMarketData(symbol, interval, range)).weeklyAnalysisCandles;
+          +    const market = await fetchMarketData(symbol, interval, range);
+          +    candles = market.weeklyAnalysisCandles;
+          +    provenance = market.provenance;
+             } catch (e: any) {
+               if (isThinHistory(e)) {
+                 return {
+                   buffer: null,
+          -        caption: `⚠️ **${symbol}**: ${e.have} von ${e.need} Kerzen (Erstnotiz ${e.firstTrade ?? "?"}).`,
+          +        caption: `⚠️ **${symbol}**: ${e.have} von ${e.need} abgeschlossenen Kerzen (Erstnotiz ${e.firstTrade ?? "?"}).`,
+                 };
+               }
+               return { buffer: null, caption: `❌ ${symbol}: ${e?.message ?? e}` };
+          @@ -175,125 +204,197 @@ export async function buildDeepChart(
+             if (!outcome.impulse) {
+               return { buffer: null, caption: `🔍 **${symbol}**: keine belastbare Zählung (DK-7).` };
+             }
+          -  const res = outcome.impulse.result;
+          -  const wc = res.count;
+          -  const price = candles[candles.length - 1].close;
+          -  const up = wc.trend === "bullish";
+          -  const w0 = pt(wc, "0"), w4 = pt(wc, "4"), w5 = pt(wc, "5");
+          -
+          -  // Zielzonen. Ohne die Korrektur-Legs (A/B) entstehen nur Einzel-Level ohne
+          -  // Konfluenz - alle mit Score 1. Erst die C-Ableitungen erzeugen Zonen.
+          -  let clusters: FibCluster[] = [];
+          -  if (w0 && w5) {
+          -    const post = candles.filter((k) => k.date > w5.date);
+          -    const piv = zigzag(post, outcome.impulse.threshold).filter((q) => q.date > w5.date);
+          -    const wantA: "L" | "H" = up ? "L" : "H";
+          -    const a = piv.find((q) => q.kind === wantA) ?? null;
+          -    const b = a ? piv.find((q) => q.date > a.date && q.kind !== wantA) ?? null : null;
+          -    const base = { w0: w0.price, w5: w5.price, w4: w4 ? w4.price : null };
+          -    const lv = up
+          -      ? longLevelCandidates({ ...base, aLow: a ? a.price : null, bHigh: b ? b.price : null })
+          -      : shortLevelCandidates({ ...base, aHigh: a ? a.price : null, bLow: b ? b.price : null });
+          -    const all = clusterLevels(lv);
+          -    const strong = all.filter((c) => c.score >= 2);
+          -    // Fallback auf die hoechstbewerteten Einzel-Level, damit die Tafel nie
+          -    // ohne Zonen bleibt.
+          -    clusters = strong.length >= 2 ? strong : all.sort((x, y) => y.score - x.score).slice(0, 6);
+          +  const adaptive = outcome.impulse;
+          +  const result = adaptive.result;
+          +  const wc = result.count;
+          +  const inspection = inspectForecastSetup(candles, {
+          +    minClusterScore: 3,
+          +    interval,
+          +    range,
+          +    impulse: adaptive,
+          +  });
+          +  if (!inspection) {
+          +    return { buffer: null, caption: `🔍 **${symbol}**: Forecast-Kontext nicht ableitbar.` };
+             }
+           
+          -  const marks: { price: number; label: string; color: string }[] = [];
+          -  if (w5) marks.push({ price: w5.price, label: "Welle-5-Extrem", color: "#38bdf8" });
+          -  if (w0) marks.push({ price: w0.price, label: "Impuls-Ursprung", color: "#a78bfa" });
+          +  const persisted = loadPersistedDecision(symbol, interval, range);
+          +  const decision = selectDeepDecision(inspection, persisted);
+          +  const w4 = pt(wc, "4");
+          +  const w5 = pt(wc, "5");
+          +  const directionSign: 1 | -1 = wc.trend === "bullish" ? 1 : -1;
+           
+          -  let trigger: number | null = null;
+          -  let invalidation: number | null = null;
+          -  const inZone = clusters.find((c) => price >= c.floor && price <= c.ceiling);
+          -  if (inZone) {
+          -    invalidation = up ? inZone.floor * 0.97 : inZone.ceiling * 1.03;
+          -    const over = clusters
+          -      .filter((c) => (up ? c.floor > price : c.ceiling < price))
+          -      .sort((a2, b2) => (up ? a2.floor - b2.floor : b2.ceiling - a2.ceiling))[0];
+          -    if (over) trigger = up ? over.floor : over.ceiling;
+          -  }
+          -  if (trigger != null) marks.push({ price: trigger, label: "Trigger", color: "#22c55e" });
+          -  if (invalidation != null) marks.push({ price: invalidation, label: "Invalidierung", color: "#ef4444" });
+          +  const currentPivots = zigzag(candles, adaptive.threshold, true);
+          +  const provisional = lastMatching(currentPivots, (p) => p.status === "PROVISIONAL");
+          +  const lastConfirmed = lastMatching(adaptive.pivots, (p) => p.status === "CONFIRMED");
+          +  const multiWave = w5
+          +    ? assessMultiWave(candles, w5.date, w5.price, (directionSign * -1) as 1 | -1, adaptive.threshold)
+          +    : null;
+          +  const continuity = measureContinuity(adaptive.pivots, wc);
+          +  const continuityGrade = !continuity ? "n/a"
+          +    : continuity.ratio <= 0.25 ? "hoch"
+          +    : continuity.ratio <= 0.6 ? "mittel"
+          +    : "niedrig";
+          +  const quality = assessQuality(candles, wc, adaptive.threshold);
+          +  const stability = countStability(candles, adaptive);
+          +  const degree = readDegree(candles, inspection.price);
+           
+          -  // V166: Korrektur-Lesart (A-B-C / W-X-Y) - fehlte in der Tafel komplett,
+          -  // obwohl der Standard-Chart sie zeichnet.
+          -  let corrPoints: { label: string; date: string; price: number }[] = [];
+          -  let corrPattern: string | null = null;
+          -  if (w5) {
+          -    const postPiv = zigzag(candles, outcome.impulse.threshold).filter((q) => q.date > w5.date);
+          -    const wantA: "L" | "H" = up ? "L" : "H";
+          -    const a = postPiv.find((q) => q.kind === wantA) ?? null;
+          -    const b = a ? postPiv.find((q) => q.date > a.date && q.kind !== wantA) ?? null : null;
+          -    if (a && b) {
+          -      const after = candles.filter((k) => k.date > b.date);
+          -      const cExt = after.length
+          -        ? up ? Math.min(...after.map((k) => k.low)) : Math.max(...after.map((k) => k.high))
+          -        : null;
+          -      const cDate = after.length
+          -        ? after.reduce((m, k) => ((up ? k.low < m.low : k.high > m.high) ? k : m), after[0]).date
+          -        : null;
+          -      const cr: CorrectionRead = classifyCorrection(
+          -        w5.price, a.price, b.price, cExt, price, postPiv, up ? 1 : -1,
+          -        {
+          -          candles, parentThreshold: outcome.impulse.threshold, topDate: w5.date,
+          -          aDate: a.date, bDate: b.date,
+          -          impulseOrigin: w0?.price ?? null, impulseEnd: w5.price,
+          -        }
+          -      );
+          -      corrPoints = cr.legPoints;
+          -      corrPattern = cr.pattern;
+          -      if (cDate && corrPoints.length === 2 && cExt != null) {
+          -        corrPoints.push({ label: /DOUBLE|WXY|KOMBI/.test(cr.pattern) ? "Y" : "C", date: cDate, price: cExt });
+          -      }
+          -    }
+          +  const clusters = inspection.clusters
+          +    .filter((c) => c.score >= 2)
+          +    .slice()
+          +    .sort((a, b) => b.score - a.score || b.evidenceCount - a.evidenceCount)
+          +    .slice(0, 6)
+          +    .map((c) => ({
+          +      floor: c.floor,
+          +      ceiling: c.ceiling,
+          +      center: c.center,
+          +      score: c.score,
+          +      evidenceCount: c.evidenceCount,
+          +      labels: c.labels,
+          +      families: c.families,
+          +      role: sameZone(decision.zone, c) ? "ACTIVE" : c.score >= 3 ? "STRONG" : "WATCH",
+          +    }));
+          +  if (decision.zone && !clusters.some((c) => sameZone(decision.zone, c))) {
+          +    clusters.unshift({
+          +      floor: decision.zone.floor,
+          +      ceiling: decision.zone.ceiling,
+          +      center: decision.zone.center,
+          +      score: decision.zone.score,
+          +      evidenceCount: decision.zone.evidenceCount,
+          +      labels: decision.zone.labels,
+          +      families: decision.zone.families,
+          +      role: "ACTIVE",
+          +    });
+             }
+           
+          -  let mwPoints: { label: string; date: string; price: number }[] = [];
+          -  if (w5) {
+          -    const mw = assessMultiWave(candles, w5.date, w5.price, up ? -1 : 1, outcome.impulse.threshold);
+          -    if (mw.intact && mw.points.length) mwPoints = mw.points;
+          +  const marks: { price: number; label: string; color: string; style: string }[] = [];
+          +  if (decision.trigger != null) {
+          +    marks.push({ price: decision.trigger, label: "TRIGGER · SCHLUSSKURS", color: "#22c55e", style: "solid" });
+          +  }
+          +  if (decision.invalidation != null) {
+          +    marks.push({ price: decision.invalidation, label: "INVALIDIERUNG · SCHLUSSKURS", color: "#ef4444", style: "solid" });
+             }
+          +  if (decision.target != null) {
+          +    marks.push({ price: decision.target, label: "MODELLZIEL 1.618·i", color: "#38bdf8", style: "dash" });
+          +  }
+          +  marks.push({ price: inspection.price, label: "LETZTER SCHLUSS", color: "#e2e8f0", style: "dot" });
+           
+          -  const cont = measureContinuity(zigzag(candles, outcome.impulse.threshold), wc);
+          -  const deg = readDegree(candles, price);
+          +  const relation = decision.direction === "LONG" ? ">" : "<";
+          +  const invRelation = decision.direction === "LONG" ? "<" : ">";
+          +  const rules: { name: string; condition: string; result: string; color: string }[] = [];
+          +  if (decision.status === "CONFIRMED" && decision.target != null && decision.invalidation != null) {
+          +    rules.push({
+          +      name: "PRIMÄR",
+          +      condition: `Trade aktiv${decision.entry != null ? ` ab ${decision.entry.toFixed(2)}` : ""}`,
+          +      result: `Ziel ${decision.target.toFixed(2)}`,
+          +      color: "#22c55e",
+          +    });
+          +    rules.push({
+          +      name: "RISIKO",
+          +      condition: `${invRelation} ${decision.invalidation.toFixed(2)}`,
+          +      result: "Trade invalidiert",
+          +      color: "#ef4444",
+          +    });
+          +  } else if (
+          +    (decision.status === "PENDING" || decision.status === "CANDIDATE") &&
+          +    decision.trigger != null && decision.invalidation != null && decision.target != null
+          +  ) {
+          +    rules.push({
+          +      name: "PRIMÄR",
+          +      condition: `Schluss ${relation} ${decision.trigger.toFixed(2)}`,
+          +      result: `Ziel ${decision.target.toFixed(2)}`,
+          +      color: "#22c55e",
+          +    });
+          +    rules.push({
+          +      name: "ALTERNATIVE",
+          +      condition: `Schluss ${invRelation} ${decision.invalidation.toFixed(2)}`,
+          +      result: "These invalidiert",
+          +      color: "#f97316",
+          +    });
+          +  } else {
+          +    rules.push({
+          +      name: "AKTION",
+          +      condition: "Kein bestätigter Trigger",
+          +      result: "NO TRADE",
+          +      color: "#94a3b8",
+          +    });
+          +  }
+           
+          +  const w4Index = w4 ? candles.findIndex((c) => c.date === w4.date) : -1;
+          +  const desiredZoom = w4Index >= 0 ? Math.max(0, w4Index - 3) : candles.length - 78;
+          +  // Mindestens 52, hoechstens 78 Bars: W4 bleibt im Makro sichtbar, waehrend
+          +  // der operative Chart wirklich auf das aktuelle Setup fokussiert.
+          +  const zoomIndex = Math.max(
+          +    0,
+          +    candles.length - 78,
+          +    Math.min(desiredZoom, candles.length - 52)
+          +  );
+          +  const corr = inspection.correction;
+             const payload = {
+          +    version: "V171",
+               symbol,
+          -    interval: interval === "1d" ? "DAILY" : "WEEKLY",
+          +    interval: interval === "1d" ? "DAILY" : interval === "1wk" ? "WEEKLY" : interval.toUpperCase(),
+               range,
+          -    price,
+          +    price: inspection.price,
+               trend: wc.trend,
+               candles,
+          -    waves: wc.points.map((p) => ({ label: p.label, date: p.date, price: p.price })),
+          -    multiWave: mwPoints,
+          -    correction: corrPoints,
+          -    corrPattern,
+          -    trades: buildTrades(up, price, clusters),
+          -    clusters: clusters.map((c) => ({
+          -      floor: c.floor, ceiling: c.ceiling, score: c.score, labels: c.labels,
+          -    })),
+          +    zoomFrom: candles[zoomIndex]?.date ?? candles[0].date,
+          +    waves: wc.points.map((p) => ({ ...p, status: "CONFIRMED" })),
+          +    correction: corr?.legPoints ?? [],
+          +    provisional: provisional ? {
+          +      date: provisional.date,
+          +      price: provisional.price,
+          +      kind: provisional.kind,
+          +      label: provisional.kind === "H" ? "? Hoch" : "? Tief",
+          +    } : null,
+          +    multiWave: multiWave?.intact ? multiWave.points : [],
+          +    clusters,
+               marks,
+          -    scenarios: buildScenarios(wc, price, clusters, trigger, invalidation),
+          -    struktur: {
+          -      score: `${res.score}/${res.maxScore}`,
+          -      anker: res.doctrineAnchor ? "Doktrin" : "Fallback",
+          -      zigzag: `${outcome.impulse.threshold} %`,
+          -      kontinuitaet: cont ? `${(cont.ratio * 100).toFixed(0)} % übersprungen` : "-",
+          -      grad: deg ? deg.cycleGrade : "-",
+          -      raster: deg?.stats
+          -        ? `${(deg.stats.retrMin * 100).toFixed(0)}–${(deg.stats.retrMed * 100).toFixed(0)}–${(deg.stats.retrMax * 100).toFixed(0)} %`
+          -        : "-",
+          +    rules,
+          +    decision: {
+          +      ...decision,
+          +      statusLabel: statusText(decision.status),
+          +      zone: decision.zone ? {
+          +        floor: decision.zone.floor,
+          +        ceiling: decision.zone.ceiling,
+          +        score: decision.zone.score,
+          +        evidenceCount: decision.zone.evidenceCount,
+          +        families: decision.zone.families,
+          +      } : null,
+          +    },
+          +    evidence: {
+          +      countScore: `${result.score}/${result.maxScore}`,
+          +      countStability: `${stability.agreeing}/${stability.total} gleicher W0/W5-Anker`,
+          +      continuity: continuity
+          +        ? `${continuityGrade} · ${(continuity.ratio * 100).toFixed(0)} % Pivot-Lücken`
+          +        : "n/a",
+          +      quality: `${quality.bonus}/${quality.maxBonus || 0}`,
+          +      qualityFlags: quality.flags,
+          +      threshold: `${adaptive.threshold} %`,
+          +      degree: degree?.cycleGrade ?? "n/a",
+          +      lastConfirmedPivot: lastConfirmed?.confirmedAt ?? lastConfirmed?.date ?? null,
+          +      correctionPattern: corr?.pattern ?? null,
+          +      reversalRisk: corr?.reversalRisk ?? "NONE",
+          +      timeStatus: inspection.timeStatus,
+          +      timeWindow: inspection.timeWindow,
+          +    },
+          +    provenance: {
+          +      provider: provenance.provider,
+          +      adjustment: provenance.adjustment,
+          +      fetchedAt: provenance.fetchedAt,
+          +      dataAsOf: provenance.lastBarClose ?? inspection.asOf,
+          +      dataHash: inspection.dataHash,
+          +      corporateActionCount: provenance.corporateActionCount,
+          +      closedBarsOnly: candles.every((c) => c.isClosed !== false),
+               },
+          -    stand: new Date().toISOString().slice(0, 10),
+             };
+           
+             const buffer = await renderDeep(payload);
+          +  const levelLine = decision.trigger != null && decision.invalidation != null
+          +    ? `\nTrigger ${relation} ${decision.trigger.toFixed(2)} · Invalidierung ${invRelation} ${decision.invalidation.toFixed(2)}`
+          +    : "";
+             const caption =
+          -    `📐 **${symbol}** · ${payload.interval} (${range}) · ${wc.trend} · Score ${res.score}/${res.maxScore}` +
+          -    (trigger != null ? `\nTrigger ${trigger.toFixed(2)}` : "") +
+          -    (invalidation != null ? ` · Invalidierung ${invalidation.toFixed(2)}` : "");
+          +    `📐 **${symbol}** · ${payload.interval} · ${statusText(decision.status)}` +
+          +    `\nDatenstand ${String(payload.provenance.dataAsOf).slice(0, 10)} · ${decision.direction}` +
+          +    levelLine;
+             return { buffer, caption };
+           }
+          diff --git a/src/core/deepChartRegression.ts b/src/core/deepChartRegression.ts
+          new file mode 100644
+          index 0000000..c40e19f
+          --- /dev/null
+          +++ b/src/core/deepChartRegression.ts
+          @@ -0,0 +1,110 @@
+          +import assert from "node:assert/strict";
+          +import fs from "node:fs";
+          +import path from "node:path";
+          +import type { FibCluster } from "./fibCluster";
+          +import type { ForecastDetection, ForecastInspection } from "./forecast";
+          +import { forecastInvalidation, forecastTarget } from "./forecast";
+          +import { selectDeepDecision } from "./deepDecision";
+          +
+          +const cluster: FibCluster = {
+          +  floor: 95,
+          +  ceiling: 101,
+          +  center: 98,
+          +  score: 3,
+          +  evidenceCount: 7,
+          +  labels: ["Retr 0.618", "W4-Zone", "C=1.0·A"],
+          +  families: ["IMPULSE_RETRACEMENT", "PRIOR_WAVE", "ABC_PROJECTION"],
+          +};
+          +
+          +const setup: ForecastDetection = {
+          +  direction: "LONG",
+          +  cluster,
+          +  trigger: 105,
+          +  cExtreme: 97,
+          +  timeStatus: "IN_WINDOW",
+          +  timeWindow: { from: "2026-01-01", to: "2026-03-01" },
+          +  asOf: "2026-02-01T00:00:00.000Z",
+          +  dataHash: "abc",
+          +  interval: "1wk",
+          +  range: "5y",
+          +  count: { trend: "bullish", points: [], analysis: "fixture" },
+          +  threshold: 18,
+          +  engineVersion: "171.0.0",
+          +  provider: "yahoo-chart",
+          +  adjustment: "RAW_PROVIDER_OHLC",
+          +};
+          +
+          +const inspection: ForecastInspection = {
+          +  direction: "LONG",
+          +  price: 100,
+          +  phase: "CORRECTION",
+          +  gate: "SETUP",
+          +  minClusterScore: 3,
+          +  candidates: [],
+          +  clusters: [cluster],
+          +  watchCluster: cluster,
+          +  setup,
+          +  candidateTrigger: 105,
+          +  cExtreme: 97,
+          +  correction: null,
+          +  timeStatus: "IN_WINDOW",
+          +  timeWindow: setup.timeWindow,
+          +  asOf: setup.asOf,
+          +  dataHash: setup.dataHash,
+          +  interval: setup.interval,
+          +  range: setup.range,
+          +  count: setup.count,
+          +  threshold: setup.threshold,
+          +  engineVersion: setup.engineVersion,
+          +  provider: setup.provider,
+          +  adjustment: setup.adjustment,
+          +};
+          +
+          +// Der aktuelle Kandidat benutzt ausschliesslich kanonische Level/Formeln.
+          +const candidate = selectDeepDecision(inspection, null);
+          +assert.equal(candidate.status, "CANDIDATE");
+          +assert.equal(candidate.invalidation, forecastInvalidation(setup));
+          +assert.equal(candidate.target, forecastTarget(setup));
+          +assert.equal(candidate.target, 105 + 1.618 * (105 - 97));
+          +
+          +// Ein Frozen Snapshot hat Vorrang; aktuelle Neuberechnung darf ihn nicht bewegen.
+          +const frozen = selectDeepDecision(inspection, {
+          +  status: "PENDING",
+          +  direction: "LONG",
+          +  zone: { ...cluster, floor: 90, ceiling: 96, center: 93 },
+          +  trigger: 102,
+          +  invalidation: 87.3,
+          +  cExtreme: 91,
+          +  target: 119.798,
+          +  entry: null,
+          +  snapshotId: "frozen-snapshot",
+          +  asOf: "2026-01-01T00:00:00.000Z",
+          +  dataHash: "frozen-hash",
+          +  engineVersion: "170.0.0",
+          +  createdAt: "2026-01-01T00:00:00.000Z",
+          +});
+          +assert.equal(frozen.frozen, true);
+          +assert.equal(frozen.trigger, 102);
+          +assert.equal(frozen.invalidation, 87.3);
+          +assert.equal(frozen.target, 119.798);
+          +assert.equal(frozen.dataHash, "frozen-hash");
+          +
+          +// Score-2 bleibt WATCH und bekommt weder Trigger noch Ziel als Handelssignal.
+          +const weak: ForecastInspection = {
+          +  ...inspection,
+          +  gate: "WATCH",
+          +  setup: null,
+          +  watchCluster: { ...cluster, score: 2 },
+          +};
+          +const watch = selectDeepDecision(weak, null);
+          +assert.equal(watch.status, "WATCH");
+          +assert.equal(watch.trigger, null);
+          +assert.equal(watch.target, null);
+          +assert.equal(watch.invalidation, null);
+          +
+          +// Die alten frei erfundenen Szenario-Multiplikatoren duerfen nicht zurueckkehren.
+          +const source = fs.readFileSync(path.join(process.cwd(), "src", "core", "deepChart.ts"), "utf8");
+          +assert.doesNotMatch(source, /t1\s*\*\s*1\.12|t1\s*\*\s*0\.9|a1\s*\*\s*0\.88/);
+          +assert.doesNotMatch(source, /schematischer Ruecksetzer|buildScenarios|buildTrades/);
+          +
+          +console.log("✅ V171 Deep-Decision-Board-Regressionsprüfung bestanden");
+          diff --git a/src/core/deepDecision.ts b/src/core/deepDecision.ts
+          new file mode 100644
+          index 0000000..547e943
+          --- /dev/null
+          +++ b/src/core/deepDecision.ts
+          @@ -0,0 +1,130 @@
+          +import type { FibCluster } from "./fibCluster";
+          +import {
+          +  forecastInvalidation,
+          +  forecastTarget,
+          +  type Direction,
+          +  type ForecastInspection,
+          +} from "./forecast";
+          +
+          +export type DeepStatus =
+          +  | "PENDING"
+          +  | "CONFIRMED"
+          +  | "CANDIDATE"
+          +  | "WATCH"
+          +  | "WAIT_C"
+          +  | "OUTSIDE_WINDOW"
+          +  | "IMPULSE_ACTIVE"
+          +  | "NO_SETUP";
+          +
+          +export interface PersistedDecision {
+          +  status: "PENDING" | "CONFIRMED";
+          +  direction: Direction;
+          +  zone: FibCluster;
+          +  trigger: number;
+          +  invalidation: number;
+          +  cExtreme: number;
+          +  target: number;
+          +  entry: number | null;
+          +  snapshotId: string;
+          +  asOf: string;
+          +  dataHash: string;
+          +  engineVersion: string;
+          +  createdAt: string;
+          +}
+          +
+          +export interface DeepDecision {
+          +  status: DeepStatus;
+          +  direction: Direction;
+          +  frozen: boolean;
+          +  zone: FibCluster | null;
+          +  trigger: number | null;
+          +  invalidation: number | null;
+          +  cExtreme: number | null;
+          +  target: number | null;
+          +  entry: number | null;
+          +  potentialR: number | null;
+          +  snapshotId: string | null;
+          +  asOf: string;
+          +  dataHash: string;
+          +  engineVersion: string;
+          +  createdAt: string | null;
+          +}
+          +
+          +function potentialR(
+          +  direction: Direction,
+          +  entry: number,
+          +  invalidation: number,
+          +  target: number
+          +): number | null {
+          +  const risk = Math.abs(entry - invalidation);
+          +  if (!(risk > 0)) return null;
+          +  const s = direction === "LONG" ? 1 : -1;
+          +  const value = (s * (target - entry)) / risk;
+          +  return Number.isFinite(value) ? value : null;
+          +}
+          +
+          +/** Frozen Snapshot > aktueller Kandidat > nicht handelbare Diagnose. */
+          +export function selectDeepDecision(
+          +  inspection: ForecastInspection,
+          +  persisted: PersistedDecision | null
+          +): DeepDecision {
+          +  if (persisted) {
+          +    const basis = persisted.entry ?? persisted.trigger;
+          +    return {
+          +      ...persisted,
+          +      frozen: true,
+          +      potentialR: potentialR(
+          +        persisted.direction,
+          +        basis,
+          +        persisted.invalidation,
+          +        persisted.target
+          +      ),
+          +    };
+          +  }
+          +
+          +  const setup = inspection.setup;
+          +  if (setup) {
+          +    const invalidation = forecastInvalidation(setup);
+          +    const target = forecastTarget(setup);
+          +    return {
+          +      status: "CANDIDATE",
+          +      direction: setup.direction,
+          +      frozen: false,
+          +      zone: setup.cluster,
+          +      trigger: setup.trigger,
+          +      invalidation,
+          +      cExtreme: setup.cExtreme,
+          +      target,
+          +      entry: null,
+          +      potentialR: potentialR(setup.direction, setup.trigger, invalidation, target),
+          +      snapshotId: null,
+          +      asOf: setup.asOf,
+          +      dataHash: setup.dataHash,
+          +      engineVersion: setup.engineVersion,
+          +      createdAt: null,
+          +    };
+          +  }
+          +
+          +  const status: DeepStatus = inspection.gate === "WATCH" ? "WATCH"
+          +    : inspection.gate === "NO_C_EXTREME" ? "WAIT_C"
+          +    : inspection.gate === "OUTSIDE_WINDOW" ? "OUTSIDE_WINDOW"
+          +    : inspection.gate === "IMPULSE_ACTIVE" ? "IMPULSE_ACTIVE"
+          +    : "NO_SETUP";
+          +  return {
+          +    status,
+          +    direction: inspection.direction,
+          +    frozen: false,
+          +    zone: inspection.watchCluster,
+          +    trigger: null,
+          +    invalidation: null,
+          +    cExtreme: inspection.cExtreme,
+          +    target: null,
+          +    entry: null,
+          +    potentialR: null,
+          +    snapshotId: null,
+          +    asOf: inspection.asOf,
+          +    dataHash: inspection.dataHash,
+          +    engineVersion: inspection.engineVersion,
+          +    createdAt: null,
+          +  };
+          +}
+          diff --git a/src/core/forecast.ts b/src/core/forecast.ts
+          index c5ef8e6..934de4f 100644
+          --- a/src/core/forecast.ts
+          +++ b/src/core/forecast.ts
+          @@ -14,10 +14,10 @@ import {
+             type FibCluster,
+             type LevelCandidate,
+           } from "./fibCluster";
+          -import { classifyCorrection } from "./correction";
+          +import { classifyCorrection, type CorrectionRead } from "./correction";
+           import { addDaysIso, daysBetween } from "./time";
+           
+          -export const ENGINE_VERSION = "170.0.0";
+          +export const ENGINE_VERSION = "171.0.0";
+           export type Direction = "LONG" | "SHORT";
+           
+           export interface ForecastDetection {
+          @@ -38,6 +38,46 @@ export interface ForecastDetection {
+             adjustment: "RAW_PROVIDER_OHLC";
+           }
+           
+          +export type ForecastGate =
+          +  | "SETUP"
+          +  | "WATCH"
+          +  | "NO_ZONE"
+          +  | "IMPULSE_ACTIVE"
+          +  | "NO_C_EXTREME"
+          +  | "OUTSIDE_WINDOW"
+          +  | "NO_TRIGGER";
+          +
+          +/**
+          + * Vollstaendige, aber rein diagnostische Sicht auf denselben Forecast-Pfad.
+          + * `/deep` darf damit Zonen und Gates zeigen, ohne eine zweite Signal-Engine
+          + * nachzubauen. `setup` ist exakt das Ergebnis von `detectForecastSetup`.
+          + */
+          +export interface ForecastInspection {
+          +  direction: Direction;
+          +  price: number;
+          +  phase: "IMPULSE_ACTIVE" | "CORRECTION";
+          +  gate: ForecastGate;
+          +  minClusterScore: number;
+          +  candidates: LevelCandidate[];
+          +  clusters: FibCluster[];
+          +  watchCluster: FibCluster | null;
+          +  setup: ForecastDetection | null;
+          +  candidateTrigger: number | null;
+          +  cExtreme: number | null;
+          +  correction: CorrectionRead | null;
+          +  timeStatus: ForecastDetection["timeStatus"];
+          +  timeWindow: ForecastDetection["timeWindow"];
+          +  asOf: string;
+          +  dataHash: string;
+          +  interval: string;
+          +  range: string;
+          +  count: WaveCount;
+          +  threshold: number;
+          +  engineVersion: string;
+          +  provider: "yahoo-chart";
+          +  adjustment: "RAW_PROVIDER_OHLC";
+          +}
+          +
+           export interface DetectOptions {
+             minClusterScore?: number;
+             interval?: string;
+          @@ -135,15 +175,26 @@ function timeWindow(
+             };
+           }
+           
+          +export function forecastInvalidation(x: Pick<ForecastDetection, "direction" | "cluster">): number {
+          +  return x.direction === "LONG" ? x.cluster.floor * 0.97 : x.cluster.ceiling * 1.03;
+          +}
+          +
+          +export function forecastTarget(
+          +  x: Pick<ForecastDetection, "direction" | "trigger" | "cExtreme">
+          +): number {
+          +  const s = x.direction === "LONG" ? 1 : -1;
+          +  return x.trigger + s * 1.618 * Math.abs(x.trigger - x.cExtreme);
+          +}
+          +
+           /**
+          - * Kanonischer, reiner Setup-Detektor. Er ist der einzige Signalpfad fuer
+          - * Live-Engine und Walk-Forward-Replay. Nur bestaetigte Pivots und geschlossene
+          - * Bars gelangen hinein; das C-Zeitfenster ist ein echtes Gate.
+          + * Kanonische Diagnose inklusive schwacher Zonen und Gate-Grund. Sie benutzt
+          + * dieselben Legs, Kandidaten, Familien, Toleranzen und Zeitregeln wie das
+          + * produktive Signal. Keine der Informationen veraendert den Signalzustand.
+            */
+          -export function detectForecastSetup(
+          +export function inspectForecastSetup(
+             candles: Candle[],
+             options: DetectOptions = {}
+          -): ForecastDetection | null {
+          +): ForecastInspection | null {
+             if (candles.length < 6) return null;
+             const minClusterScore = options.minClusterScore ?? 3;
+             const adaptive = options.impulse ?? findImpulseAdaptive(
+          @@ -162,10 +213,13 @@ export function detectForecastSetup(
+             const dir: 1 | -1 = wc.trend === "bullish" ? 1 : -1;
+             const direction: Direction = dir === 1 ? "LONG" : "SHORT";
+             const price = candles[candles.length - 1].close;
+          -  if (dir === 1 ? price >= w5.price : price <= w5.price) return null;
+          +  const phase: ForecastInspection["phase"] = dir === 1
+          +    ? price < w5.price ? "CORRECTION" : "IMPULSE_ACTIVE"
+          +    : price > w5.price ? "CORRECTION" : "IMPULSE_ACTIVE";
+           
+          -  const legs = correctionLegs(adaptive.pivots, candles, w5.date, dir);
+          -  if (legs.c == null) return null;
+          +  const legs = phase === "CORRECTION"
+          +    ? correctionLegs(adaptive.pivots, candles, w5.date, dir)
+          +    : { a: null, aDate: null, b: null, bDate: null, c: null };
+           
+             const candidates: LevelCandidate[] = dir === 1
+               ? longLevelCandidates({
+          @@ -183,8 +237,9 @@ export function detectForecastSetup(
+                   bLow: legs.b,
+                 });
+           
+          +  let correction: CorrectionRead | null = null;
+             if (legs.a != null && legs.b != null) {
+          -    const correction = classifyCorrection(
+          +    correction = classifyCorrection(
+                 w5.price,
+                 legs.a,
+                 legs.b,
+          @@ -213,29 +268,19 @@ export function detectForecastSetup(
+             }
+           
+             const tw = timeWindow(candles, w5.date, legs.aDate, legs.bDate);
+          -  if (tw.status === "OUTSIDE_WINDOW") return null;
+          -
+             const tolerance = Math.max(3.5, Math.min(7, weeklyAtrPct(candles)));
+          +  const clusters = clusterLevels(candidates, tolerance);
+             const inRange = (cluster: FibCluster) =>
+               price >= cluster.floor * 0.97 && price <= cluster.ceiling * 1.03;
+          -  const cluster = clusterLevels(candidates, tolerance)
+          -    .find((x) => x.score >= minClusterScore && inRange(x));
+          -  if (!cluster) return null;
+          -
+          -  const trigger = candidates
+          +  const watchCluster = clusters.find((x) => x.score >= 2 && inRange(x)) ?? null;
+          +  const strongCluster = clusters.find((x) => x.score >= minClusterScore && inRange(x)) ?? null;
+          +  const candidateTrigger = candidates
+               .map((x) => x.price)
+               .filter((x) => dir === 1 ? x > price * 1.01 : x < price * 0.99)
+          -    .sort((a, b) => dir === 1 ? a - b : b - a)[0];
+          -  if (trigger == null) return null;
+          +    .sort((a, b) => dir === 1 ? a - b : b - a)[0] ?? null;
+           
+             const last = candles[candles.length - 1];
+          -  return {
+          -    direction,
+          -    cluster,
+          -    trigger,
+          -    cExtreme: legs.c,
+          -    timeStatus: tw.status,
+          -    timeWindow: tw.window,
+          +  const common = {
+               asOf: candleCloseTime(last),
+               dataHash: hashCandles(candles),
+               interval: options.interval ?? "1wk",
+          @@ -243,7 +288,58 @@ export function detectForecastSetup(
+               count: wc,
+               threshold: adaptive.threshold,
+               engineVersion: ENGINE_VERSION,
+          -    provider: "yahoo-chart",
+          -    adjustment: "RAW_PROVIDER_OHLC",
+          +    provider: "yahoo-chart" as const,
+          +    adjustment: "RAW_PROVIDER_OHLC" as const,
+          +  };
+          +
+          +  let gate: ForecastGate;
+          +  if (phase === "IMPULSE_ACTIVE") gate = "IMPULSE_ACTIVE";
+          +  else if (legs.c == null) gate = "NO_C_EXTREME";
+          +  else if (tw.status === "OUTSIDE_WINDOW") gate = "OUTSIDE_WINDOW";
+          +  else if (!strongCluster) gate = watchCluster ? "WATCH" : "NO_ZONE";
+          +  else if (candidateTrigger == null) gate = "NO_TRIGGER";
+          +  else gate = "SETUP";
+          +
+          +  const setup: ForecastDetection | null = gate === "SETUP" && strongCluster &&
+          +      candidateTrigger != null && legs.c != null
+          +    ? {
+          +        direction,
+          +        cluster: strongCluster,
+          +        trigger: candidateTrigger,
+          +        cExtreme: legs.c,
+          +        timeStatus: tw.status,
+          +        timeWindow: tw.window,
+          +        ...common,
+          +      }
+          +    : null;
+          +
+          +  return {
+          +    direction,
+          +    price,
+          +    phase,
+          +    gate,
+          +    minClusterScore,
+          +    candidates,
+          +    clusters,
+          +    watchCluster,
+          +    setup,
+          +    candidateTrigger,
+          +    cExtreme: legs.c,
+          +    correction,
+          +    timeStatus: tw.status,
+          +    timeWindow: tw.window,
+          +    ...common,
+             };
+           }
+          +
+          +/**
+          + * Kanonischer, reiner Setup-Detektor. Er ist der einzige Signalpfad fuer
+          + * Live-Engine und Walk-Forward-Replay. Nur bestaetigte Pivots und geschlossene
+          + * Bars gelangen hinein; das C-Zeitfenster ist ein echtes Gate.
+          + */
+          +export function detectForecastSetup(
+          +  candles: Candle[],
+          +  options: DetectOptions = {}
+          +): ForecastDetection | null {
+          +  return inspectForecastSetup(candles, options)?.setup ?? null;
+          +}
+
+          V171_PATCH
+
+          if git apply --check "$patch_file"; then
+            git apply "$patch_file"
+          elif git apply --reverse --check "$patch_file"; then
+            echo "V171 ist bereits angewendet."
+          else
+            echo "::error::V171-Patch passt nicht auf den aktuellen Stand. Erwartete Basis: V170."
+            exit 1
+          fi
+
+      - name: "🟢 Node 22"
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: "🐍 Python 3.12"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: python_service/requirements.txt
+
+      - name: "📦 Abhängigkeiten installieren"
+        run: |
+          npm ci
+          python -m pip install --disable-pip-version-check -r python_service/requirements.txt
+
+      - name: "🧪 Build und Regressions-Gates"
+        run: |
+          npm run build
+          npm run verify:integrity
+          npm run verify:scan12
+          npm run verify:deep
+          python -m py_compile python_service/deep_drawer.py python_service/deep_render_smoke.py
+          python python_service/deep_render_smoke.py
+          git diff --check
+
+      - name: "🔍 Deep-Integritätsregeln prüfen"
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const deep = fs.readFileSync("src/core/deepChart.ts", "utf8");
+          const forecast = fs.readFileSync("src/core/forecast.ts", "utf8");
+          const drawer = fs.readFileSync("python_service/deep_drawer.py", "utf8");
+          const commands = fs.readFileSync("src/bot/commands.ts", "utf8");
+
+          const checks = [
+            [deep.includes("inspectForecastSetup") && deep.includes("loadPersistedDecision"),
+             "/deep nutzt kanonische Diagnose und Frozen Snapshot"],
+            [!deep.includes("buildScenarios") && !deep.includes("buildTrades"),
+             "keine zweite Szenario-/Trade-Engine"],
+            [!/(t1\s*\*\s*1\.12|t1\s*\*\s*0\.9|a1\s*\*\s*0\.88)/.test(deep),
+             "keine künstlichen Kursziele"],
+            [deep.includes(".filter((c) => c.score >= 2)"),
+             "Score-1-Level werden nicht als Zonen visualisiert"],
+            [forecast.includes("return inspectForecastSetup(candles, options)?.setup ?? null"),
+             "Live-Detektor und Deep-Inspektion teilen einen Pfad"],
+            [drawer.includes("SETUP-ZOOM") && drawer.includes("KEINE ZEITPROJEKTION"),
+             "Makro-/Zoom-Layout ohne Zeitpfad"],
+            [commands.includes("replyWithDocument") && commands.includes("deep-v171.png"),
+             "unkomprimierte Telegram-PNG-Ausgabe"],
+          ];
+          for (const [ok, label] of checks) {
+            if (!ok) {
+              console.error(`Deep-Gate fehlgeschlagen: ${label}`);
+              process.exit(1);
+            }
+          }
+          NODE
+
+      - name: "📤 Commit und Branch pushen"
+        id: publish
+        env:
+          BRANCH: fix/v171-deep-decision-board
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            package.json package-lock.json \
+            src/bot/commands.ts \
+            src/core/forecast.ts src/core/deepChart.ts src/core/deepDecision.ts \
+            src/core/deepChartRegression.ts \
+            python_service/deep_drawer.py python_service/deep_render_smoke.py \
+            dist
+
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git commit -m "V171: turn deep chart into canonical decision board"
+          git push --force-with-lease --set-upstream origin "$BRANCH"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: "🔀 Pull Request erstellen oder aktualisieren"
+        if: steps.publish.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          BRANCH: fix/v171-deep-decision-board
+        run: |
+          existing="$(gh pr list --base "$BASE_BRANCH" --head "$BRANCH" --state open --json url --jq '.[0].url')"
+          if [ -n "$existing" ]; then
+            echo "PR aktualisiert: $existing"
+          else
+            gh pr create \
+              --base "$BASE_BRANCH" \
+              --head "$BRANCH" \
+              --title "V171: /deep als kanonisches Decision Board" \
+              --body "$(cat <<'BODY'
+          ## Ziel
+
+          `/deep` wird von einer separaten Projektionsgrafik zu einer point-in-time-konsistenten Entscheidungstafel. Der Chart zeigt exakt die Level des Live-/Replay-Pfads oder eines bereits eingefrorenen Signal-Snapshots.
+
+          ## Änderungen
+
+          - gemeinsamer Forecast-Inspector für `/analyse`, Replay und `/deep`
+          - Frozen PENDING-/CONFIRMED-Level haben Vorrang vor Neuberechnungen
+          - keine künstlichen +12/−10-%-Ziele und kein schematischer Zeitpfad
+          - Score-1-Einzellevel werden nicht mehr als handelbare Zonen dargestellt
+          - Makrochart plus operativer 52–78-Bar-Setup-Zoom
+          - bestätigte und vorläufige Pivots klar getrennt
+          - Status, Schlusskurs-Trigger, Invalidierung, Modellziel und Potenzial-R
+          - Zonenstärke als unabhängige Familien/Evidenzen
+          - Count-Stabilität, Kontinuität, Qualitätsflags, C-Zeitfenster und Provenienz
+          - Telegram-Ausgabe als unkomprimiertes 155-DPI-PNG-Dokument
+
+          ## Pflicht-Gates
+
+          - TypeScript-Build
+          - V170 Point-in-Time-Regression
+          - Scan12-Regression
+          - V171 Deep-Level-Regression
+          - Python-Kompilierung
+          - Offline-Render-Smoke-Test mit PNG-Dimensionsprüfung
+          - statische Deep-Integritätsregeln und `git diff --check`
+
+          ## Prognoseintegrität
+
+          V171 erzeugt keine neue Trefferwahrscheinlichkeit. Prognosewerte werden erst nach einem reproduzierbaren Walk-Forward-Backtest mit Stichprobengröße und Unsicherheitsintervall ergänzt.
+          BODY
+          )"
+          fi
+
+      - name: "📝 Zusammenfassung"
+        run: |
+          {
+            echo "### ✅ V171 Deep Decision Board"
+            echo "- /deep nutzt den kanonischen Forecast-Pfad oder einen Frozen Snapshot."
+            echo "- Keine künstlichen Szenarioziele und keine scheinbare Zeitprognose."
+            echo "- Makrostruktur + Setup-Zoom + eindeutige Schlusskursregeln."
+            echo "- Unabhängige Familien, Evidenzen, Pivotstatus und Provenienz sichtbar."
+            echo "- PNG wird in Telegram unkomprimiert als Dokument versendet."
+            echo "- Build, Integritäts-, Scan12-, Deep- und Render-Gates bestanden."
+          } >> "$GITHUB_STEP_SUMMARY"
+
