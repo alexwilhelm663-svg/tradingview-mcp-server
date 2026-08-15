@@ -2011,8 +2011,18 @@ jobs:
             src/bot/commands.ts \
             src/core/forecast.ts src/core/deepChart.ts src/core/deepDecision.ts \
             src/core/deepChartRegression.ts \
-            python_service/deep_drawer.py python_service/deep_render_smoke.py \
-            dist
+            python_service/deep_drawer.py python_service/deep_render_smoke.py
+
+          # dist/ ist ignoriert, kann im Bestands-Repo aber teilweise bereits
+          # getrackt sein. Vorhandene Dateien aktualisieren; nur die beiden
+          # neuen Build-Artefakte gezielt erzwingen. Ist dist gar nicht
+          # versioniert, baut das Dockerfile es ohnehin reproduzierbar neu.
+          if git ls-files dist | grep -q .; then
+            git add -u -- dist
+            git add -f -- \
+              dist/core/deepDecision.js \
+              dist/core/deepChartRegression.js
+          fi
 
           if git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -2084,4 +2094,3 @@ jobs:
             echo "- PNG wird in Telegram unkomprimiert als Dokument versendet."
             echo "- Build, Integritäts-, Scan12-, Deep- und Render-Gates bestanden."
           } >> "$GITHUB_STEP_SUMMARY"
-
