@@ -1,214 +1,387 @@
 #!/usr/bin/env python3
-"""V165: Analyse-Tafel. Chart links, Seitenleiste rechts, Projektion.
+"""V171: `/deep` Decision Board mit Makrostruktur und Setup-Zoom.
 
-Bewusst ein EIGENER Drawer: drawer.py laeuft bei jeder Analyse und bleibt
-schlank. Diese Tafel wird nur auf /deep erzeugt.
+Der Drawer visualisiert ausschliesslich vom TypeScript-Core gelieferte Levels.
+Er erzeugt weder Kursziele noch Wahrscheinlichkeiten oder eine Zeitprojektion.
 """
-import sys, json
+import json
+import sys
+
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-BG, PANEL, GRID = "#0b1220", "#111a2b", "#1e293b"
-FG, MUTED = "#e2e8f0", "#94a3b8"
+BG, PANEL, GRID = "#08111f", "#101b2d", "#243247"
+FG, MUTED = "#e5edf7", "#93a4ba"
 UP, DOWN = "#22c55e", "#ef4444"
-WAVE, MW, ZONE = "#38bdf8", "#059669", "#7c3aed"
-CORR = "#f43f5e"
+WAVE, MW, CORR = "#38bdf8", "#10b981", "#f43f5e"
+ACTIVE, STRONG, WATCH = "#8b5cf6", "#6366f1", "#64748b"
 
 
-def money(v):
+def money(value):
+    v = float(value)
     a = abs(v)
-    if a >= 1e6: return f"{v/1e6:.2f}M"
-    if a >= 1e4: return f"{v/1e3:.1f}k"
-    if a >= 100: return f"{v:.0f}"
-    if a >= 1:   return f"{v:.2f}"
-    return f"{v:.4f}"
+    decimals = 4 if a < 1 else 2 if a < 1000 else 0
+    raw = f"{v:,.{decimals}f}"
+    return raw.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def day(value):
+    return str(value or "-")[:10]
+
+
+def family_name(value):
+    return {
+        "IMPULSE_RETRACEMENT": "Retrace",
+        "PRIOR_WAVE": "W4",
+        "ABC_PROJECTION": "ABC",
+        "CORRECTION_PATTERN": "Muster",
+    }.get(value, str(value))
+
+
+def status_color(status):
+    return {
+        "PENDING": "#f59e0b",
+        "CONFIRMED": UP,
+        "CANDIDATE": "#22d3ee",
+        "WATCH": "#f59e0b",
+        "WAIT_C": MUTED,
+        "OUTSIDE_WINDOW": "#f97316",
+        "IMPULSE_ACTIVE": WAVE,
+        "NO_SETUP": MUTED,
+    }.get(status, MUTED)
+
+
+def prep_frame(candles):
+    df = pd.DataFrame(candles)
+    df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_convert(None)
+    df = df.set_index("date").sort_index()
+    for col in ("open", "high", "low", "close"):
+        df[col] = df[col].astype(float)
+    return df
+
+
+def candle_width(xs):
+    if len(xs) < 2:
+        return 0.62, 1.0
+    dx = float(np.median(np.diff(xs)))
+    return dx * 0.62, dx
+
+
+def draw_candles(ax, df, body_alpha=0.94):
+    xs = mdates.date2num(df.index.to_pydatetime())
+    bw, dx = candle_width(xs)
+    for xi, (_, row) in zip(xs, df.iterrows()):
+        color = UP if row["close"] >= row["open"] else DOWN
+        ax.plot([xi, xi], [row["low"], row["high"]], color=color,
+                lw=0.65, zorder=2, alpha=body_alpha)
+        lo, hi = min(row["open"], row["close"]), max(row["open"], row["close"])
+        height = max(hi - lo, max(abs(hi), 1.0) * 1e-4)
+        ax.add_patch(plt.Rectangle(
+            (xi - bw / 2, lo), bw, height,
+            facecolor=color, edgecolor=color, lw=0.35,
+            zorder=2, alpha=body_alpha,
+        ))
+    ax.xaxis_date()
+    ax.set_yscale("log")
+    return xs, dx
+
+
+def style_axis(ax, title):
+    ax.grid(color=GRID, alpha=0.48, lw=0.55)
+    ax.tick_params(colors=MUTED, labelsize=8.2)
+    for spine in ax.spines.values():
+        spine.set_color(GRID)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda value, _: money(value)))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b\n%Y"))
+    ax.text(0.012, 0.975, title, transform=ax.transAxes, color=FG,
+            fontsize=9.5, fontweight="bold", ha="left", va="top",
+            bbox=dict(boxstyle="round,pad=0.28", facecolor=PANEL,
+                      edgecolor=GRID, alpha=0.94), zorder=12)
+
+
+def cluster_style(role):
+    if role == "ACTIVE":
+        return ACTIVE, 0.23, 1.4
+    if role == "STRONG":
+        return STRONG, 0.12, 0.9
+    return WATCH, 0.08, 0.7
+
+
+def draw_clusters(ax, clusters, label_x=None):
+    for cluster in reversed(clusters):
+        color, alpha, width = cluster_style(cluster.get("role"))
+        ax.axhspan(cluster["floor"], cluster["ceiling"], facecolor=color,
+                   edgecolor=color, lw=width, alpha=alpha, zorder=1)
+        if label_x is not None and cluster.get("role") in ("ACTIVE", "STRONG"):
+            label = (
+                f'{money(cluster["floor"])}–{money(cluster["ceiling"])}  '
+                f'{cluster["score"]}F/{cluster["evidenceCount"]}E'
+            )
+            ax.text(label_x, cluster["ceiling"], label, color="#d8ccff",
+                    fontsize=7.4, ha="right", va="bottom", zorder=10,
+                    bbox=dict(boxstyle="round,pad=0.2", facecolor=BG,
+                              edgecolor=color, alpha=0.88))
+
+
+def wave_offset(label, trend):
+    try:
+        n = int(label)
+    except (TypeError, ValueError):
+        return 13
+    high = (n % 2 == 1) if trend == "bullish" else (n % 2 == 0)
+    return 14 if high else -26
+
+
+def draw_waves(ax, waves, trend, date_to_num, labels=True):
+    if len(waves) < 2:
+        return
+    wx = [date_to_num(w["date"]) for w in waves]
+    wy = [w["price"] for w in waves]
+    ax.plot(wx, wy, color=WAVE, lw=2.2, zorder=5, solid_capstyle="round")
+    for x, y, wave in zip(wx, wy, waves):
+        ax.plot(x, y, "o", color=WAVE, ms=6.6, zorder=6,
+                markeredgecolor=BG, markeredgewidth=1.2)
+        if not labels:
+            continue
+        offset = wave_offset(wave.get("label"), trend)
+        ax.annotate(
+            f'{wave["label"]}  {money(y)}', (x, y), textcoords="offset points",
+            xytext=(0, offset), ha="center", va="bottom" if offset > 0 else "top",
+            fontsize=7.8, fontweight="bold", color=FG, zorder=8,
+            bbox=dict(boxstyle="round,pad=0.25", facecolor=PANEL,
+                      edgecolor=WAVE, lw=0.9, alpha=0.94),
+        )
+
+
+def draw_correction(ax, correction, waves, trend, date_to_num):
+    if len(correction) < 2:
+        return
+    cx = [date_to_num(c["date"]) for c in correction]
+    cy = [c["price"] for c in correction]
+    if waves:
+        cx = [date_to_num(waves[-1]["date"])] + cx
+        cy = [waves[-1]["price"]] + cy
+    ax.plot(cx, cy, color=CORR, lw=1.9, ls="--", zorder=5, alpha=0.96)
+    for index, point in enumerate(correction):
+        x, y = date_to_num(point["date"]), point["price"]
+        ax.plot(x, y, "o", color=CORR, ms=6.2, zorder=6,
+                markeredgecolor=BG, markeredgewidth=1.0)
+        high = (index % 2 == 1) if trend == "bullish" else (index % 2 == 0)
+        offset = 12 if high else -20
+        ax.annotate(point["label"], (x, y), textcoords="offset points",
+                    xytext=(0, offset), ha="center",
+                    va="bottom" if offset > 0 else "top",
+                    fontsize=8.8, fontweight="bold", color=CORR, zorder=8)
+
+
+def draw_provisional(ax, provisional, anchors, date_to_num):
+    if not provisional:
+        return
+    x = date_to_num(provisional["date"])
+    y = provisional["price"]
+    prior = [a for a in anchors if str(a.get("date", "")) < str(provisional["date"])]
+    if prior:
+        anchor = max(prior, key=lambda item: str(item.get("date", "")))
+        ax.plot([date_to_num(anchor["date"]), x], [anchor["price"], y],
+                color=MUTED, lw=1.2, ls=(0, (3, 3)), alpha=0.75, zorder=4)
+    ax.plot(x, y, marker="D", ms=7, markerfacecolor=BG,
+            markeredgecolor=MUTED, markeredgewidth=1.4, zorder=7)
+    ax.annotate(f'{provisional["label"]} · vorläufig', (x, y),
+                textcoords="offset points", xytext=(8, 9), ha="left",
+                fontsize=7.4, color=MUTED, zorder=8,
+                bbox=dict(boxstyle="round,pad=0.2", facecolor=BG,
+                          edgecolor=MUTED, alpha=0.9))
+
+
+def draw_multi_wave(ax, points, date_to_num):
+    if len(points) < 3:
+        return
+    xx = [date_to_num(point["date"]) for point in points]
+    yy = [point["price"] for point in points]
+    ax.plot(xx, yy, color=MW, lw=1.5, zorder=4, alpha=0.9)
+    for point in points:
+        if not point.get("label"):
+            continue
+        ax.plot(date_to_num(point["date"]), point["price"], "o",
+                color=MW, ms=4.2, zorder=5)
+
+
+def draw_marks(ax, marks, right_x):
+    styles = {"solid": "-", "dash": "--", "dot": ":"}
+    for mark in marks:
+        style = styles.get(mark.get("style"), ":")
+        ax.axhline(mark["price"], color=mark["color"], ls=style,
+                   lw=1.15, alpha=0.88, zorder=4)
+        ax.text(right_x, mark["price"],
+                f' {mark["label"]}  {money(mark["price"])} ',
+                color=mark["color"], fontsize=7.3, va="bottom", ha="right",
+                zorder=11, bbox=dict(boxstyle="round,pad=0.18", facecolor=BG,
+                                    edgecolor=mark["color"], alpha=0.9))
+
+
+def panel(side, y0, height, title, lines, accent=FG):
+    side.add_patch(plt.Rectangle(
+        (0.02, y0), 0.96, height, transform=side.transAxes,
+        facecolor=PANEL, edgecolor=GRID, lw=1.0, clip_on=False, zorder=1,
+    ))
+    side.text(0.055, y0 + height - 0.027, title, transform=side.transAxes,
+              color=accent, fontsize=9.6, fontweight="bold", va="top", zorder=2)
+    usable = max(height - 0.072, 0.04)
+    step = usable / max(len(lines), 1)
+    for index, (key, value, color) in enumerate(lines):
+        yy = y0 + height - 0.064 - index * step
+        side.text(0.055, yy, key, transform=side.transAxes, color=MUTED,
+                  fontsize=7.6, va="top", zorder=2)
+        side.text(0.945, yy, value, transform=side.transAxes,
+                  color=color or FG, fontsize=7.6, va="top", ha="right",
+                  fontweight="bold", zorder=2)
 
 
 def main():
-    p = json.load(sys.stdin)
-    candles = p["candles"]
+    payload = json.load(sys.stdin)
+    candles = payload.get("candles", [])
     if len(candles) < 10:
         sys.exit(1)
 
-    df = pd.DataFrame(candles)
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.set_index("date")
-    for c in ("open", "high", "low", "close"):
-        df[c] = df[c].astype(float)
+    df = prep_frame(candles)
+    zoom_from = pd.to_datetime(payload.get("zoomFrom"), utc=True).tz_convert(None)
+    zoom_df = df[df.index >= zoom_from]
+    if len(zoom_df) < 20:
+        zoom_df = df.tail(min(52, len(df)))
 
-    fig = plt.figure(figsize=(19, 10.5), facecolor=BG)
-    gs = fig.add_gridspec(1, 2, width_ratios=[3.05, 1], wspace=0.02,
-                          left=0.045, right=0.985, top=0.885, bottom=0.075)
-    ax = fig.add_subplot(gs[0, 0], facecolor=BG)
-    side = fig.add_subplot(gs[0, 1], facecolor=BG)
+    fig = plt.figure(figsize=(20, 12), facecolor=BG)
+    grid = fig.add_gridspec(
+        2, 2, width_ratios=[3.28, 1], height_ratios=[1.0, 1.16],
+        hspace=0.085, wspace=0.025,
+        left=0.045, right=0.985, top=0.86, bottom=0.072,
+    )
+    macro = fig.add_subplot(grid[0, 0], facecolor=BG)
+    zoom = fig.add_subplot(grid[1, 0], facecolor=BG)
+    side = fig.add_subplot(grid[:, 1], facecolor=BG)
     side.axis("off")
 
-    xs = mdates.date2num(df.index.to_pydatetime())
-    dx = np.median(np.diff(xs)) if len(xs) > 1 else 1.0
-    bw = dx * 0.62
-    for xi, (_, r) in zip(xs, df.iterrows()):
-        col = UP if r["close"] >= r["open"] else DOWN
-        ax.plot([xi, xi], [r["low"], r["high"]], color=col, lw=0.65, zorder=2, alpha=0.95)
-        lo, hi = min(r["open"], r["close"]), max(r["open"], r["close"])
-        ax.add_patch(plt.Rectangle((xi - bw / 2, lo), bw, max(hi - lo, hi * 1e-3),
-                                   facecolor=col, edgecolor=col, lw=0.4, zorder=2, alpha=0.95))
-    ax.xaxis_date()
-    ax.set_yscale("log")
+    date_to_num = lambda value: mdates.date2num(pd.to_datetime(value, utc=True).tz_convert(None).to_pydatetime())
+    waves = payload.get("waves", [])
+    correction = payload.get("correction", [])
+    clusters = payload.get("clusters", [])
 
-    d2n = lambda s: mdates.date2num(pd.to_datetime(s).to_pydatetime())
-    last_x, span = xs[-1], xs[-1] - xs[0]
-    # Projektionsbereich begrenzen: 42 % der Historie waeren bei 5-Jahres-Daten
-    # zwei Jahre Leerraum, der das Bild dominiert.
-    future = last_x + min(span * 0.22, dx * 90)
+    macro_x, macro_dx = draw_candles(macro, df, 0.88)
+    draw_clusters(macro, clusters)
+    draw_waves(macro, waves, payload.get("trend"), date_to_num, labels=True)
+    draw_correction(macro, correction, waves, payload.get("trend"), date_to_num)
+    draw_provisional(macro, payload.get("provisional"), waves + correction, date_to_num)
+    macro.set_xlim(macro_x[0] - 2 * macro_dx, macro_x[-1] + 10 * macro_dx)
+    style_axis(macro, "1 · MAKROSTRUKTUR · BESTÄTIGTE ZÄHLUNG")
+    macro.text(0.988, 0.975, "● bestätigt   ◇ vorläufig",
+               transform=macro.transAxes, color=MUTED, fontsize=7.4,
+               ha="right", va="top", zorder=12)
 
-    for cl in p.get("clusters", []):
-        ax.axhspan(cl["floor"], cl["ceiling"], facecolor=ZONE,
-                   alpha=0.10 + 0.03 * min(cl["score"], 4), zorder=1)
-        # Label nach INNEN, sonst ragt es in die Seitenleiste.
-        ax.text(future, cl["ceiling"], f'{money(cl["floor"])}–{money(cl["ceiling"])} · S{cl["score"]}  ',
-                color="#c4b5fd", fontsize=7.8, va="bottom", ha="right", zorder=6)
+    zoom_x, zoom_dx = draw_candles(zoom, zoom_df, 0.98)
+    right_x = zoom_x[-1] + 9.5 * zoom_dx
+    draw_clusters(zoom, clusters, right_x)
+    visible_waves = [w for w in waves if str(w["date"]) >= str(payload.get("zoomFrom"))]
+    draw_waves(zoom, visible_waves, payload.get("trend"), date_to_num, labels=True)
+    draw_correction(zoom, correction, waves, payload.get("trend"), date_to_num)
+    draw_multi_wave(zoom, payload.get("multiWave", []), date_to_num)
+    draw_provisional(zoom, payload.get("provisional"), waves + correction, date_to_num)
+    draw_marks(zoom, payload.get("marks", []), right_x)
+    zoom.set_xlim(zoom_x[0] - 2 * zoom_dx, zoom_x[-1] + 12 * zoom_dx)
+    style_axis(zoom, "2 · SETUP-ZOOM · KEINE ZEITPROJEKTION")
 
-    waves = p.get("waves", [])
-    if len(waves) >= 2:
-        wx = [d2n(w["date"]) for w in waves]
-        wy = [w["price"] for w in waves]
-        ax.plot(wx, wy, color=WAVE, lw=2.4, zorder=5, solid_capstyle="round")
-        for x, y, w in zip(wx, wy, waves):
-            ax.plot(x, y, "o", color=WAVE, ms=8, zorder=6,
-                    markeredgecolor=BG, markeredgewidth=1.4)
-            ax.annotate(f'{w["label"]}\n{money(y)}', (x, y), textcoords="offset points",
-                        xytext=(0, 15), ha="center", fontsize=9, fontweight="bold",
-                        color=FG, zorder=7,
-                        bbox=dict(boxstyle="round,pad=0.32", facecolor=PANEL,
-                                  edgecolor=WAVE, lw=1.1, alpha=0.95))
+    decision = payload["decision"]
+    evidence = payload["evidence"]
+    provenance = payload["provenance"]
+    accent = status_color(decision["status"])
+    price_color = UP if payload.get("trend") == "bullish" else DOWN
 
-    mw = p.get("multiWave", [])
-    if len(mw) >= 3:
-        ax.plot([d2n(m["date"]) for m in mw], [m["price"] for m in mw],
-                color=MW, lw=1.7, zorder=4, alpha=0.95)
-        for m in mw:
-            if not m["label"]:
-                continue
-            ax.plot(d2n(m["date"]), m["price"], "o", color=MW, ms=4.5, zorder=5)
-            ax.annotate(m["label"], (d2n(m["date"]), m["price"]), textcoords="offset points",
-                        xytext=(0, 8 if m["label"] == "1" else -14), ha="center",
-                        fontsize=8, fontweight="bold", color=MW, zorder=6)
-
-    # V166: Korrektur-Lesart A-B-C bzw. W-X-Y - fehlte in der Tafel.
-    corr = p.get("correction", [])
-    if len(corr) >= 2:
-        cx = [d2n(c["date"]) for c in corr]
-        cy = [c["price"] for c in corr]
-        # Anschluss an das Welle-5-Extrem, sonst haengt die Korrektur in der Luft
-        if waves:
-            cx = [d2n(waves[-1]["date"])] + cx
-            cy = [waves[-1]["price"]] + cy
-        ax.plot(cx, cy, color=CORR, lw=2.0, ls="--", zorder=5, alpha=0.95)
-        for c in corr:
-            ax.plot(d2n(c["date"]), c["price"], "o", color=CORR, ms=7, zorder=6,
-                    markeredgecolor=BG, markeredgewidth=1.2)
-            ax.annotate(c["label"], (d2n(c["date"]), c["price"]),
-                        textcoords="offset points", xytext=(0, -18), ha="center",
-                        fontsize=10, fontweight="bold", color=CORR, zorder=7)
-
-    ax.axvline(last_x, color=MUTED, ls="--", lw=1.0, alpha=0.55, zorder=3)
-    ax.text(last_x, ax.get_ylim()[1], " PROJEKTION · SCHEMATISCH ",
-            color=MUTED, fontsize=8.5, va="top", ha="left", zorder=7)
-
-    scen = p.get("scenarios", [])
-    for s in scen:
-        pts = s["path"]
-        n = len(pts)
-        px_ = [last_x + (future - last_x) * (i / max(n - 1, 1)) for i in range(n)]
-        ax.plot(px_, [q["price"] for q in pts], color=s["color"], lw=2.0,
-                ls="--", zorder=5, alpha=0.95)
-        for x, q in zip(px_, pts):
-            if not q["label"]:
-                continue
-            ax.plot(x, q["price"], "o", color=s["color"], ms=5, zorder=6)
-            ax.annotate(q["label"], (x, q["price"]), textcoords="offset points",
-                        xytext=(0, 10), ha="center", fontsize=7.5, color=s["color"], zorder=6)
-
-    for m in p.get("marks", []):
-        ax.axhline(m["price"], color=m["color"], ls=":", lw=1.2, alpha=0.85, zorder=4)
-        ax.text(xs[0], m["price"], f' {m["label"]} {money(m["price"])}',
-                color=m["color"], fontsize=8.5, va="bottom", ha="left", zorder=7)
-
-    ax.set_xlim(xs[0] - dx * 3, future + dx * 6)
-    ax.grid(color=GRID, alpha=0.5, lw=0.6)
-    ax.tick_params(colors=MUTED, labelsize=9)
-    for sp in ax.spines.values():
-        sp.set_color(GRID)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b\n%Y"))
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: money(v)))
-
-    fig.text(0.045, 0.955, f'{p["symbol"]} · ELLIOTT-WELLEN-ANALYSE',
+    fig.text(0.045, 0.954, f'{payload["symbol"]} · DEEP DECISION BOARD',
              color=FG, fontsize=21, fontweight="bold", ha="left")
-    st = p["struktur"]
-    corr_txt = f' · Korrektur {p["corrPattern"]}' if p.get("corrPattern") else ""
     fig.text(0.045, 0.918,
-             f'{p["interval"]} ({p["range"]}) · Trend {p["trend"]} · Score {st["score"]} · '
-             f'Kontinuität {st["kontinuitaet"]} · Grad {st["grad"]}{corr_txt}',
-             color=MUTED, fontsize=10.5, ha="left")
-    fig.text(0.985, 0.955, money(p["price"]),
-             color=UP if p["trend"] == "bullish" else DOWN,
-             fontsize=21, fontweight="bold", ha="right")
+             f'{payload["interval"]} ({payload["range"]}) · Makrotrend {payload["trend"]} · '
+             f'Zählung {evidence["countScore"]} · Grad {evidence["degree"]}',
+             color=MUTED, fontsize=10.2, ha="left")
+    fig.text(0.57, 0.951, decision["statusLabel"], color=accent,
+             fontsize=10.0, fontweight="bold", ha="center", va="center",
+             bbox=dict(boxstyle="round,pad=0.45", facecolor=PANEL,
+                       edgecolor=accent, lw=1.2, alpha=0.98))
+    fig.text(0.985, 0.954, money(payload["price"]),
+             color=price_color, fontsize=21, fontweight="bold", ha="right")
 
-    def panel(y0, h, title, lines, accent=FG):
-        side.add_patch(plt.Rectangle((0.02, y0), 0.96, h, transform=side.transAxes,
-                                     facecolor=PANEL, edgecolor=GRID, lw=1.0,
-                                     clip_on=False, zorder=1))
-        side.text(0.06, y0 + h - 0.028, title, transform=side.transAxes, color=accent,
-                  fontsize=10.5, fontweight="bold", va="top", zorder=2)
-        for i, (k, v) in enumerate(lines):
-            yy = y0 + h - 0.062 - i * 0.030
-            if yy < y0 + 0.012:
-                break
-            side.text(0.06, yy, k, transform=side.transAxes, color=MUTED,
-                      fontsize=8.6, va="top", zorder=2)
-            side.text(0.94, yy, v, transform=side.transAxes, color=FG, fontsize=8.6,
-                      va="top", ha="right", zorder=2, fontweight="bold")
+    status_lines = [
+        ("Status", decision["status"], accent),
+        ("Richtung", decision["direction"], FG),
+        ("Modus", "FROZEN" if decision["frozen"] else "AKTUELL", accent),
+        ("Datenstand", day(provenance["dataAsOf"]), FG),
+        ("Snapshot", str(decision.get("snapshotId") or "-")[:12], FG),
+    ]
+    panel(side, 0.79, 0.19, "STATUS", status_lines, accent)
 
-    # V166: Seitenleiste nur noch handelsrelevant. Score und Kontinuitaet
-    # sind Qualitaetsmasse - die wandern in die Kopfzeile.
-    trades = p.get("trades", [])
-    if trades:
-        tl = []
-        for tr in trades:
-            tl.append((tr["art"].upper(), f'CRV {tr["crv"]:.1f}'))
-            tl.append(("  Einstieg", money(tr["entry"])))
-            tl.append(("  Stop", money(tr["stop"])))
-            tl.append(("  Ziel", money(tr["ziel"])))
-            tl.append(("  Risiko", f'{tr["risk"]:.1f} %'))
-            tl.append(("", ""))
-        panel(0.58, 0.40, "HANDELSPLAN", tl[:12], UP)
-    else:
-        panel(0.58, 0.40, "HANDELSPLAN", [("keine Zone in Reichweite", "")], UP)
+    zone = decision.get("zone")
+    decision_lines = []
+    if zone:
+        decision_lines.append(("Zone", f'{money(zone["floor"])}–{money(zone["ceiling"])}', ACTIVE))
+    if decision.get("entry") is not None:
+        decision_lines.append(("Entry", money(decision["entry"]), FG))
+    if decision.get("trigger") is not None:
+        op = ">" if decision["direction"] == "LONG" else "<"
+        decision_lines.append(("Trigger Schluss", f'{op} {money(decision["trigger"])}', UP))
+    if decision.get("invalidation") is not None:
+        op = "<" if decision["direction"] == "LONG" else ">"
+        decision_lines.append(("Invalidierung", f'{op} {money(decision["invalidation"])}', DOWN))
+    if decision.get("target") is not None:
+        decision_lines.append(("Modellziel", money(decision["target"]), WAVE))
+    if decision.get("potentialR") is not None:
+        decision_lines.append(("Potenzial", f'{decision["potentialR"]:.2f} R', FG))
+    for rule in payload.get("rules", [])[:2]:
+        decision_lines.append((rule["name"], f'{rule["condition"]} → {rule["result"]}', rule["color"]))
+    if not decision_lines:
+        decision_lines = [("Aktion", "NO TRADE", MUTED)]
+    panel(side, 0.49, 0.28, "ENTSCHEIDUNGSLEVEL", decision_lines[:8], UP)
 
-    scen_lines = []
-    for s in scen:
-        scen_lines.append((s["name"], ""))
-        scen_lines.append(("  " + s["note"][:38], ""))
-    panel(0.34, 0.21, "SZENARIEN", scen_lines or [("keine Zielzonen", "")], WAVE)
-    for i, s in enumerate(scen):
-        side.plot(0.045, 0.34 + 0.21 - 0.068 - i * 0.060, "s", color=s["color"],
-                  ms=6, transform=side.transAxes, zorder=3, clip_on=False)
+    families = ", ".join(family_name(x) for x in (zone or {}).get("families", [])) or "-"
+    strength = (
+        f'{zone["score"]} Familien / {zone["evidenceCount"]} Evidenzen'
+        if zone else "keine aktive Zone"
+    )
+    time_window = evidence.get("timeWindow")
+    time_value = evidence.get("timeStatus", "UNKNOWN")
+    if time_window:
+        time_value += f' · {day(time_window["from"])}–{day(time_window["to"])}'
+    evidence_lines = [
+        ("Zonenstärke", strength, FG),
+        ("Familien", families, FG),
+        ("Count-Stabilität", evidence["countStability"], FG),
+        ("Kontinuität", evidence["continuity"], FG),
+        ("Qualität", evidence["quality"], FG),
+        ("C-Zeit", time_value, FG),
+    ]
+    panel(side, 0.255, 0.215, "EVIDENZ · KEINE WAHRSCHEINLICHKEIT", evidence_lines, WAVE)
 
-    mark_lines = [(m["label"], money(m["price"])) for m in p.get("marks", [])]
-    for cl in p.get("clusters", [])[:4]:
-        mark_lines.append((f'Zone S{cl["score"]}', f'{money(cl["floor"])}–{money(cl["ceiling"])}'))
-    panel(0.03, 0.28, "MARKEN", mark_lines, ZONE)
+    provisional = payload.get("provisional")
+    flags = evidence.get("qualityFlags", [])
+    risk_lines = [
+        ("Korrektur", evidence.get("correctionPattern") or "n/a", FG),
+        ("Umschlagrisiko", evidence.get("reversalRisk") or "NONE", FG),
+        ("Letzter Pivot bestätigt", day(evidence.get("lastConfirmedPivot")), FG),
+        ("Vorläufiges Extrem", money(provisional["price"]) if provisional else "keins", MUTED),
+        ("Qualitätsflags", ", ".join(flags[:2]) if flags else "keine", DOWN if flags else FG),
+        ("Datenhash", str(provenance.get("dataHash", "-"))[:12], FG),
+    ]
+    panel(side, 0.03, 0.205, "RISIKO & PROVENIENZ", risk_lines, DOWN)
 
-    fig.text(0.045, 0.028,
-             f'Stand {p["stand"]} · logarithmische Preisachse · Projektion schematisch, '
-             f'keine Kursprognose · keine Anlageberatung',
-             color=MUTED, fontsize=8, ha="left")
-
-    fig.savefig(sys.stdout.buffer, format="png", dpi=115, facecolor=BG)
+    fig.text(
+        0.045, 0.027,
+        f'Datenstand {day(provenance["dataAsOf"])} · {provenance["provider"]} · '
+        f'{"nur geschlossene Bars" if provenance["closedBarsOnly"] else "offene Bars enthalten"} · '
+        f'Engine {decision["engineVersion"]} · keine Zeitprojektion · keine Anlageberatung',
+        color=MUTED, fontsize=7.8, ha="left",
+    )
+    fig.savefig(sys.stdout.buffer, format="png", dpi=155, facecolor=BG,
+                bbox_inches=None, metadata={"Software": "EW Quant Hunter V171"})
 
 
 if __name__ == "__main__":

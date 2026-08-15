@@ -1,27 +1,38 @@
-import { fetchMarketData, Candle, isThinHistory } from "./marketData";
-import { findImpulseAdaptive, WaveCount } from "./impulseFinder";
+import { spawn } from "child_process";
+import path from "path";
+import db from "./db";
+import { fetchMarketData, type Candle, isThinHistory } from "./marketData";
+import {
+  findImpulseAdaptive,
+  findRankedImpulses,
+  type AdaptiveImpulse,
+  type WaveCount,
+} from "./impulseFinder";
 import { checkProportion } from "./proportion";
-import { longLevelCandidates, shortLevelCandidates, clusterLevels, FibCluster } from "./fibCluster";
+import type { FibCluster } from "./fibCluster";
 import { assessMultiWave } from "./multiWave";
 import { measureContinuity } from "./continuity";
 import { readDegree } from "./degree";
 import { zigzag } from "./zigzag";
-import { classifyCorrection, CorrectionRead } from "./correction";
-import { spawn } from "child_process";
-import path from "path";
+import { assessQuality } from "./quality";
+import {
+  forecastTarget,
+  inspectForecastSetup,
+  type Direction,
+} from "./forecast";
+import {
+  selectDeepDecision,
+  type DeepStatus,
+  type PersistedDecision,
+} from "./deepDecision";
 
 /**
- * V165: Analyse-Tafel (`/deep`).
+ * V171: `/deep` ist ein Decision Board, keine zweite Forecast-Engine.
  *
- * Der Standard-Chart bleibt schlank - er laeuft bei jeder Analyse. Diese Tafel
- * buendelt auf Abruf alles, was die Engine ohnehin berechnet, in EIN Bild:
- * Zaehlung mit beschrifteten Punkten, Zielzonen, Entscheidungsmarken,
- * Seitenleiste und einen schematischen Projektionspfad.
- *
- * Die Projektion zeichnet den Weg zu den BEREITS BERECHNETEN Zielzonen - sie
- * ist keine Kursprognose. Kein RSI (die Engine ist rein strukturell) und keine
- * frei gesetzte Wahrscheinlichkeit: statt einer Zahl wie "55/45" zeigt die
- * Tafel Zaehlungs-Score und Kontinuitaet, die beide aus den Daten stammen.
+ * Alle handelbaren Level kommen entweder aus dem unveraenderlichen Snapshot
+ * eines laufenden Setups oder aus `inspectForecastSetup`, das exakt denselben
+ * kanonischen Pfad wie Live und Replay benutzt. Es gibt keine frei erfundenen
+ * Szenario-Punkte und keine handelbaren Score-1-Fallback-Zonen.
  */
 
 export interface DeepResult {
@@ -29,128 +40,143 @@ export interface DeepResult {
   caption: string;
 }
 
-interface Scenario {
-  name: string;
-  color: string;
-  path: { price: number; label: string }[];
-  note: string;
+const pt = (wc: WaveCount, label: string) =>
+  wc.points.find((p) => p.label === label) ?? null;
+
+function parseStringArray(value: unknown): string[] {
+  try {
+    const parsed = JSON.parse(String(value ?? "[]"));
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
 }
 
-const pt = (wc: WaveCount, l: string) => wc.points.find((p) => p.label === l) ?? null;
+/** Nur ein noch laufender, zum angeforderten Rahmen passender Snapshot gewinnt. */
+function loadPersistedDecision(
+  symbol: string,
+  interval: string,
+  range: string
+): PersistedDecision | null {
+  const row = db.prepare(
+    `SELECT s.status, s.direction, s.cluster_floor, s.cluster_ceiling,
+            s.cluster_score, s.trigger_level, s.invalidation, s.c_low,
+            s.snapshot_id, s.as_of, s.data_hash, s.engine_version,
+            s.created_at, s.levels,
+            ss.cluster_evidence_count, ss.cluster_families,
+            t.entry_price, t.target
+       FROM setups s
+       LEFT JOIN signal_snapshots ss ON ss.id = s.snapshot_id
+       LEFT JOIN trade_history t
+         ON t.snapshot_id = s.snapshot_id
+        AND t.resolution IS NULL
+        AND t.is_success IS NULL
+      WHERE UPPER(s.symbol) = UPPER(?)
+        AND COALESCE(s.interval_name, ?) = ?
+        AND COALESCE(s.range_name, ?) = ?
+        AND s.status IN ('PENDING', 'CONFIRMED')
+      ORDER BY CASE s.status WHEN 'PENDING' THEN 0 ELSE 1 END,
+               s.updated_at DESC
+      LIMIT 1`
+  ).get(symbol, interval, interval, range, range) as any;
 
-interface TradePlan {
-  art: string;
-  entry: number;
-  stop: number;
-  ziel: number;
-  risk: number;   // % vom Einstieg
-  crv: number;
-}
-
-/**
- * Zwei handelbare Varianten aus den bereits berechneten Zonen:
- *  - Ruecksetzer: in der naechsten Zone GEGEN den Kurs kaufen, Stop darunter
- *  - Ausbruch: ueber der naechsten Zone MIT dem Trend, Stop unter deren Boden
- * Ziel ist jeweils die naechste Zone in Trendrichtung dahinter.
- */
-function buildTrades(up: boolean, price: number, clusters: FibCluster[]): TradePlan[] {
-  const out: TradePlan[] = [];
-  const asc = [...clusters].sort((a, b) => a.center - b.center);
-  const above = asc.filter((c) => c.floor > price);
-  const below = asc.filter((c) => c.ceiling < price).reverse();
-
-  const mk = (art: string, entry: number, stop: number, ziel: number) => {
-    const risk = Math.abs(entry - stop) / entry * 100;
-    const crv = Math.abs(ziel - entry) / Math.max(Math.abs(entry - stop), 1e-9);
-    if (!isFinite(crv) || risk <= 0) return;
-    out.push({ art, entry, stop, ziel, risk, crv });
+  if (!row) return null;
+  if (row.status === "CONFIRMED" && row.entry_price == null) return null;
+  const direction: Direction = row.direction === "SHORT" ? "SHORT" : "LONG";
+  const zone: FibCluster = {
+    floor: Number(row.cluster_floor),
+    ceiling: Number(row.cluster_ceiling),
+    center: (Number(row.cluster_floor) + Number(row.cluster_ceiling)) / 2,
+    score: Number(row.cluster_score),
+    evidenceCount: Number(row.cluster_evidence_count ?? parseStringArray(row.levels).length),
+    labels: parseStringArray(row.levels),
+    families: parseStringArray(row.cluster_families),
   };
-
-  if (up) {
-    // Ruecksetzer in die naechste Zone darunter
-    const z = below[0];
-    const target = above[0] ?? clusters.sort((a, b) => b.center - a.center)[0];
-    if (z && target) mk("Rücksetzer", z.ceiling, z.floor * 0.97, target.center);
-    // Ausbruch ueber die naechste Zone darueber
-    const b = above[0];
-    const t2 = above[1];
-    if (b && t2) mk("Ausbruch", b.ceiling, b.floor * 0.97, t2.center);
-  } else {
-    const z = above[0];
-    const target = below[0] ?? clusters.sort((a, b) => a.center - b.center)[0];
-    if (z && target) mk("Rücklauf", z.floor, z.ceiling * 1.03, target.center);
-    const b = below[0];
-    const t2 = below[1];
-    if (b && t2) mk("Bruch", b.floor, b.ceiling * 1.03, t2.center);
-  }
-  return out;
+  const trigger = Number(row.trigger_level);
+  const cExtreme = Number(row.c_low);
+  const target = row.target != null
+    ? Number(row.target)
+    : forecastTarget({ direction, trigger, cExtreme });
+  return {
+    status: row.status === "CONFIRMED" ? "CONFIRMED" : "PENDING",
+    direction,
+    zone,
+    trigger,
+    invalidation: Number(row.invalidation),
+    cExtreme,
+    target,
+    entry: row.entry_price == null ? null : Number(row.entry_price),
+    snapshotId: String(row.snapshot_id ?? "legacy"),
+    asOf: String(row.as_of ?? row.created_at),
+    dataHash: String(row.data_hash ?? "legacy-no-data-hash"),
+    engineVersion: String(row.engine_version ?? "legacy"),
+    createdAt: String(row.created_at),
+  };
 }
 
-/** Schematischer Pfad zu den bereits berechneten Zielzonen. */
-function buildScenarios(
-  wc: WaveCount,
-  price: number,
-  clusters: FibCluster[],
-  trigger: number | null,
-  invalidation: number | null
-): Scenario[] {
-  const above = clusters.filter((c) => c.center > price).sort((a, b) => a.center - b.center);
-  const below = clusters.filter((c) => c.center < price).sort((a, b) => b.center - a.center);
-  const up = wc.trend === "bullish";
-  const out: Scenario[] = [];
+interface CountStability {
+  agreeing: number;
+  total: number;
+}
 
-  const primTargets = up ? above : below;
-  if (primTargets.length > 0) {
-    const t1 = primTargets[0].center;
-    const t2 = primTargets[1]?.center ?? t1 * (up ? 1.12 : 0.9);
-    const back = t1 + (price - t1) * 0.38; // schematischer Ruecksetzer
-    out.push({
-      name: "PRIMÄR",
-      color: "#22c55e",
-      path: [
-        { price, label: "" },
-        { price: trigger ?? (price + t1) / 2, label: "Trigger" },
-        { price: t1, label: "Ziel 1" },
-        { price: back, label: "" },
-        { price: t2, label: "Ziel 2" },
-      ],
-      note: `${up ? "Aufwärts" : "Abwärts"} zu ${t1.toFixed(2)}, dann ${t2.toFixed(2)}`,
-    });
-  }
+function countStability(candles: Candle[], adaptive: AdaptiveImpulse): CountStability {
+  const chosen0 = pt(adaptive.result.count, "0");
+  const chosen5 = pt(adaptive.result.count, "5");
+  const ranked = findRankedImpulses(adaptive.pivots, 5)
+    .filter((r) => checkProportion(candles, r.count).ok);
+  if (!chosen0 || !chosen5 || ranked.length === 0) return { agreeing: 1, total: 1 };
+  const agreeing = ranked.filter((r) => {
+    const a0 = pt(r.count, "0");
+    const a5 = pt(r.count, "5");
+    return r.count.trend === adaptive.result.count.trend &&
+      a0?.date === chosen0.date && a5?.date === chosen5.date;
+  }).length;
+  return { agreeing: Math.max(1, agreeing), total: ranked.length };
+}
 
-  // Gegenrichtung. Steht der Kurs in keiner Zone, gibt es keine berechnete
-  // Invalidierung - dann dient die naechste Zone in Gegenrichtung als Auslöser.
-  const altTargets = up ? below : above;
-  if (altTargets.length > 0) {
-    const gate = invalidation ?? altTargets[0].ceiling;
-    const a1 = altTargets[0].center;
-    const a2 = altTargets[1]?.center ?? a1 * (up ? 0.88 : 1.12);
-    out.push({
-      name: "ALTERNATIVE",
-      color: "#f97316",
-      path: [
-        { price, label: "" },
-        { price: gate, label: invalidation != null ? "Invalidierung" : "Bruch" },
-        { price: a1, label: "Ziel A" },
-        { price: a2, label: "Ziel B" },
-      ],
-      note: `Unter ${gate.toFixed(2)} → ${a1.toFixed(2)} / ${a2.toFixed(2)}`,
-    });
+function sameZone(a: FibCluster | null, b: FibCluster): boolean {
+  if (!a) return false;
+  const scale = Math.max(Math.abs(a.center), Math.abs(b.center), 1);
+  return Math.abs(a.center - b.center) / scale < 0.001;
+}
+
+function lastMatching<T>(items: T[], predicate: (item: T) => boolean): T | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (predicate(items[i])) return items[i];
   }
-  return out;
+  return null;
 }
 
 function renderDeep(payload: unknown): Promise<Buffer | null> {
   return new Promise((resolve) => {
     const script = path.join(process.cwd(), "python_service", "deep_drawer.py");
-    const py = spawn("python3", [script]);
+    const py = spawn("python3", [script], {
+      env: {
+        ...process.env,
+        MPLCONFIGDIR: process.env.MPLCONFIGDIR ?? "/tmp/ew-matplotlib-cache",
+      },
+    });
     const chunks: Buffer[] = [];
     py.stdout.on("data", (d) => chunks.push(d));
-    py.stderr.on("data", (d) => console.error("[DEEP]", d.toString().slice(0, 300)));
+    py.stderr.on("data", (d) => console.error("[DEEP]", d.toString().slice(0, 500)));
     py.on("close", (code) => resolve(code === 0 && chunks.length ? Buffer.concat(chunks) : null));
     py.stdin.write(JSON.stringify(payload));
     py.stdin.end();
   });
+}
+
+function statusText(status: DeepStatus): string {
+  const labels: Record<DeepStatus, string> = {
+    PENDING: "PENDING · LEVEL EINGEFROREN",
+    CONFIRMED: "CONFIRMED · TRADE AKTIV",
+    CANDIDATE: "KANONISCHER KANDIDAT",
+    WATCH: "WATCH · ZU WENIG FAMILIEN",
+    WAIT_C: "WARTET AUF C-EXTREM",
+    OUTSIDE_WINDOW: "AUSSERHALB ZEITFENSTER",
+    IMPULSE_ACTIVE: "IMPULS NOCH AKTIV",
+    NO_SETUP: "KEIN AKTIVES SETUP",
+  };
+  return labels[status];
 }
 
 export async function buildDeepChart(
@@ -159,13 +185,16 @@ export async function buildDeepChart(
   interval = "1wk"
 ): Promise<DeepResult> {
   let candles: Candle[];
+  let provenance: Awaited<ReturnType<typeof fetchMarketData>>["provenance"];
   try {
-    candles = (await fetchMarketData(symbol, interval, range)).weeklyAnalysisCandles;
+    const market = await fetchMarketData(symbol, interval, range);
+    candles = market.weeklyAnalysisCandles;
+    provenance = market.provenance;
   } catch (e: any) {
     if (isThinHistory(e)) {
       return {
         buffer: null,
-        caption: `⚠️ **${symbol}**: ${e.have} von ${e.need} Kerzen (Erstnotiz ${e.firstTrade ?? "?"}).`,
+        caption: `⚠️ **${symbol}**: ${e.have} von ${e.need} abgeschlossenen Kerzen (Erstnotiz ${e.firstTrade ?? "?"}).`,
       };
     }
     return { buffer: null, caption: `❌ ${symbol}: ${e?.message ?? e}` };
@@ -175,125 +204,197 @@ export async function buildDeepChart(
   if (!outcome.impulse) {
     return { buffer: null, caption: `🔍 **${symbol}**: keine belastbare Zählung (DK-7).` };
   }
-  const res = outcome.impulse.result;
-  const wc = res.count;
-  const price = candles[candles.length - 1].close;
-  const up = wc.trend === "bullish";
-  const w0 = pt(wc, "0"), w4 = pt(wc, "4"), w5 = pt(wc, "5");
-
-  // Zielzonen. Ohne die Korrektur-Legs (A/B) entstehen nur Einzel-Level ohne
-  // Konfluenz - alle mit Score 1. Erst die C-Ableitungen erzeugen Zonen.
-  let clusters: FibCluster[] = [];
-  if (w0 && w5) {
-    const post = candles.filter((k) => k.date > w5.date);
-    const piv = zigzag(post, outcome.impulse.threshold).filter((q) => q.date > w5.date);
-    const wantA: "L" | "H" = up ? "L" : "H";
-    const a = piv.find((q) => q.kind === wantA) ?? null;
-    const b = a ? piv.find((q) => q.date > a.date && q.kind !== wantA) ?? null : null;
-    const base = { w0: w0.price, w5: w5.price, w4: w4 ? w4.price : null };
-    const lv = up
-      ? longLevelCandidates({ ...base, aLow: a ? a.price : null, bHigh: b ? b.price : null })
-      : shortLevelCandidates({ ...base, aHigh: a ? a.price : null, bLow: b ? b.price : null });
-    const all = clusterLevels(lv);
-    const strong = all.filter((c) => c.score >= 2);
-    // Fallback auf die hoechstbewerteten Einzel-Level, damit die Tafel nie
-    // ohne Zonen bleibt.
-    clusters = strong.length >= 2 ? strong : all.sort((x, y) => y.score - x.score).slice(0, 6);
-  }
-
-  const marks: { price: number; label: string; color: string }[] = [];
-  if (w5) marks.push({ price: w5.price, label: "Welle-5-Extrem", color: "#38bdf8" });
-  if (w0) marks.push({ price: w0.price, label: "Impuls-Ursprung", color: "#a78bfa" });
-
-  let trigger: number | null = null;
-  let invalidation: number | null = null;
-  const inZone = clusters.find((c) => price >= c.floor && price <= c.ceiling);
-  if (inZone) {
-    invalidation = up ? inZone.floor * 0.97 : inZone.ceiling * 1.03;
-    const over = clusters
-      .filter((c) => (up ? c.floor > price : c.ceiling < price))
-      .sort((a2, b2) => (up ? a2.floor - b2.floor : b2.ceiling - a2.ceiling))[0];
-    if (over) trigger = up ? over.floor : over.ceiling;
-  }
-  if (trigger != null) marks.push({ price: trigger, label: "Trigger", color: "#22c55e" });
-  if (invalidation != null) marks.push({ price: invalidation, label: "Invalidierung", color: "#ef4444" });
-
-  // V166: Korrektur-Lesart (A-B-C / W-X-Y) - fehlte in der Tafel komplett,
-  // obwohl der Standard-Chart sie zeichnet.
-  let corrPoints: { label: string; date: string; price: number }[] = [];
-  let corrPattern: string | null = null;
-  if (w5) {
-    const postPiv = zigzag(candles, outcome.impulse.threshold).filter((q) => q.date > w5.date);
-    const wantA: "L" | "H" = up ? "L" : "H";
-    const a = postPiv.find((q) => q.kind === wantA) ?? null;
-    const b = a ? postPiv.find((q) => q.date > a.date && q.kind !== wantA) ?? null : null;
-    if (a && b) {
-      const after = candles.filter((k) => k.date > b.date);
-      const cExt = after.length
-        ? up ? Math.min(...after.map((k) => k.low)) : Math.max(...after.map((k) => k.high))
-        : null;
-      const cDate = after.length
-        ? after.reduce((m, k) => ((up ? k.low < m.low : k.high > m.high) ? k : m), after[0]).date
-        : null;
-      const cr: CorrectionRead = classifyCorrection(
-        w5.price, a.price, b.price, cExt, price, postPiv, up ? 1 : -1,
-        {
-          candles, parentThreshold: outcome.impulse.threshold, topDate: w5.date,
-          aDate: a.date, bDate: b.date,
-          impulseOrigin: w0?.price ?? null, impulseEnd: w5.price,
-        }
-      );
-      corrPoints = cr.legPoints;
-      corrPattern = cr.pattern;
-      if (cDate && corrPoints.length === 2 && cExt != null) {
-        corrPoints.push({ label: /DOUBLE|WXY|KOMBI/.test(cr.pattern) ? "Y" : "C", date: cDate, price: cExt });
-      }
-    }
-  }
-
-  let mwPoints: { label: string; date: string; price: number }[] = [];
-  if (w5) {
-    const mw = assessMultiWave(candles, w5.date, w5.price, up ? -1 : 1, outcome.impulse.threshold);
-    if (mw.intact && mw.points.length) mwPoints = mw.points;
-  }
-
-  const cont = measureContinuity(zigzag(candles, outcome.impulse.threshold), wc);
-  const deg = readDegree(candles, price);
-
-  const payload = {
-    symbol,
-    interval: interval === "1d" ? "DAILY" : "WEEKLY",
+  const adaptive = outcome.impulse;
+  const result = adaptive.result;
+  const wc = result.count;
+  const inspection = inspectForecastSetup(candles, {
+    minClusterScore: 3,
+    interval,
     range,
-    price,
+    impulse: adaptive,
+  });
+  if (!inspection) {
+    return { buffer: null, caption: `🔍 **${symbol}**: Forecast-Kontext nicht ableitbar.` };
+  }
+
+  const persisted = loadPersistedDecision(symbol, interval, range);
+  const decision = selectDeepDecision(inspection, persisted);
+  const w4 = pt(wc, "4");
+  const w5 = pt(wc, "5");
+  const directionSign: 1 | -1 = wc.trend === "bullish" ? 1 : -1;
+
+  const currentPivots = zigzag(candles, adaptive.threshold, true);
+  const provisional = lastMatching(currentPivots, (p) => p.status === "PROVISIONAL");
+  const lastConfirmed = lastMatching(adaptive.pivots, (p) => p.status === "CONFIRMED");
+  const multiWave = w5
+    ? assessMultiWave(candles, w5.date, w5.price, (directionSign * -1) as 1 | -1, adaptive.threshold)
+    : null;
+  const continuity = measureContinuity(adaptive.pivots, wc);
+  const continuityGrade = !continuity ? "n/a"
+    : continuity.ratio <= 0.25 ? "hoch"
+    : continuity.ratio <= 0.6 ? "mittel"
+    : "niedrig";
+  const quality = assessQuality(candles, wc, adaptive.threshold);
+  const stability = countStability(candles, adaptive);
+  const degree = readDegree(candles, inspection.price);
+
+  const clusters = inspection.clusters
+    .filter((c) => c.score >= 2)
+    .slice()
+    .sort((a, b) => b.score - a.score || b.evidenceCount - a.evidenceCount)
+    .slice(0, 6)
+    .map((c) => ({
+      floor: c.floor,
+      ceiling: c.ceiling,
+      center: c.center,
+      score: c.score,
+      evidenceCount: c.evidenceCount,
+      labels: c.labels,
+      families: c.families,
+      role: sameZone(decision.zone, c) ? "ACTIVE" : c.score >= 3 ? "STRONG" : "WATCH",
+    }));
+  if (decision.zone && !clusters.some((c) => sameZone(decision.zone, c))) {
+    clusters.unshift({
+      floor: decision.zone.floor,
+      ceiling: decision.zone.ceiling,
+      center: decision.zone.center,
+      score: decision.zone.score,
+      evidenceCount: decision.zone.evidenceCount,
+      labels: decision.zone.labels,
+      families: decision.zone.families,
+      role: "ACTIVE",
+    });
+  }
+
+  const marks: { price: number; label: string; color: string; style: string }[] = [];
+  if (decision.trigger != null) {
+    marks.push({ price: decision.trigger, label: "TRIGGER · SCHLUSSKURS", color: "#22c55e", style: "solid" });
+  }
+  if (decision.invalidation != null) {
+    marks.push({ price: decision.invalidation, label: "INVALIDIERUNG · SCHLUSSKURS", color: "#ef4444", style: "solid" });
+  }
+  if (decision.target != null) {
+    marks.push({ price: decision.target, label: "MODELLZIEL 1.618·i", color: "#38bdf8", style: "dash" });
+  }
+  marks.push({ price: inspection.price, label: "LETZTER SCHLUSS", color: "#e2e8f0", style: "dot" });
+
+  const relation = decision.direction === "LONG" ? ">" : "<";
+  const invRelation = decision.direction === "LONG" ? "<" : ">";
+  const rules: { name: string; condition: string; result: string; color: string }[] = [];
+  if (decision.status === "CONFIRMED" && decision.target != null && decision.invalidation != null) {
+    rules.push({
+      name: "PRIMÄR",
+      condition: `Trade aktiv${decision.entry != null ? ` ab ${decision.entry.toFixed(2)}` : ""}`,
+      result: `Ziel ${decision.target.toFixed(2)}`,
+      color: "#22c55e",
+    });
+    rules.push({
+      name: "RISIKO",
+      condition: `${invRelation} ${decision.invalidation.toFixed(2)}`,
+      result: "Trade invalidiert",
+      color: "#ef4444",
+    });
+  } else if (
+    (decision.status === "PENDING" || decision.status === "CANDIDATE") &&
+    decision.trigger != null && decision.invalidation != null && decision.target != null
+  ) {
+    rules.push({
+      name: "PRIMÄR",
+      condition: `Schluss ${relation} ${decision.trigger.toFixed(2)}`,
+      result: `Ziel ${decision.target.toFixed(2)}`,
+      color: "#22c55e",
+    });
+    rules.push({
+      name: "ALTERNATIVE",
+      condition: `Schluss ${invRelation} ${decision.invalidation.toFixed(2)}`,
+      result: "These invalidiert",
+      color: "#f97316",
+    });
+  } else {
+    rules.push({
+      name: "AKTION",
+      condition: "Kein bestätigter Trigger",
+      result: "NO TRADE",
+      color: "#94a3b8",
+    });
+  }
+
+  const w4Index = w4 ? candles.findIndex((c) => c.date === w4.date) : -1;
+  const desiredZoom = w4Index >= 0 ? Math.max(0, w4Index - 3) : candles.length - 78;
+  // Mindestens 52, hoechstens 78 Bars: W4 bleibt im Makro sichtbar, waehrend
+  // der operative Chart wirklich auf das aktuelle Setup fokussiert.
+  const zoomIndex = Math.max(
+    0,
+    candles.length - 78,
+    Math.min(desiredZoom, candles.length - 52)
+  );
+  const corr = inspection.correction;
+  const payload = {
+    version: "V171",
+    symbol,
+    interval: interval === "1d" ? "DAILY" : interval === "1wk" ? "WEEKLY" : interval.toUpperCase(),
+    range,
+    price: inspection.price,
     trend: wc.trend,
     candles,
-    waves: wc.points.map((p) => ({ label: p.label, date: p.date, price: p.price })),
-    multiWave: mwPoints,
-    correction: corrPoints,
-    corrPattern,
-    trades: buildTrades(up, price, clusters),
-    clusters: clusters.map((c) => ({
-      floor: c.floor, ceiling: c.ceiling, score: c.score, labels: c.labels,
-    })),
+    zoomFrom: candles[zoomIndex]?.date ?? candles[0].date,
+    waves: wc.points.map((p) => ({ ...p, status: "CONFIRMED" })),
+    correction: corr?.legPoints ?? [],
+    provisional: provisional ? {
+      date: provisional.date,
+      price: provisional.price,
+      kind: provisional.kind,
+      label: provisional.kind === "H" ? "? Hoch" : "? Tief",
+    } : null,
+    multiWave: multiWave?.intact ? multiWave.points : [],
+    clusters,
     marks,
-    scenarios: buildScenarios(wc, price, clusters, trigger, invalidation),
-    struktur: {
-      score: `${res.score}/${res.maxScore}`,
-      anker: res.doctrineAnchor ? "Doktrin" : "Fallback",
-      zigzag: `${outcome.impulse.threshold} %`,
-      kontinuitaet: cont ? `${(cont.ratio * 100).toFixed(0)} % übersprungen` : "-",
-      grad: deg ? deg.cycleGrade : "-",
-      raster: deg?.stats
-        ? `${(deg.stats.retrMin * 100).toFixed(0)}–${(deg.stats.retrMed * 100).toFixed(0)}–${(deg.stats.retrMax * 100).toFixed(0)} %`
-        : "-",
+    rules,
+    decision: {
+      ...decision,
+      statusLabel: statusText(decision.status),
+      zone: decision.zone ? {
+        floor: decision.zone.floor,
+        ceiling: decision.zone.ceiling,
+        score: decision.zone.score,
+        evidenceCount: decision.zone.evidenceCount,
+        families: decision.zone.families,
+      } : null,
     },
-    stand: new Date().toISOString().slice(0, 10),
+    evidence: {
+      countScore: `${result.score}/${result.maxScore}`,
+      countStability: `${stability.agreeing}/${stability.total} gleicher W0/W5-Anker`,
+      continuity: continuity
+        ? `${continuityGrade} · ${(continuity.ratio * 100).toFixed(0)} % Pivot-Lücken`
+        : "n/a",
+      quality: `${quality.bonus}/${quality.maxBonus || 0}`,
+      qualityFlags: quality.flags,
+      threshold: `${adaptive.threshold} %`,
+      degree: degree?.cycleGrade ?? "n/a",
+      lastConfirmedPivot: lastConfirmed?.confirmedAt ?? lastConfirmed?.date ?? null,
+      correctionPattern: corr?.pattern ?? null,
+      reversalRisk: corr?.reversalRisk ?? "NONE",
+      timeStatus: inspection.timeStatus,
+      timeWindow: inspection.timeWindow,
+    },
+    provenance: {
+      provider: provenance.provider,
+      adjustment: provenance.adjustment,
+      fetchedAt: provenance.fetchedAt,
+      dataAsOf: provenance.lastBarClose ?? inspection.asOf,
+      dataHash: inspection.dataHash,
+      corporateActionCount: provenance.corporateActionCount,
+      closedBarsOnly: candles.every((c) => c.isClosed !== false),
+    },
   };
 
   const buffer = await renderDeep(payload);
+  const levelLine = decision.trigger != null && decision.invalidation != null
+    ? `\nTrigger ${relation} ${decision.trigger.toFixed(2)} · Invalidierung ${invRelation} ${decision.invalidation.toFixed(2)}`
+    : "";
   const caption =
-    `📐 **${symbol}** · ${payload.interval} (${range}) · ${wc.trend} · Score ${res.score}/${res.maxScore}` +
-    (trigger != null ? `\nTrigger ${trigger.toFixed(2)}` : "") +
-    (invalidation != null ? ` · Invalidierung ${invalidation.toFixed(2)}` : "");
+    `📐 **${symbol}** · ${payload.interval} · ${statusText(decision.status)}` +
+    `\nDatenstand ${String(payload.provenance.dataAsOf).slice(0, 10)} · ${decision.direction}` +
+    levelLine;
   return { buffer, caption };
 }
