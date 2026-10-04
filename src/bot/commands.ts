@@ -4,6 +4,7 @@ import { buildCaption, buildDetails } from "../core/reportText";
 import { addToWatchlist, removeFromWatchlist, viewWatchlist } from "../core/watchlist";
 import { listSetups } from "../core/setups";
 import db from "../core/db";
+import { AI_THEMES, AITheme, tradeOption, themeContext } from "../core/aiThemes";
 
 // In-Flight-Sperren: verhindern parallele Laeufe desselben Auftrags
 // (z.B. durch doppelt zugestellte Updates oder ungeduldige Nutzer).
@@ -41,6 +42,7 @@ export function registerCommands(
     return ctx.reply(
       "🤖 **ElliotEugen Trading Bot bereit.**\n\n" +
         "• `/radar` – aktuelle Watchlist\n" +
+        "• `/ai [rotation|adoption|all]` – KI-Themen, Assets und Elliott-Handelsoptionen\n" +
         "• `/add <SYMBOL>` – Asset hinzufügen\n" +
         "• `/remove <SYMBOL>` – Asset entfernen\n" +
         "• `/analyse <SYMBOL> [1d|1w] [1y|5y|10y|max]` – EW-Analyse; Intervall & Fenster optional\n" +
@@ -53,6 +55,38 @@ export function registerCommands(
         "✅ Chat-ID für automatische Alerts gespeichert.",
       { parse_mode: "Markdown" }
     );
+  });
+
+  bot.command("ai", async (ctx) => {
+    const arg = ((ctx.message as any)?.text?.trim().split(/\s+/)[1] || "ALL").toUpperCase();
+    const selected: AITheme[] = arg === "ALL" ? ["AI_CAPITAL_ROTATION", "AI_BITCOIN_ADOPTION"]
+      : arg === "ROTATION" ? ["AI_CAPITAL_ROTATION"] : arg === "ADOPTION" ? ["AI_BITCOIN_ADOPTION"] : [];
+    if (!selected.length) return ctx.reply("Nutzung: /ai [rotation|adoption|all]");
+    if (analysesInFlight.has("AI_THEMES")) return ctx.reply("KI-Themenscan läuft bereits.");
+    analysesInFlight.add("AI_THEMES");
+    try {
+      await ctx.reply("KI-Themenscan: Elliott-Gates und Frozen Levels bleiben maßgeblich. Keine Orderausführung.");
+      const { buildDeepChart } = await import("../core/deepChart");
+      const cache = new Map<string, Awaited<ReturnType<typeof buildDeepChart>>>();
+      for (const name of selected) {
+        const theme = AI_THEMES[name];
+        await ctx.reply(`${name} · ${theme.horizon}\n${theme.hypothesis}`);
+        for (const asset of theme.assets) {
+          try {
+            let result = cache.get(asset.symbol);
+            if (!result) {
+              result = await buildDeepChart(asset.symbol, "5y", "1wk", false);
+              cache.set(asset.symbol, result);
+            }
+            await ctx.reply(`${asset.symbol} · ${asset.role}\nTrend: ${result.trend ?? "UNKNOWN"} (Elliott-Impulsstruktur)\n${tradeOption(result.decision)}\n${result.caption.replace(/\*\*/g, "")}`);
+          } catch (err: any) {
+            await ctx.reply(`${asset.symbol}: ABWARTEN · Analysefehler: ${err?.message ?? err}`);
+          }
+        }
+      }
+    } finally {
+      analysesInFlight.delete("AI_THEMES");
+    }
   });
 
   bot.command("radar", (ctx) => ctx.reply(viewWatchlist(), { parse_mode: "Markdown" }));
@@ -104,6 +138,8 @@ export function registerCommands(
       } else {
         await ctx.reply(res.caption, { parse_mode: "Markdown" });
       }
+      const context = themeContext(symbol);
+      if (context) await ctx.reply(`${context}\n${tradeOption(res.decision)}`);
       // V167: Korrektur-Detail direkt darunter - Binnenzaehlung je Bein und
       // die Frage, ob die Korrektur noch weiterlaufen kann.
       try {

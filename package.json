@@ -12,7 +12,8 @@
     "snapshot": "node dist/snapshot.js",
     "verify:scan12": "node dist/core/scan12Regression.js",
     "verify:integrity": "node dist/core/integrityRegression.js",
-    "verify:deep": "node dist/core/deepChartRegression.js"
+    "verify:deep": "node dist/core/deepChartRegression.js",
+    "verify:ai": "node dist/core/aiThemesRegression.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",

@@ -17,7 +17,7 @@ export const SCREENER_UNIVERSE = [
   // Krypto-Proxies
   "COIN", "MSTR", "CRCL", "IREN",
   // Halbleiter & KI
-  "NVDA", "ARM", "MU", "ALAB", "TER", "IONQ", "005930.KS", "000660.KS",
+  "NVDA", "AMD", "ARM", "MU", "ALAB", "TER", "IONQ", "005930.KS", "000660.KS",
   // Software & Plattform
   "MSFT", "AMZN", "ADBE", "TEAM", "NOW", "PLTR",
   // Industrie, Rohstoffe, Konsum, Pharma
