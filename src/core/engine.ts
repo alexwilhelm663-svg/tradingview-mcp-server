@@ -24,9 +24,14 @@ import { findBestImpulse, subThresholds } from "./impulseFinder";
 import { zigzag } from "./zigzag";
 import { assessQuality } from "./quality";
 import { addDaysIso, daysBetween } from "./time";
-import { detectForecastSetup, ENGINE_VERSION } from "./forecast";
+import { inspectForecastSetup, ENGINE_VERSION } from "./forecast";
+
+import { selectDeepDecision } from "./deepDecision";
+import { loadPersistedDecision } from "./deepChart";
+import { buildDecisionSummary } from "./analyseSummary";
 
 export interface AnalysisResult {
+  decisionSummary?: string;
   buffer: Buffer | null;
   signal: "YES" | "NO";
   finalTrend: string;
@@ -368,9 +373,9 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     // Gating und ist rein deterministisch - sie geht nicht in die Kritik ein.
     // kritischen Pfads. Wirkt NUR als Vorsichts-Asymmetrie: schwache Kritik
     // hebt die Setup-Anforderungen an, aendert aber nie die Zaehlung.
-    const critique: Critique | null = await getCritique(
+    const critique: Critique | null = verbose ? await getCritique(
       symbol, wc, currentPrice, quality.summary, quality.flags
-    );
+    ) : null;
     if (critique) {
       console.log(
         `[KRITIK] ${symbol}: Confidence ${critique.confidence}${critique.flags.length > 0 ? " · " + critique.flags.join(",") : ""}`
@@ -392,12 +397,14 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     // drei unabhaengige Familien. LLM/Feedback bleiben diagnostisch, bis ihre
     // historische Ausgabe versioniert und im Replay verfuegbar ist.
     const minClusterScore = 3;
-    const canonicalSetup = detectForecastSetup(candles, {
+    const inspection = inspectForecastSetup(candles, {
       minClusterScore,
       interval,
       range,
       impulse: outcome.impulse,
     });
+
+    const canonicalSetup = inspection?.setup ?? null;
 
     const w0 = pt(wc, "0");
     const w1 = pt(wc, "1");
@@ -1083,6 +1090,11 @@ export async function analyzeAsset(symbol: string, range: string = "5y", interva
     return {
       buffer,
       signal: pendingCreated || isBreakoutSetup ? "YES" : "NO",
+      decisionSummary: buildDecisionSummary({
+        trend: wc.trend, asOf: candleCloseTime(candles[candles.length - 1]),
+        decision: inspection ? selectDeepDecision(inspection, loadPersistedDecision(symbol, interval, range)) : undefined,
+        structures: [mwCorr, mwBack], symbol,
+      }),
       finalTrend: wc.trend,
       bigPicture,
       pendingCreated,

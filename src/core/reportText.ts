@@ -21,14 +21,16 @@ export function buildCaption(
   symbol: string,
   isDaily: boolean,
   range: string,
-  r: { finalTrend: string | null; bigPicture: string | null }
+  r: { finalTrend: string | null; bigPicture: string | null; decisionSummary?: string }
 ): string {
   let caption = `📊 **${symbol}** · ${isDaily ? "Daily" : "Weekly"} (${range}) · Makro-Trend \`${r.finalTrend}\``;
+  if (r.decisionSummary) return `📊 ${symbol} · ${isDaily ? "Daily" : "Weekly"} (${range})\n${r.decisionSummary}`;
   if (r.bigPicture) caption += `\n\n${r.bigPicture}`;
   return caption;
 }
 
 export function buildDetails(r: {
+  bigPicture?: string | null;
   clusterInfo: string | null;
   isBreakoutSetup: boolean;
   breakoutStatus: string | null;
@@ -36,6 +38,7 @@ export function buildDetails(r: {
   confluenceNote: string | null;
 }): string {
   let details = "🔬 **Details**\n";
+  if (r.bigPicture) details += `${r.bigPicture}\n\n`;
   if (r.clusterInfo) details += `${r.clusterInfo}\n`;
   if (r.isBreakoutSetup) details += `${r.breakoutStatus}\n`;
   if (!r.clusterInfo && !r.isBreakoutSetup) details += "⚪ Aktuell in keiner Trigger-Zone.\n";
