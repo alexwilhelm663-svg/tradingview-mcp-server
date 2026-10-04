@@ -23,6 +23,7 @@ import {
 import {
   selectDeepDecision,
   type DeepStatus,
+  type DeepDecision,
   type PersistedDecision,
 } from "./deepDecision";
 
@@ -38,6 +39,8 @@ import {
 export interface DeepResult {
   buffer: Buffer | null;
   caption: string;
+  decision?: DeepDecision;
+  trend?: string;
 }
 
 const pt = (wc: WaveCount, label: string) =>
@@ -182,7 +185,8 @@ function statusText(status: DeepStatus): string {
 export async function buildDeepChart(
   symbol: string,
   range = "5y",
-  interval = "1wk"
+  interval = "1wk",
+  render = true
 ): Promise<DeepResult> {
   let candles: Candle[];
   let provenance: Awaited<ReturnType<typeof fetchMarketData>>["provenance"];
@@ -388,7 +392,7 @@ export async function buildDeepChart(
     },
   };
 
-  const buffer = await renderDeep(payload);
+  const buffer = render ? await renderDeep(payload) : null;
   const levelLine = decision.trigger != null && decision.invalidation != null
     ? `\nTrigger ${relation} ${decision.trigger.toFixed(2)} · Invalidierung ${invRelation} ${decision.invalidation.toFixed(2)}`
     : "";
@@ -396,5 +400,5 @@ export async function buildDeepChart(
     `📐 **${symbol}** · ${payload.interval} · ${statusText(decision.status)}` +
     `\nDatenstand ${String(payload.provenance.dataAsOf).slice(0, 10)} · ${decision.direction}` +
     levelLine;
-  return { buffer, caption };
+  return { buffer, caption, decision, trend: wc.trend };
 }

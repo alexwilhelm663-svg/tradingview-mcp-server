@@ -32,3 +32,17 @@ Erstelle eine `.env`-Datei im Hauptverzeichnis mit folgenden Werten:
 ```env
 TELEGRAM_BOT_TOKEN=dein_telegram_bot_token
 PORT=10000
+
+
+## KI-Themen und Handelsoptionen
+
+`/ai rotation`, `/ai adoption` oder `/ai all` analysiert die zugeordneten Assets auf 1wk/5y mit derselben kanonischen Elliott-Entscheidung wie `/deep`. Die Ausgabe zeigt Impulstrend, Gate-Status, bedingten Kauf/Long oder Verkauf/Short-Kandidaten, Trigger, Invalidierung, Modellziel und Datenstand. Ein bestätigtes bestehendes Setup ist keine Freigabe für einen neuen Einstieg zum aktuellen Kurs. Verkauf beschreibt eine technische Short-Richtung, keine persönliche Bestandsentscheidung und keine Orderausführung.
+
+- `AI_CAPITAL_ROTATION`: NVDA, AMD, MSFT, AMZN und BTC-USD. Hypothese: Kapital kann zu KI statt BTC fließen; Kursperformance beweist diesen Fluss nicht.
+- `AI_BITCOIN_ADOPTION`: BTC-USD direkt, MSTR als Treasury-Proxy, COIN als gemischter Zahlungsinfrastruktur-Proxy. CRCL ist ein Stablecoin-Konkurrenz-/Kontrollasset, kein BTC-Adoptionsproxy.
+
+Die Themenrichtung bleibt `UNKNOWN`, bis verifizierte aktuelle Kapitalflüsse bzw. wirtschaftliche Agentennutzung und zusätzliche BTC-Bestände vorliegen. Es gibt in dieser Erweiterung keinen automatischen Flow-/Adoptionsdatenfeed. Frühere behauptete Korrelationszahlen werden nicht als Messdaten übernommen. Langfristige Adoption löst niemals ein kurzfristiges Kaufsignal aus. Themenzuordnung bezeichnet Exposure, keine garantierte Begünstigung.
+
+Elliott-Regeln, Korrekturanalyse, 1-2-Scanner, Point-in-Time-Prüfung und eingefrorene Level bleiben unverändert. `/deep` ergänzt für Themenassets Kontext und Handelsoption als Text. Brokerverfügbarkeit, Short-Instrument/Leihe und aktuelle Ausführungspreise werden nicht geprüft.
+
+Prüfung: `npm run build`, `npm run verify:ai`, `npm run verify:integrity`, `npm run verify:deep`, `npm run verify:scan12`.
