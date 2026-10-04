@@ -46,3 +46,14 @@ Die Themenrichtung bleibt `UNKNOWN`, bis verifizierte aktuelle Kapitalflüsse bz
 Elliott-Regeln, Korrekturanalyse, 1-2-Scanner, Point-in-Time-Prüfung und eingefrorene Level bleiben unverändert. `/deep` ergänzt für Themenassets Kontext und Handelsoption als Text. Brokerverfügbarkeit, Short-Instrument/Leihe und aktuelle Ausführungspreise werden nicht geprüft.
 
 Prüfung: `npm run build`, `npm run verify:ai`, `npm run verify:integrity`, `npm run verify:deep`, `npm run verify:scan12`.
+
+
+## Kompakter Analyse-Befehl
+
+`/analyse BTC-USD` bleibt Weekly/5y. `/analyse BTC-USD 1d 5y` wählt Daily/5y; `/analyse NVDA detail max 1w` zeigt die ausführliche Ausgabe. Optionen können in beliebiger Reihenfolge stehen. Unbekannte Optionen, widersprüchliche Intervalle und mehrere Zeitfenster werden abgelehnt.
+
+Die Standardausgabe zeigt Impulstrend, Korrekturstatus (Kandidat versus bestätigtes Umkehr-Setup), intakte erkannte 1-2-Einheiten, bedingte Handelsoption, kanonische Preislevel und Datenstand. Gezählt wird derselbe Forecast-Pfad wie bisher; bestehende Frozen Snapshots haben Vorrang wie bei `/deep`. Die Zusammenfassung wird aus strukturierten Ergebnissen erzeugt, nicht aus LLM-Text. Der Impulstrend ist nicht automatisch die aktuelle Handelsrichtung. Ein bestätigtes Umkehr-Setup beweist keinen endgültigen Korrekturabschluss. Die 1-2-Zeile nutzt die vorhandene MultiWave-Erkennung und ersetzt weder `/setup` noch `/scan12`.
+
+Längere Zusammenfassungen werden vollständig als Nachricht gesendet; der Chart erhält dann eine kurze Caption. LLM-Kritik wird nur im Detailmodus angefordert; ausführliche Details enthalten weiterhin das vollständige Big Picture. Dadurch entfällt die externe Modellwartezeit im Kurzmodus. Deterministische Signal-Gates bleiben gleich; die optionale LLM-Metadatenanreicherung entfällt im Kurzmodus. Themenassets enthalten den KI-Kontext mit UNKNOWN, solange keine verifizierten Flows/Adoptionsdaten vorliegen. Keine zweite Marktdatenabfrage für die Zusammenfassung.
+
+Zusätzliche Prüfung: `npm run verify:analyse`.

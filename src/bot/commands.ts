@@ -4,6 +4,7 @@ import { buildCaption, buildDetails } from "../core/reportText";
 import { addToWatchlist, removeFromWatchlist, viewWatchlist } from "../core/watchlist";
 import { listSetups } from "../core/setups";
 import db from "../core/db";
+import { parseAnalyse } from "../core/analyseSummary";
 import { AI_THEMES, AITheme, tradeOption, themeContext } from "../core/aiThemes";
 
 // In-Flight-Sperren: verhindern parallele Laeufe desselben Auftrags
@@ -230,25 +231,14 @@ export function registerCommands(
   });
 
   bot.command("analyse", async (ctx) => {
-    const parts = ctx.message.text.split(" ");
-    const arg = parts[1];
-    if (!arg) {
-      return ctx.reply("⚠️ Bitte Symbol angeben: `/analyse NVDA [5y|10y|max]`", { parse_mode: "Markdown" });
+    let options: ReturnType<typeof parseAnalyse>;
+    try {
+      options = parseAnalyse(ctx.message.text);
+    } catch (err: any) {
+      return ctx.reply(`${err.message}\nNutzung: /analyse SYMBOL [1d|1w] [1y|2y|5y|10y|max] [detail]`);
     }
-    const symbol = arg.trim().toUpperCase();
-    // V129: zweites Argument kann Intervall (1d/1w) ODER Range (5y/10y/max) sein.
-    const arg2 = (parts[2] || "").toLowerCase();
-    const arg3 = (parts[3] || "").toLowerCase();
-    const tokens = [arg2, arg3];
-    // V141: Kurzmodus ist Standard. "detail" (oder "voll") schaltet alles frei.
-    const wantDetail = parts
-      .slice(2)
-      .some((x) => ["detail", "voll", "full", "alles"].includes((x || "").toLowerCase()));
-    const isDaily = tokens.some((x) => ["1d", "d", "day", "daily", "tag"].includes(x));
-    const rangeTok = tokens.find((x) => ["1y", "2y", "5y", "10y", "max"].includes(x));
-    const interval = isDaily ? "1d" : "1wk";
-    // Tageskerzen: kürzere Default-Range (sonst unlesbar viele Kerzen)
-    const range = rangeTok || (isDaily ? "1y" : "5y");
+    const { symbol, interval, range, detail: wantDetail } = options;
+    const isDaily = interval === "1d";
 
     const key = `${ctx.chat.id}:${symbol}`;
     if (analysesInFlight.has(key)) {
@@ -259,11 +249,10 @@ export function registerCommands(
     }
     analysesInFlight.add(key);
 
-    const status = await ctx.reply(`🔄 Analysiere **${symbol}** nach Elliott-Wellen...`, {
-      parse_mode: "Markdown",
-    });
-
+    let statusId: number | undefined;
     try {
+      const status = await ctx.reply(`🔄 Analysiere ${symbol} · ${interval} · ${range}…`);
+      statusId = status.message_id;
       const r = await analyzeAsset(symbol, range, interval, wantDetail);
 
       if (!r.analysis) {
@@ -288,20 +277,25 @@ export function registerCommands(
       // Snapshot-Pruefung - sonst testet der Snapshot etwas anderes als das,
       // was hier ankommt.
       let caption = buildCaption(symbol, isDaily, range, r);
-      if (caption.length > 1000) caption = caption.slice(0, 990) + "…";
+      if (caption.length > 1000) {
+        await ctx.reply(caption, r.decisionSummary ? {} : { parse_mode: "Markdown" });
+        caption = `📊 ${symbol} · ${interval} · ${range}`;
+      }
 
       if (r.buffer) {
-        await ctx.replyWithPhoto({ source: r.buffer }, { caption, parse_mode: "Markdown" });
+        await ctx.replyWithPhoto({ source: r.buffer }, { caption, ...(r.decisionSummary ? {} : { parse_mode: "Markdown" as const }) });
       } else {
-        await ctx.reply(caption, { parse_mode: "Markdown" });
+        await ctx.reply(caption, r.decisionSummary ? {} : { parse_mode: "Markdown" });
       }
 
       const details = buildDetails(r);
-      if (wantDetail) await ctx.reply(details, { parse_mode: "Markdown" });
+      if (wantDetail) {
+        for (const part of splitMessage(details)) await ctx.reply(part, { parse_mode: "Markdown" });
+      }
       // V122: Detail-Chart standardmäßig entfernt (auf Wunsch reaktivierbar).
 
       // LLM-Kommentar separat: kein Caption-Limit, kein Abschneiden
-      if (r.commentary) {
+      if (wantDetail && r.commentary) {
         const note = r.commentary.length > 3900 ? r.commentary.slice(0, 3897) + "..." : r.commentary;
         await ctx.reply(`💬 ${note}`);
       }
@@ -311,7 +305,7 @@ export function registerCommands(
       });
     } finally {
       analysesInFlight.delete(key);
-      ctx.deleteMessage(status.message_id).catch(() => {});
+      if (statusId != null) ctx.deleteMessage(statusId).catch(() => {});
     }
   });
 }

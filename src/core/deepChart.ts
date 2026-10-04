@@ -56,7 +56,7 @@ function parseStringArray(value: unknown): string[] {
 }
 
 /** Nur ein noch laufender, zum angeforderten Rahmen passender Snapshot gewinnt. */
-function loadPersistedDecision(
+export function loadPersistedDecision(
   symbol: string,
   interval: string,
   range: string
